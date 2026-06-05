@@ -13,6 +13,15 @@ pub enum GitError {
     #[error("操作被取消")]
     Cancelled,
 
+    #[error("没有已暂存的改动可提交")]
+    NothingToCommit,
+
+    #[error("提交信息不能为空")]
+    EmptyCommitMessage,
+
+    #[error("git 身份未配置,请先设置 user.name / user.email")]
+    EmptySignature,
+
     /// 兜底:底层 git 库返回的、我们还没细分的错误。
     #[error("底层 git 错误: {0}")]
     Backend(String),

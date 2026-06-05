@@ -11,6 +11,9 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         RepoNotFound(_) => ("REPO_NOT_FOUND", false),
         NoHead => ("NO_HEAD", false),
         Cancelled => ("CANCELLED", true),
+        NothingToCommit    => ("NOTHING_TO_COMMIT", false),
+        EmptyCommitMessage => ("EMPTY_COMMIT_MESSAGE", false),
+        EmptySignature     => ("EMPTY_SIGNATURE", false),
         Backend(_) => ("BACKEND", true),
     };
     IpcError { code: code.into(), message: e.to_string(), recoverable }

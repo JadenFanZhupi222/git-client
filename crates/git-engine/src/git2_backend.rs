@@ -71,4 +71,16 @@ impl GitBackend for Git2Backend {
         }
         Ok(WorkingTreeStatus { entries })
     }
+
+    fn stage(&self, _path: &Path, _file: &Path) -> Result<(), GitError> {
+        todo!("Task 4")
+    }
+
+    fn unstage(&self, _path: &Path, _file: &Path) -> Result<(), GitError> {
+        todo!("Task 5")
+    }
+
+    fn commit(&self, _path: &Path, _message: &str) -> Result<String, GitError> {
+        todo!("Task 6")
+    }
 }

@@ -27,4 +27,16 @@ impl GitBackend for FakeBackend {
     fn status(&self, _path: &Path) -> Result<WorkingTreeStatus, GitError> {
         Ok(WorkingTreeStatus { entries: vec![] })
     }
+
+    fn stage(&self, _path: &Path, _file: &Path) -> Result<(), GitError> {
+        Ok(())
+    }
+
+    fn unstage(&self, _path: &Path, _file: &Path) -> Result<(), GitError> {
+        Ok(())
+    }
+
+    fn commit(&self, _path: &Path, _message: &str) -> Result<String, GitError> {
+        Ok("fake000000000000000000000000000000000000".to_string())
+    }
 }
