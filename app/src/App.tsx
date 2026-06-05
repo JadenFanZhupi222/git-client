@@ -1,53 +1,136 @@
 // app/src/App.tsx
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { getHeadCommit, type CommitDto, type IpcError } from "./ipc";
+import {
+  getStatus,
+  stageFile,
+  unstageFile,
+  commit,
+  type StatusDto,
+  type FileEntryDto,
+  type IpcError,
+} from "./ipc";
 
 export default function App() {
-  const [commit, setCommit] = useState<CommitDto | null>(null);
+  const [repo, setRepo] = useState<string | null>(null);
+  const [status, setStatus] = useState<StatusDto | null>(null);
+  const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [info, setInfo] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  async function pickRepoAndLoad() {
+  async function refreshStatus(repoPath: string) {
     setError(null);
+    try {
+      setStatus(await getStatus(repoPath));
+    } catch (e) {
+      setError((e as IpcError).message ?? String(e));
+    }
+  }
+
+  async function pickRepo() {
     const dir = await open({ directory: true, title: "选择一个 git 仓库" });
     if (typeof dir !== "string") return;
+    setRepo(dir);
+    setInfo(null);
+    await refreshStatus(dir);
+  }
 
-    setLoading(true);
+  async function run(action: () => Promise<void>) {
+    if (!repo) return;
+    setBusy(true);
+    setError(null);
     try {
-      const c = await getHeadCommit(dir);
-      setCommit(c);
+      await action();
+      await refreshStatus(repo);
     } catch (e) {
-      // 后端返回的是结构化 IpcError
-      const err = e as IpcError;
-      setError(err.message ?? String(e));
-      setCommit(null);
+      setError((e as IpcError).message ?? String(e));
     } finally {
-      setLoading(false);
+      setBusy(false);
+    }
+  }
+
+  const staged = status?.entries.filter((e) => e.staged) ?? [];
+  const unstaged = status?.entries.filter((e) => !e.staged) ?? [];
+
+  function Row({ entry, staged }: { entry: FileEntryDto; staged: boolean }) {
+    return (
+      <li style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0" }}>
+        <span style={{ fontSize: 12, color: "#888", width: 84 }}>{entry.state}</span>
+        <span style={{ flex: 1, fontFamily: "monospace" }}>{entry.path}</span>
+        <button
+          disabled={busy}
+          onClick={() =>
+            run(() =>
+              staged ? unstageFile(repo!, entry.path) : stageFile(repo!, entry.path)
+            )
+          }
+        >
+          {staged ? "取消暂存" : "暂存"}
+        </button>
+      </li>
+    );
+  }
+
+  async function doCommit() {
+    if (!repo) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const sha = await commit(repo, message);
+      setInfo(`已提交 ${sha.slice(0, 7)}`);
+      setMessage("");
+      await refreshStatus(repo);
+    } catch (e) {
+      setError((e as IpcError).message ?? String(e));
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
-    <main style={{ fontFamily: "system-ui", padding: 32, maxWidth: 640 }}>
-      <h1>Git 客户端 · 阶段 0</h1>
-      <p style={{ color: "#666" }}>
-        点下面的按钮选一个本地 git 仓库,读取它的 HEAD 提交。
-      </p>
-      <button onClick={pickRepoAndLoad} disabled={loading}>
-        {loading ? "读取中…" : "选择仓库并读取 HEAD"}
-      </button>
+    <main style={{ fontFamily: "system-ui", padding: 24, maxWidth: 720 }}>
+      <h1>Git 客户端 · 阶段 1</h1>
+      <button onClick={pickRepo} disabled={busy}>选择仓库</button>
+      {repo && <span style={{ marginLeft: 12, color: "#666" }}>{repo}</span>}
 
-      {error && (
-        <p style={{ color: "crimson", marginTop: 16 }}>错误:{error}</p>
-      )}
+      {error && <p style={{ color: "crimson" }}>错误:{error}</p>}
+      {info && <p style={{ color: "green" }}>{info}</p>}
 
-      {commit && (
-        <div style={{ marginTop: 24, padding: 16, border: "1px solid #ddd", borderRadius: 8 }}>
-          <div><strong>SHA:</strong> {commit.short_id}</div>
-          <div><strong>信息:</strong> {commit.summary}</div>
-          <div><strong>作者:</strong> {commit.author_name}</div>
-          <div><strong>时间:</strong> {new Date(commit.timestamp * 1000).toLocaleString()}</div>
-        </div>
+      {repo && (
+        <>
+          <button onClick={() => refreshStatus(repo)} disabled={busy} style={{ marginTop: 12 }}>
+            刷新
+          </button>
+
+          <h3 style={{ marginBottom: 4 }}>已暂存 ({staged.length})</h3>
+          <ul style={{ listStyle: "none", padding: 0 }}>
+            {staged.map((e) => <Row key={e.path} entry={e} staged />)}
+            {staged.length === 0 && <li style={{ color: "#aaa" }}>(空)</li>}
+          </ul>
+
+          <h3 style={{ marginBottom: 4 }}>未暂存 ({unstaged.length})</h3>
+          <ul style={{ listStyle: "none", padding: 0 }}>
+            {unstaged.map((e) => <Row key={e.path} entry={e} staged={false} />)}
+            {unstaged.length === 0 && <li style={{ color: "#aaa" }}>(空)</li>}
+          </ul>
+
+          <h3 style={{ marginBottom: 4 }}>提交</h3>
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder="提交信息"
+            rows={3}
+            style={{ width: "100%", fontFamily: "inherit" }}
+          />
+          <button
+            onClick={doCommit}
+            disabled={busy || staged.length === 0 || message.trim() === ""}
+            style={{ marginTop: 8 }}
+          >
+            提交 {staged.length} 个改动
+          </button>
+        </>
       )}
     </main>
   );
