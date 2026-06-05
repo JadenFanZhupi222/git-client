@@ -50,3 +50,20 @@ export async function unstageFile(repoPath: string, filePath: string): Promise<v
 export async function commit(repoPath: string, message: string): Promise<string> {
   return await invoke<string>("commit", { repoPath, message });
 }
+
+export interface FileChangeDto {
+  path: string;
+  status: string; // added | modified | deleted | renamed
+}
+
+export async function getLog(repoPath: string, limit: number, skip: number): Promise<CommitDto[]> {
+  return await invoke<CommitDto[]>("get_log", { repoPath, limit, skip });
+}
+
+export async function getCommitFiles(repoPath: string, commitId: string): Promise<FileChangeDto[]> {
+  return await invoke<FileChangeDto[]>("get_commit_files", { repoPath, commitId });
+}
+
+export async function getCurrentBranch(repoPath: string): Promise<string | null> {
+  return await invoke<string | null>("get_current_branch", { repoPath });
+}
