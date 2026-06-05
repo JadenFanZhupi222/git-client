@@ -12,3 +12,6 @@ git2-backend = ["dep:git2"]
 [dependencies]
 git-core = { path = "../git-core" }
 git2 = { version = "0.18", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
