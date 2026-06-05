@@ -24,3 +24,29 @@ export async function getHeadCommit(repoPath: string): Promise<CommitDto> {
   // invoke 的参数名要和 Rust 命令的参数名一致(repo_path → repoPath,Tauri 自动转驼峰)
   return await invoke<CommitDto>("get_head_commit", { repoPath });
 }
+
+export interface FileEntryDto {
+  path: string;
+  state: string; // modified | added | deleted | renamed | untracked | conflicted
+  staged: boolean;
+}
+
+export interface StatusDto {
+  entries: FileEntryDto[];
+}
+
+export async function getStatus(repoPath: string): Promise<StatusDto> {
+  return await invoke<StatusDto>("get_status", { repoPath });
+}
+
+export async function stageFile(repoPath: string, filePath: string): Promise<void> {
+  await invoke("stage_file", { repoPath, filePath });
+}
+
+export async function unstageFile(repoPath: string, filePath: string): Promise<void> {
+  await invoke("unstage_file", { repoPath, filePath });
+}
+
+export async function commit(repoPath: string, message: string): Promise<string> {
+  return await invoke<string>("commit", { repoPath, message });
+}

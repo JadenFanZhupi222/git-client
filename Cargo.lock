@@ -1329,6 +1329,7 @@ version = "0.1.0"
 dependencies = [
  "git-core",
  "git2",
+ "tempfile",
 ]
 
 [[package]]
