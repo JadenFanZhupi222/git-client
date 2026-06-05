@@ -1,4 +1,4 @@
-use git_core::model::{Commit, FileEntry, FileState, Signature, WorkingTreeStatus};
+use git_core::model::{Commit, FileChange, FileEntry, FileState, Signature, WorkingTreeStatus};
 use git_core::{GitBackend, GitError};
 use std::path::Path;
 
@@ -18,6 +18,24 @@ fn to_repo_relative(repo: &git2::Repository, file: &Path) -> std::path::PathBuf 
         }
     }
     file.to_path_buf()
+}
+
+/// 从 git2::Commit 构造领域 Commit。head_commit 与 log 共用(DRY)。
+fn build_commit(c: &git2::Commit) -> Commit {
+    let id = c.id().to_string();
+    let author = c.author();
+    Commit {
+        short_id: id.chars().take(7).collect(),
+        id,
+        summary: c.summary().unwrap_or("").to_string(),
+        body: c.body().unwrap_or("").to_string(),
+        author: Signature {
+            name: author.name().unwrap_or("").to_string(),
+            email: author.email().unwrap_or("").to_string(),
+        },
+        timestamp: c.time().seconds(),
+        parents: c.parent_ids().map(|oid| oid.to_string()).collect(),
+    }
 }
 
 /// 基于 git2(libgit2 绑定)的后端。阶段 0/1 用它实现读写。
@@ -40,22 +58,7 @@ impl GitBackend for Git2Backend {
         let commit = head
             .peel_to_commit()
             .map_err(|e| GitError::Backend(e.to_string()))?;
-
-        let id = commit.id().to_string();
-        let author = commit.author();
-
-        Ok(Commit {
-            short_id: id.chars().take(7).collect(),
-            id,
-            summary: commit.summary().unwrap_or("").to_string(),
-            body: commit.body().unwrap_or("").to_string(),
-            author: Signature {
-                name: author.name().unwrap_or("").to_string(),
-                email: author.email().unwrap_or("").to_string(),
-            },
-            timestamp: commit.time().seconds(),
-            parents: commit.parent_ids().map(|oid| oid.to_string()).collect(),
-        })
+        Ok(build_commit(&commit))
     }
 
     fn status(&self, path: &Path) -> Result<WorkingTreeStatus, GitError> {
@@ -137,6 +140,93 @@ impl GitBackend for Git2Backend {
             Err(e) => return Err(GitError::Backend(e.to_string())),
         }
         Ok(())
+    }
+
+    fn log(&self, path: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+
+        // ⚠️ 空仓库(unborn HEAD)时 repo.head() 返回 UnbornBranch 错误。
+        // 用 repo.head() 提前判断,避免 push_head 在不同 libgit2 版本上返回不一致的错误码。
+        match repo.head() {
+            Ok(_) => {} // 有 HEAD,继续走 revwalk
+            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => return Ok(Vec::new()),
+            Err(e) => return Err(GitError::Backend(e.to_string())),
+        }
+
+        let mut walk = repo
+            .revwalk()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        // ⚠️ set_sorting 必须在 push_head 之前
+        walk.set_sorting(git2::Sort::TIME)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        walk.push_head()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+
+        // ⚠️ Revwalk 惰性:直接 skip/take,别先 collect 全部
+        let mut out = Vec::new();
+        for oid in walk.skip(skip).take(limit) {
+            let oid = oid.map_err(|e| GitError::Backend(e.to_string()))?;
+            let commit = repo
+                .find_commit(oid)
+                .map_err(|e| GitError::Backend(e.to_string()))?;
+            out.push(build_commit(&commit));
+        }
+        Ok(out)
+    }
+    fn commit_files(&self, path: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let oid = git2::Oid::from_str(commit_id).map_err(|e| GitError::Backend(e.to_string()))?;
+        let commit = repo
+            .find_commit(oid)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        let new_tree = commit
+            .tree()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        // 坑1:首提交无父 → parent_tree 传 None(与空树 diff)。坑2:合并只跟第一个父。
+        let parent_tree = if commit.parent_count() == 0 {
+            None
+        } else {
+            Some(
+                commit
+                    .parent(0)
+                    .map_err(|e| GitError::Backend(e.to_string()))?
+                    .tree()
+                    .map_err(|e| GitError::Backend(e.to_string()))?,
+            )
+        };
+        let diff = repo
+            .diff_tree_to_tree(parent_tree.as_ref(), Some(&new_tree), None)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        let mut out = Vec::new();
+        for delta in diff.deltas() {
+            let status = match delta.status() {
+                git2::Delta::Added | git2::Delta::Copied => FileState::Added,
+                git2::Delta::Deleted => FileState::Deleted,
+                // 坑5:不开重命名检测,此分支当前不命中(保留无害)
+                git2::Delta::Renamed => FileState::Renamed,
+                git2::Delta::Modified | git2::Delta::Typechange => FileState::Modified,
+                _ => continue,
+            };
+            let p = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            out.push(FileChange { path: p, status });
+        }
+        Ok(out)
+    }
+    fn current_branch(&self, path: &Path) -> Result<Option<String>, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        match repo.head() {
+            Ok(head) => Ok(head.shorthand().map(|s| s.to_string())),
+            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => Ok(None),
+            Err(e) => Err(GitError::Backend(e.to_string())),
+        }
     }
 
     fn commit(&self, path: &Path, message: &str) -> Result<String, GitError> {
@@ -310,5 +400,156 @@ mod tests {
         // 全新仓库,index 为空
         let err = backend.commit(&repo, "empty").unwrap_err();
         assert!(matches!(err, GitError::NothingToCommit));
+    }
+
+    // ⚠️ 显式递增时间戳:避免同秒提交导致 Sort::TIME flaky。
+    fn stage(repo_path: &Path, name: &str, contents: &str) {
+        let repo = git2::Repository::open(repo_path).unwrap();
+        std::fs::write(repo.workdir().unwrap().join(name), contents).unwrap();
+        let mut idx = repo.index().unwrap();
+        idx.add_path(Path::new(name)).unwrap();
+        idx.write().unwrap();
+    }
+
+    fn remove(repo_path: &Path, name: &str) {
+        let repo = git2::Repository::open(repo_path).unwrap();
+        std::fs::remove_file(repo.workdir().unwrap().join(name)).unwrap();
+        let mut idx = repo.index().unwrap();
+        idx.remove_path(Path::new(name)).unwrap();
+        idx.write().unwrap();
+    }
+
+    /// 用显式时间戳把当前 index 提交,返回 SHA。
+    fn commit_index(repo_path: &Path, msg: &str, secs: i64) -> String {
+        let repo = git2::Repository::open(repo_path).unwrap();
+        let mut idx = repo.index().unwrap();
+        let tree_oid = idx.write_tree().unwrap();
+        let tree = repo.find_tree(tree_oid).unwrap();
+        let sig = git2::Signature::new("Test", "t@e.local", &git2::Time::new(secs, 0)).unwrap();
+        let parents: Vec<git2::Commit> = match repo.head() {
+            Ok(h) => vec![h.peel_to_commit().unwrap()],
+            Err(_) => vec![],
+        };
+        let prefs: Vec<&git2::Commit> = parents.iter().collect();
+        repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &prefs)
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn log_returns_commits_time_descending() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        stage(&repo, "a.txt", "2");
+        commit_index(&repo, "c2", 2000);
+        stage(&repo, "b.txt", "x");
+        commit_index(&repo, "c3", 3000);
+        let log = b.log(&repo, 10, 0).unwrap();
+        let msgs: Vec<&str> = log.iter().map(|c| c.summary.as_str()).collect();
+        assert_eq!(msgs, vec!["c3", "c2", "c1"]);
+    }
+
+    #[test]
+    fn log_paginates_lazily() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        stage(&repo, "a.txt", "2");
+        commit_index(&repo, "c2", 2000);
+        stage(&repo, "a.txt", "3");
+        commit_index(&repo, "c3", 3000);
+        let page = b.log(&repo, 1, 1).unwrap();
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].summary, "c2");
+    }
+
+    #[test]
+    fn log_empty_repo_is_empty() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        assert!(b.log(&repo, 10, 0).unwrap().is_empty());
+    }
+
+    // ===== Task 3: commit_files =====
+
+    #[test]
+    fn commit_files_initial_lists_added() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "hi");
+        let sha = commit_index(&repo, "c1", 1000);
+        let files = b.commit_files(&repo, &sha).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "a.txt");
+        assert_eq!(files[0].status, FileState::Added);
+    }
+
+    #[test]
+    fn commit_files_modify_and_add() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "v1");
+        commit_index(&repo, "c1", 1000);
+        stage(&repo, "a.txt", "v2");
+        stage(&repo, "b.txt", "x");
+        let sha = commit_index(&repo, "c2", 2000);
+        let files = b.commit_files(&repo, &sha).unwrap();
+        let find = |p: &str| files.iter().find(|f| f.path == p).map(|f| f.status);
+        assert_eq!(find("a.txt"), Some(FileState::Modified));
+        assert_eq!(find("b.txt"), Some(FileState::Added));
+    }
+
+    #[test]
+    fn commit_files_delete() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "v1");
+        commit_index(&repo, "c1", 1000);
+        remove(&repo, "a.txt");
+        let sha = commit_index(&repo, "c2", 2000);
+        let files = b.commit_files(&repo, &sha).unwrap();
+        assert_eq!(
+            files.iter().find(|f| f.path == "a.txt").unwrap().status,
+            FileState::Deleted
+        );
+    }
+
+    #[test]
+    fn commit_files_rename_reported_as_delete_plus_add() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "same");
+        commit_index(&repo, "c1", 1000);
+        remove(&repo, "a.txt");
+        stage(&repo, "c.txt", "same");
+        let sha = commit_index(&repo, "c2", 2000);
+        let files = b.commit_files(&repo, &sha).unwrap();
+        let find = |p: &str| files.iter().find(|f| f.path == p).map(|f| f.status);
+        assert_eq!(find("a.txt"), Some(FileState::Deleted));
+        assert_eq!(find("c.txt"), Some(FileState::Added));
+        assert!(files.iter().all(|f| f.status != FileState::Renamed));
+    }
+
+    // ===== Task 4: current_branch =====
+
+    #[test]
+    fn current_branch_some_after_commit() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "x");
+        commit_index(&repo, "c1", 1000);
+        let branch = b.current_branch(&repo).unwrap();
+        assert!(branch.is_some());
+        assert!(!branch.unwrap().is_empty());
+    }
+
+    #[test]
+    fn current_branch_none_on_empty_repo() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        assert_eq!(b.current_branch(&repo).unwrap(), None);
     }
 }

@@ -3,8 +3,7 @@
 //! 后端通过构造函数注入(依赖注入),所以测试时能塞 FakeBackend。
 
 use git_core::{GitBackend, GitError};
-use ipc_types::CommitDto;
-use ipc_types::StatusDto;
+use ipc_types::{CommitDto, FileChangeDto, StatusDto};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -44,6 +43,32 @@ impl RepoService {
         self.backend.unstage(repo_path, file)
     }
 
+    /// 用例:提交历史,时间倒序,limit/skip 分页。
+    pub fn log(
+        &self,
+        repo_path: &Path,
+        limit: usize,
+        skip: usize,
+    ) -> Result<Vec<CommitDto>, GitError> {
+        let commits = self.backend.log(repo_path, limit, skip)?;
+        Ok(commits.into_iter().map(CommitDto::from).collect())
+    }
+
+    /// 用例:某提交改动的文件列表。
+    pub fn commit_files(
+        &self,
+        repo_path: &Path,
+        commit_id: &str,
+    ) -> Result<Vec<FileChangeDto>, GitError> {
+        let files = self.backend.commit_files(repo_path, commit_id)?;
+        Ok(files.into_iter().map(FileChangeDto::from).collect())
+    }
+
+    /// 用例:当前 HEAD 分支短名;分离头/空仓库返回 None。
+    pub fn current_branch(&self, repo_path: &Path) -> Result<Option<String>, GitError> {
+        self.backend.current_branch(repo_path)
+    }
+
     /// 用例:提交。空白信息在本层拦截,不下探后端。
     pub fn commit(&self, repo_path: &Path, message: &str) -> Result<String, GitError> {
         if message.trim().is_empty() {
@@ -56,8 +81,53 @@ impl RepoService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use git_core::model::{FileEntry, FileState};
+    use git_core::model::{Commit, FileChange, FileEntry, FileState, Signature};
     use git_engine::FakeBackend;
+
+    fn fake_commit(summary: &str) -> Commit {
+        Commit {
+            id: "i".into(),
+            short_id: "i".into(),
+            summary: summary.into(),
+            body: "".into(),
+            author: Signature {
+                name: "n".into(),
+                email: "e".into(),
+            },
+            timestamp: 1,
+            parents: vec![],
+        }
+    }
+
+    #[test]
+    fn log_returns_commit_dtos() {
+        let fb = FakeBackend::default().with_log(vec![fake_commit("hi")]);
+        let svc = RepoService::new(Arc::new(fb));
+        let dtos = svc.log(Path::new("/r"), 10, 0).unwrap();
+        assert_eq!(dtos.len(), 1);
+        assert_eq!(dtos[0].summary, "hi");
+    }
+
+    #[test]
+    fn commit_files_maps_dto() {
+        let fb = FakeBackend::default().with_commit_files(vec![FileChange {
+            path: "a".into(),
+            status: FileState::Modified,
+        }]);
+        let svc = RepoService::new(Arc::new(fb));
+        let dtos = svc.commit_files(Path::new("/r"), "x").unwrap();
+        assert_eq!(dtos[0].status, "modified");
+    }
+
+    #[test]
+    fn current_branch_forwards() {
+        let fb = FakeBackend::default().with_branch(Some("main".into()));
+        let svc = RepoService::new(Arc::new(fb));
+        assert_eq!(
+            svc.current_branch(Path::new("/r")).unwrap(),
+            Some("main".into())
+        );
+    }
 
     #[test]
     fn head_commit_via_fake_backend() {
