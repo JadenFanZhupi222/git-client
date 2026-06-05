@@ -44,13 +44,22 @@ impl RepoService {
     }
 
     /// 用例:提交历史,时间倒序,limit/skip 分页。
-    pub fn log(&self, repo_path: &Path, limit: usize, skip: usize) -> Result<Vec<CommitDto>, GitError> {
+    pub fn log(
+        &self,
+        repo_path: &Path,
+        limit: usize,
+        skip: usize,
+    ) -> Result<Vec<CommitDto>, GitError> {
         let commits = self.backend.log(repo_path, limit, skip)?;
         Ok(commits.into_iter().map(CommitDto::from).collect())
     }
 
     /// 用例:某提交改动的文件列表。
-    pub fn commit_files(&self, repo_path: &Path, commit_id: &str) -> Result<Vec<FileChangeDto>, GitError> {
+    pub fn commit_files(
+        &self,
+        repo_path: &Path,
+        commit_id: &str,
+    ) -> Result<Vec<FileChangeDto>, GitError> {
         let files = self.backend.commit_files(repo_path, commit_id)?;
         Ok(files.into_iter().map(FileChangeDto::from).collect())
     }
@@ -81,7 +90,10 @@ mod tests {
             short_id: "i".into(),
             summary: summary.into(),
             body: "".into(),
-            author: Signature { name: "n".into(), email: "e".into() },
+            author: Signature {
+                name: "n".into(),
+                email: "e".into(),
+            },
             timestamp: 1,
             parents: vec![],
         }
@@ -98,8 +110,10 @@ mod tests {
 
     #[test]
     fn commit_files_maps_dto() {
-        let fb = FakeBackend::default()
-            .with_commit_files(vec![FileChange { path: "a".into(), status: FileState::Modified }]);
+        let fb = FakeBackend::default().with_commit_files(vec![FileChange {
+            path: "a".into(),
+            status: FileState::Modified,
+        }]);
         let svc = RepoService::new(Arc::new(fb));
         let dtos = svc.commit_files(Path::new("/r"), "x").unwrap();
         assert_eq!(dtos[0].status, "modified");
@@ -109,7 +123,10 @@ mod tests {
     fn current_branch_forwards() {
         let fb = FakeBackend::default().with_branch(Some("main".into()));
         let svc = RepoService::new(Arc::new(fb));
-        assert_eq!(svc.current_branch(Path::new("/r")).unwrap(), Some("main".into()));
+        assert_eq!(
+            svc.current_branch(Path::new("/r")).unwrap(),
+            Some("main".into())
+        );
     }
 
     #[test]

@@ -122,16 +122,25 @@ mod tests {
             short_id: "x".into(),
             summary: "s".into(),
             body: "".into(),
-            author: Signature { name: "n".into(), email: "e".into() },
+            author: Signature {
+                name: "n".into(),
+                email: "e".into(),
+            },
             timestamp: 1,
             parents: vec![],
         };
         let fb = FakeBackend::default()
             .with_log(vec![commit])
-            .with_commit_files(vec![FileChange { path: "a".into(), status: FileState::Added }])
+            .with_commit_files(vec![FileChange {
+                path: "a".into(),
+                status: FileState::Added,
+            }])
             .with_branch(Some("main".into()));
         assert_eq!(fb.log(Path::new("/r"), 10, 0).unwrap().len(), 1);
         assert_eq!(fb.commit_files(Path::new("/r"), "x").unwrap()[0].path, "a");
-        assert_eq!(fb.current_branch(Path::new("/r")).unwrap(), Some("main".into()));
+        assert_eq!(
+            fb.current_branch(Path::new("/r")).unwrap(),
+            Some("main".into())
+        );
     }
 }

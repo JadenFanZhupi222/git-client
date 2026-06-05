@@ -91,7 +91,10 @@ impl From<FileChange> for FileChangeDto {
             FileState::Untracked => "untracked",
             FileState::Conflicted => "conflicted",
         };
-        FileChangeDto { path: c.path, status: status.to_string() }
+        FileChangeDto {
+            path: c.path,
+            status: status.to_string(),
+        }
     }
 }
 
@@ -103,7 +106,10 @@ mod tests {
     #[test]
     fn maps_file_change_to_dto() {
         use git_core::model::{FileChange, FileState};
-        let dto = FileChangeDto::from(FileChange { path: "a.rs".into(), status: FileState::Deleted });
+        let dto = FileChangeDto::from(FileChange {
+            path: "a.rs".into(),
+            status: FileState::Deleted,
+        });
         assert_eq!(dto.path, "a.rs");
         assert_eq!(dto.status, "deleted");
     }

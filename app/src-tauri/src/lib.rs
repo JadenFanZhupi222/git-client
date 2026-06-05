@@ -110,7 +110,10 @@ async fn get_log(repo_path: String, limit: usize, skip: usize) -> Result<Vec<Com
 }
 
 #[tauri::command]
-async fn get_commit_files(repo_path: String, commit_id: String) -> Result<Vec<FileChangeDto>, IpcError> {
+async fn get_commit_files(
+    repo_path: String,
+    commit_id: String,
+) -> Result<Vec<FileChangeDto>, IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(Git2Backend));
         service.commit_files(&PathBuf::from(repo_path), &commit_id)

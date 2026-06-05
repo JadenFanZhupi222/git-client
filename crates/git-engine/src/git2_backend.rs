@@ -143,8 +143,8 @@ impl GitBackend for Git2Backend {
     }
 
     fn log(&self, path: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, GitError> {
-        let repo = git2::Repository::open(path)
-            .map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
 
         // ⚠️ 空仓库(unborn HEAD)时 repo.head() 返回 UnbornBranch 错误。
         // 用 repo.head() 提前判断,避免 push_head 在不同 libgit2 版本上返回不一致的错误码。
@@ -154,29 +154,35 @@ impl GitBackend for Git2Backend {
             Err(e) => return Err(GitError::Backend(e.to_string())),
         }
 
-        let mut walk = repo.revwalk().map_err(|e| GitError::Backend(e.to_string()))?;
+        let mut walk = repo
+            .revwalk()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
         // ⚠️ set_sorting 必须在 push_head 之前
         walk.set_sorting(git2::Sort::TIME)
             .map_err(|e| GitError::Backend(e.to_string()))?;
-        walk.push_head().map_err(|e| GitError::Backend(e.to_string()))?;
+        walk.push_head()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
 
         // ⚠️ Revwalk 惰性:直接 skip/take,别先 collect 全部
         let mut out = Vec::new();
         for oid in walk.skip(skip).take(limit) {
             let oid = oid.map_err(|e| GitError::Backend(e.to_string()))?;
-            let commit = repo.find_commit(oid).map_err(|e| GitError::Backend(e.to_string()))?;
+            let commit = repo
+                .find_commit(oid)
+                .map_err(|e| GitError::Backend(e.to_string()))?;
             out.push(build_commit(&commit));
         }
         Ok(out)
     }
     fn commit_files(&self, path: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError> {
-        let repo = git2::Repository::open(path)
-            .map_err(|e| GitError::RepoNotFound(e.to_string()))?;
-        let oid = git2::Oid::from_str(commit_id)
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let oid = git2::Oid::from_str(commit_id).map_err(|e| GitError::Backend(e.to_string()))?;
+        let commit = repo
+            .find_commit(oid)
             .map_err(|e| GitError::Backend(e.to_string()))?;
-        let commit = repo.find_commit(oid)
-            .map_err(|e| GitError::Backend(e.to_string()))?;
-        let new_tree = commit.tree()
+        let new_tree = commit
+            .tree()
             .map_err(|e| GitError::Backend(e.to_string()))?;
         // 坑1:首提交无父 → parent_tree 传 None(与空树 diff)。坑2:合并只跟第一个父。
         let parent_tree = if commit.parent_count() == 0 {
@@ -214,8 +220,8 @@ impl GitBackend for Git2Backend {
         Ok(out)
     }
     fn current_branch(&self, path: &Path) -> Result<Option<String>, GitError> {
-        let repo = git2::Repository::open(path)
-            .map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
         match repo.head() {
             Ok(head) => Ok(head.shorthand().map(|s| s.to_string())),
             Err(e) if e.code() == git2::ErrorCode::UnbornBranch => Ok(None),
@@ -425,16 +431,21 @@ mod tests {
             Err(_) => vec![],
         };
         let prefs: Vec<&git2::Commit> = parents.iter().collect();
-        repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &prefs).unwrap().to_string()
+        repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &prefs)
+            .unwrap()
+            .to_string()
     }
 
     #[test]
     fn log_returns_commits_time_descending() {
         let (_tmp, repo) = init_repo();
         let b = Git2Backend;
-        stage(&repo, "a.txt", "1"); commit_index(&repo, "c1", 1000);
-        stage(&repo, "a.txt", "2"); commit_index(&repo, "c2", 2000);
-        stage(&repo, "b.txt", "x"); commit_index(&repo, "c3", 3000);
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        stage(&repo, "a.txt", "2");
+        commit_index(&repo, "c2", 2000);
+        stage(&repo, "b.txt", "x");
+        commit_index(&repo, "c3", 3000);
         let log = b.log(&repo, 10, 0).unwrap();
         let msgs: Vec<&str> = log.iter().map(|c| c.summary.as_str()).collect();
         assert_eq!(msgs, vec!["c3", "c2", "c1"]);
@@ -444,9 +455,12 @@ mod tests {
     fn log_paginates_lazily() {
         let (_tmp, repo) = init_repo();
         let b = Git2Backend;
-        stage(&repo, "a.txt", "1"); commit_index(&repo, "c1", 1000);
-        stage(&repo, "a.txt", "2"); commit_index(&repo, "c2", 2000);
-        stage(&repo, "a.txt", "3"); commit_index(&repo, "c3", 3000);
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        stage(&repo, "a.txt", "2");
+        commit_index(&repo, "c2", 2000);
+        stage(&repo, "a.txt", "3");
+        commit_index(&repo, "c3", 3000);
         let page = b.log(&repo, 1, 1).unwrap();
         assert_eq!(page.len(), 1);
         assert_eq!(page[0].summary, "c2");
@@ -477,8 +491,10 @@ mod tests {
     fn commit_files_modify_and_add() {
         let (_tmp, repo) = init_repo();
         let b = Git2Backend;
-        stage(&repo, "a.txt", "v1"); commit_index(&repo, "c1", 1000);
-        stage(&repo, "a.txt", "v2"); stage(&repo, "b.txt", "x");
+        stage(&repo, "a.txt", "v1");
+        commit_index(&repo, "c1", 1000);
+        stage(&repo, "a.txt", "v2");
+        stage(&repo, "b.txt", "x");
         let sha = commit_index(&repo, "c2", 2000);
         let files = b.commit_files(&repo, &sha).unwrap();
         let find = |p: &str| files.iter().find(|f| f.path == p).map(|f| f.status);
@@ -490,19 +506,25 @@ mod tests {
     fn commit_files_delete() {
         let (_tmp, repo) = init_repo();
         let b = Git2Backend;
-        stage(&repo, "a.txt", "v1"); commit_index(&repo, "c1", 1000);
+        stage(&repo, "a.txt", "v1");
+        commit_index(&repo, "c1", 1000);
         remove(&repo, "a.txt");
         let sha = commit_index(&repo, "c2", 2000);
         let files = b.commit_files(&repo, &sha).unwrap();
-        assert_eq!(files.iter().find(|f| f.path == "a.txt").unwrap().status, FileState::Deleted);
+        assert_eq!(
+            files.iter().find(|f| f.path == "a.txt").unwrap().status,
+            FileState::Deleted
+        );
     }
 
     #[test]
     fn commit_files_rename_reported_as_delete_plus_add() {
         let (_tmp, repo) = init_repo();
         let b = Git2Backend;
-        stage(&repo, "a.txt", "same"); commit_index(&repo, "c1", 1000);
-        remove(&repo, "a.txt"); stage(&repo, "c.txt", "same");
+        stage(&repo, "a.txt", "same");
+        commit_index(&repo, "c1", 1000);
+        remove(&repo, "a.txt");
+        stage(&repo, "c.txt", "same");
         let sha = commit_index(&repo, "c2", 2000);
         let files = b.commit_files(&repo, &sha).unwrap();
         let find = |p: &str| files.iter().find(|f| f.path == p).map(|f| f.status);
@@ -517,7 +539,8 @@ mod tests {
     fn current_branch_some_after_commit() {
         let (_tmp, repo) = init_repo();
         let b = Git2Backend;
-        stage(&repo, "a.txt", "x"); commit_index(&repo, "c1", 1000);
+        stage(&repo, "a.txt", "x");
+        commit_index(&repo, "c1", 1000);
         let branch = b.current_branch(&repo).unwrap();
         assert!(branch.is_some());
         assert!(!branch.unwrap().is_empty());
