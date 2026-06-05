@@ -2,10 +2,10 @@ import { type CommitDto } from "../ipc";
 import { formatRelative } from "../lib/time";
 
 export function CommitList({
-  commits, branch, selectedId, onSelect, onLoadMore, loading,
+  commits, branch, selectedId, onSelect, onLoadMore, loading, hasMore,
 }: {
   commits: CommitDto[]; branch: string | null; selectedId: string | null;
-  onSelect: (c: CommitDto) => void; onLoadMore: () => void; loading: boolean;
+  onSelect: (c: CommitDto) => void; onLoadMore: () => void; loading: boolean; hasMore: boolean;
 }) {
   return (
     <div className="overflow-y-auto">
@@ -27,9 +27,13 @@ export function CommitList({
           </div>
         </div>
       ))}
-      <button className="w-full py-2 text-xs text-[#58a6ff] disabled:opacity-40" onClick={onLoadMore} disabled={loading}>
-        {loading ? "加载中…" : "加载更多"}
-      </button>
+      {hasMore ? (
+        <button className="w-full py-2 text-xs text-[#58a6ff] disabled:opacity-40" onClick={onLoadMore} disabled={loading}>
+          {loading ? "加载中…" : "加载更多"}
+        </button>
+      ) : (
+        commits.length > 0 && <div className="w-full py-2 text-center text-[11px] text-[#6e7681]">已到历史开端</div>
+      )}
     </div>
   );
 }
