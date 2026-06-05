@@ -193,3 +193,22 @@ commit(repo_path, message)  -> 返回新 SHA
 - [ ] `cargo build`(全工作区,含 app 外壳)通过
 - [ ] `pnpm tauri dev`:选仓库 → 看到分区文件列表 → 暂存/取消暂存 → 写信息提交 → 列表刷新为干净、显示新 SHA
 - [ ] 边界:空仓库首次提交可成功;空提交信息被拦并提示;未配 git 身份时给友好错误
+
+---
+
+## 7. 实现约束(补充)
+
+1. **路径契约 = 仓库根相对路径,贯穿全链路。**
+   - `status` 经 git2 `entry.path()` 返回的就是仓库根相对路径;前端把它原样传回给 stage/unstage。
+   - 领域层 / DTO / 命令层都按"相对路径"约定,不做转换。
+   - **兜底转换只在 git2_backend 适配器层**:若传入的是绝对路径,用 `repo.workdir()` 剥掉前缀再交给 `add_path`/`remove_path`;这样 git2 "要相对路径"这个泄漏细节被锁在适配器内,不污染上层。
+
+2. **无 HEAD 用精确的 unborn 检测。**
+   - 用 `repo.head_unborn()`(返回 bool),或捕获 `repo.head()` 的 `git2::ErrorCode::UnbornBranch`。
+   - **不要**笼统拿 `head()` 是否 Err 当"无 HEAD"——它可能因别的原因报错,会误判。
+
+3. **暂存"被删除的文件" = 阶段 1 已知限制。**
+   - `git add` 一个已删除文件实为暂存删除,需 `index.remove_path()` 而非 `add_path()`。
+   - 阶段 1 的 `stage` 只用 `add_path`,**只保证修改/新增文件**;暂存删除留到后续切片。UI 可暂不暴露删除文件的暂存按钮,或点击时给"暂未支持"提示。
+
+4. **前端命令统一用 `pnpm`**(非 npm):`pnpm tauri dev` / `pnpm build` 等。
