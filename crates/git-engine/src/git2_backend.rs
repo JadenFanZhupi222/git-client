@@ -1,4 +1,4 @@
-use git_core::model::{Commit, FileEntry, FileState, Signature, WorkingTreeStatus};
+use git_core::model::{Commit, FileChange, FileEntry, FileState, Signature, WorkingTreeStatus};
 use git_core::{GitBackend, GitError};
 use std::path::Path;
 
@@ -137,6 +137,16 @@ impl GitBackend for Git2Backend {
             Err(e) => return Err(GitError::Backend(e.to_string())),
         }
         Ok(())
+    }
+
+    fn log(&self, _path: &Path, _limit: usize, _skip: usize) -> Result<Vec<Commit>, GitError> {
+        todo!("Task 2")
+    }
+    fn commit_files(&self, _path: &Path, _commit_id: &str) -> Result<Vec<FileChange>, GitError> {
+        todo!("Task 3")
+    }
+    fn current_branch(&self, _path: &Path) -> Result<Option<String>, GitError> {
+        todo!("Task 4")
     }
 
     fn commit(&self, path: &Path, message: &str) -> Result<String, GitError> {

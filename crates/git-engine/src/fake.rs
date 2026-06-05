@@ -1,4 +1,4 @@
-use git_core::model::{Commit, FileEntry, Signature, WorkingTreeStatus};
+use git_core::model::{Commit, FileChange, FileEntry, Signature, WorkingTreeStatus};
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -71,6 +71,16 @@ impl GitBackend for FakeBackend {
     fn commit(&self, _path: &Path, message: &str) -> Result<String, GitError> {
         self.commits.lock().unwrap().push(message.to_string());
         Ok("fake000000000000000000000000000000000000".to_string())
+    }
+
+    fn log(&self, _path: &Path, _limit: usize, _skip: usize) -> Result<Vec<Commit>, GitError> {
+        Ok(Vec::new())
+    }
+    fn commit_files(&self, _path: &Path, _commit_id: &str) -> Result<Vec<FileChange>, GitError> {
+        Ok(Vec::new())
+    }
+    fn current_branch(&self, _path: &Path) -> Result<Option<String>, GitError> {
+        Ok(None)
     }
 }
 

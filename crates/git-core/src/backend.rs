@@ -1,5 +1,5 @@
 use crate::error::GitError;
-use crate::model::{Commit, WorkingTreeStatus};
+use crate::model::{Commit, FileChange, WorkingTreeStatus};
 use std::path::Path;
 
 /// 端口(Port):所有 git 后端必须实现它。
@@ -24,4 +24,13 @@ pub trait GitBackend: Send + Sync {
 
     /// 提交 index 内容,返回新 commit 的完整 SHA。
     fn commit(&self, repo: &Path, message: &str) -> Result<String, GitError>;
+
+    /// 提交历史,时间倒序(新→旧)。limit/skip 分页。
+    fn log(&self, repo: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, GitError>;
+
+    /// 某提交相对第一个父的改动文件(文件级)。
+    fn commit_files(&self, repo: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError>;
+
+    /// 当前 HEAD 分支短名(如 "main");分离头/空仓库为 None。
+    fn current_branch(&self, repo: &Path) -> Result<Option<String>, GitError>;
 }
