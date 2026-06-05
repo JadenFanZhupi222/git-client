@@ -6,13 +6,11 @@ use git_core::model::{Commit, Signature, WorkingTreeStatus, FileEntry, FileState
 /// 若传入绝对路径,用 workdir 前缀剥成相对路径;否则原样返回。
 /// 这个泄漏细节锁在适配器层,不污染上层。
 fn to_repo_relative(repo: &git2::Repository, file: &Path) -> std::path::PathBuf {
-    if file.is_absolute() {
-        if let Some(wd) = repo.workdir() {
-            if let Ok(stripped) = file.strip_prefix(wd) {
+    if file.is_absolute()
+        && let Some(wd) = repo.workdir()
+            && let Ok(stripped) = file.strip_prefix(wd) {
                 return stripped.to_path_buf();
             }
-        }
-    }
     file.to_path_buf()
 }
 
@@ -189,7 +187,7 @@ mod tests {
     fn stage_marks_file_staged() {
         let (_tmp, repo) = init_repo();
         write(&repo, "a.txt", "hello");
-        let backend = Git2Backend::default();
+        let backend = Git2Backend;
 
         backend.stage(&repo, Path::new("a.txt")).unwrap();
 
@@ -202,7 +200,7 @@ mod tests {
     #[test]
     fn unstage_with_head_reverts_to_committed() {
         let (_tmp, repo) = init_repo();
-        let backend = Git2Backend::default();
+        let backend = Git2Backend;
         // 先建一个初始提交(让仓库有 HEAD)
         write(&repo, "a.txt", "v1");
         backend.stage(&repo, Path::new("a.txt")).unwrap();
@@ -220,7 +218,7 @@ mod tests {
     #[test]
     fn unstage_without_head_removes_from_index() {
         let (_tmp, repo) = init_repo();
-        let backend = Git2Backend::default();
+        let backend = Git2Backend;
         // 全新仓库,没有任何提交(unborn HEAD)
         write(&repo, "a.txt", "hello");
         backend.stage(&repo, Path::new("a.txt")).unwrap();
@@ -235,7 +233,7 @@ mod tests {
     #[test]
     fn initial_commit_succeeds_and_status_clean() {
         let (_tmp, repo) = init_repo();
-        let backend = Git2Backend::default();
+        let backend = Git2Backend;
         write(&repo, "a.txt", "hello");
         backend.stage(&repo, Path::new("a.txt")).unwrap();
 
@@ -255,7 +253,7 @@ mod tests {
     #[test]
     fn second_commit_has_parent() {
         let (_tmp, repo) = init_repo();
-        let backend = Git2Backend::default();
+        let backend = Git2Backend;
         write(&repo, "a.txt", "v1");
         backend.stage(&repo, Path::new("a.txt")).unwrap();
         backend.commit(&repo, "init").unwrap();
@@ -272,7 +270,7 @@ mod tests {
     #[test]
     fn commit_nothing_staged_errors() {
         let (_tmp, repo) = init_repo();
-        let backend = Git2Backend::default();
+        let backend = Git2Backend;
         // 全新仓库,index 为空
         let err = backend.commit(&repo, "empty").unwrap_err();
         assert!(matches!(err, GitError::NothingToCommit));

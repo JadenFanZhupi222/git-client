@@ -27,7 +27,7 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
 async fn get_head_commit(repo_path: String) -> Result<CommitDto, IpcError> {
     let result = tokio::task::spawn_blocking(move || {
         // 在阻塞线程里:注入真实后端,执行用例
-        let service = RepoService::new(Arc::new(Git2Backend::default()));
+        let service = RepoService::new(Arc::new(Git2Backend));
         service.head_commit(&PathBuf::from(repo_path))
     })
     .await
@@ -53,7 +53,7 @@ fn join_panic(e: tokio::task::JoinError) -> IpcError {
 #[tauri::command]
 async fn get_status(repo_path: String) -> Result<StatusDto, IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend::default()));
+        let service = RepoService::new(Arc::new(Git2Backend));
         service.status(&PathBuf::from(repo_path))
     })
     .await
@@ -64,7 +64,7 @@ async fn get_status(repo_path: String) -> Result<StatusDto, IpcError> {
 #[tauri::command]
 async fn stage_file(repo_path: String, file_path: String) -> Result<(), IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend::default()));
+        let service = RepoService::new(Arc::new(Git2Backend));
         service.stage(&PathBuf::from(repo_path), &PathBuf::from(file_path))
     })
     .await
@@ -75,7 +75,7 @@ async fn stage_file(repo_path: String, file_path: String) -> Result<(), IpcError
 #[tauri::command]
 async fn unstage_file(repo_path: String, file_path: String) -> Result<(), IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend::default()));
+        let service = RepoService::new(Arc::new(Git2Backend));
         service.unstage(&PathBuf::from(repo_path), &PathBuf::from(file_path))
     })
     .await
@@ -86,7 +86,7 @@ async fn unstage_file(repo_path: String, file_path: String) -> Result<(), IpcErr
 #[tauri::command]
 async fn commit(repo_path: String, message: String) -> Result<String, IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend::default()));
+        let service = RepoService::new(Arc::new(Git2Backend));
         service.commit(&PathBuf::from(repo_path), &message)
     })
     .await

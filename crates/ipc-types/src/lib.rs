@@ -85,7 +85,7 @@ mod tests {
         let dto = StatusDto::from(st);
         assert_eq!(dto.entries.len(), 2);
         assert_eq!(dto.entries[0].state, "modified");
-        assert_eq!(dto.entries[0].staged, false);
+        assert!(!dto.entries[0].staged);
         assert_eq!(dto.entries[1].state, "added");
     }
 }
