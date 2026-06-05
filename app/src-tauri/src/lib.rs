@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use app_service::RepoService;
 use git_engine::Git2Backend; // 真实后端
-use ipc_types::{CommitDto, IpcError};
+use ipc_types::{CommitDto, IpcError, StatusDto};
 
 // 把领域错误翻译成给前端的结构化错误(带 code,前端可据此做分支)
 fn to_ipc(e: git_core::GitError) -> IpcError {
@@ -41,12 +41,71 @@ async fn get_head_commit(repo_path: String) -> Result<CommitDto, IpcError> {
     result.map_err(to_ipc)
 }
 
+/// spawn_blocking 自身失败(线程 panic)→ 统一转可识别错误,绝不让进程崩。
+fn join_panic(e: tokio::task::JoinError) -> IpcError {
+    IpcError {
+        code: "TASK_PANIC".into(),
+        message: format!("后台任务异常: {e}"),
+        recoverable: true,
+    }
+}
+
+#[tauri::command]
+async fn get_status(repo_path: String) -> Result<StatusDto, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(Git2Backend::default()));
+        service.status(&PathBuf::from(repo_path))
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn stage_file(repo_path: String, file_path: String) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(Git2Backend::default()));
+        service.stage(&PathBuf::from(repo_path), &PathBuf::from(file_path))
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn unstage_file(repo_path: String, file_path: String) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(Git2Backend::default()));
+        service.unstage(&PathBuf::from(repo_path), &PathBuf::from(file_path))
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn commit(repo_path: String, message: String) -> Result<String, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(Git2Backend::default()));
+        service.commit(&PathBuf::from(repo_path), &message)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init()) // 选目录对话框用
-        .invoke_handler(tauri::generate_handler![get_head_commit])
+        .invoke_handler(tauri::generate_handler![
+            get_head_commit,
+            get_status,
+            stage_file,
+            unstage_file,
+            commit
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
