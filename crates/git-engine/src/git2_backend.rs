@@ -97,8 +97,32 @@ impl GitBackend for Git2Backend {
         Ok(())
     }
 
-    fn unstage(&self, _path: &Path, _file: &Path) -> Result<(), GitError> {
-        todo!("Task 5")
+    fn unstage(&self, path: &Path, file: &Path) -> Result<(), GitError> {
+        let repo = git2::Repository::open(path)
+            .map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let rel = to_repo_relative(&repo, file);
+
+        // ⚠️ 精确判断 unborn:只认 UnbornBranch 这个错误码,别拿 head() 任何报错当无 HEAD。
+        match repo.head() {
+            Ok(head_ref) => {
+                // 有 HEAD:把该文件的 index 条目重置回 HEAD 版本。
+                let head_commit = head_ref
+                    .peel_to_commit()
+                    .map_err(|e| GitError::Backend(e.to_string()))?;
+                let obj = head_commit.into_object();
+                let spec = rel.to_string_lossy().into_owned();
+                repo.reset_default(Some(&obj), [spec.as_str()])
+                    .map_err(|e| GitError::Backend(e.to_string()))?;
+            }
+            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => {
+                // 无 HEAD(首次提交前):没有可重置的目标,直接从 index 删除条目。
+                let mut index = repo.index().map_err(|e| GitError::Backend(e.to_string()))?;
+                index.remove_path(&rel).map_err(|e| GitError::Backend(e.to_string()))?;
+                index.write().map_err(|e| GitError::Backend(e.to_string()))?;
+            }
+            Err(e) => return Err(GitError::Backend(e.to_string())),
+        }
+        Ok(())
     }
 
     fn commit(&self, _path: &Path, _message: &str) -> Result<String, GitError> {
@@ -138,5 +162,38 @@ mod tests {
         let entry = status.entries.iter().find(|e| e.path == "a.txt").unwrap();
         assert!(entry.staged, "stage 后应标记 staged");
         assert_eq!(entry.state, FileState::Added);
+    }
+
+    #[test]
+    fn unstage_with_head_reverts_to_committed() {
+        let (_tmp, repo) = init_repo();
+        let backend = Git2Backend::default();
+        // 先建一个初始提交(让仓库有 HEAD)
+        write(&repo, "a.txt", "v1");
+        backend.stage(&repo, Path::new("a.txt")).unwrap();
+        backend.commit(&repo, "init").unwrap();
+        // 改动并暂存,再取消暂存
+        write(&repo, "a.txt", "v2");
+        backend.stage(&repo, Path::new("a.txt")).unwrap();
+        backend.unstage(&repo, Path::new("a.txt")).unwrap();
+
+        let status = backend.status(&repo).unwrap();
+        let entry = status.entries.iter().find(|e| e.path == "a.txt").unwrap();
+        assert!(!entry.staged, "取消暂存后应回到未暂存");
+    }
+
+    #[test]
+    fn unstage_without_head_removes_from_index() {
+        let (_tmp, repo) = init_repo();
+        let backend = Git2Backend::default();
+        // 全新仓库,没有任何提交(unborn HEAD)
+        write(&repo, "a.txt", "hello");
+        backend.stage(&repo, Path::new("a.txt")).unwrap();
+        backend.unstage(&repo, Path::new("a.txt")).unwrap();
+
+        let status = backend.status(&repo).unwrap();
+        let entry = status.entries.iter().find(|e| e.path == "a.txt").unwrap();
+        assert!(!entry.staged, "无 HEAD 时取消暂存应把条目从 index 移除");
+        assert_eq!(entry.state, FileState::Untracked);
     }
 }
