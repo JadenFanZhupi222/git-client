@@ -169,8 +169,49 @@ impl GitBackend for Git2Backend {
         }
         Ok(out)
     }
-    fn commit_files(&self, _path: &Path, _commit_id: &str) -> Result<Vec<FileChange>, GitError> {
-        todo!("Task 3")
+    fn commit_files(&self, path: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError> {
+        let repo = git2::Repository::open(path)
+            .map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let oid = git2::Oid::from_str(commit_id)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        let commit = repo.find_commit(oid)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        let new_tree = commit.tree()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        // 坑1:首提交无父 → parent_tree 传 None(与空树 diff)。坑2:合并只跟第一个父。
+        let parent_tree = if commit.parent_count() == 0 {
+            None
+        } else {
+            Some(
+                commit
+                    .parent(0)
+                    .map_err(|e| GitError::Backend(e.to_string()))?
+                    .tree()
+                    .map_err(|e| GitError::Backend(e.to_string()))?,
+            )
+        };
+        let diff = repo
+            .diff_tree_to_tree(parent_tree.as_ref(), Some(&new_tree), None)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        let mut out = Vec::new();
+        for delta in diff.deltas() {
+            let status = match delta.status() {
+                git2::Delta::Added | git2::Delta::Copied => FileState::Added,
+                git2::Delta::Deleted => FileState::Deleted,
+                // 坑5:不开重命名检测,此分支当前不命中(保留无害)
+                git2::Delta::Renamed => FileState::Renamed,
+                git2::Delta::Modified | git2::Delta::Typechange => FileState::Modified,
+                _ => continue,
+            };
+            let p = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            out.push(FileChange { path: p, status });
+        }
+        Ok(out)
     }
     fn current_branch(&self, _path: &Path) -> Result<Option<String>, GitError> {
         todo!("Task 4")
@@ -410,5 +451,76 @@ mod tests {
         let (_tmp, repo) = init_repo();
         let b = Git2Backend;
         assert!(b.log(&repo, 10, 0).unwrap().is_empty());
+    }
+
+    // ===== Task 3: commit_files =====
+
+    #[test]
+    fn commit_files_initial_lists_added() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "hi");
+        let sha = commit_index(&repo, "c1", 1000);
+        let files = b.commit_files(&repo, &sha).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "a.txt");
+        assert_eq!(files[0].status, FileState::Added);
+    }
+
+    #[test]
+    fn commit_files_modify_and_add() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "v1"); commit_index(&repo, "c1", 1000);
+        stage(&repo, "a.txt", "v2"); stage(&repo, "b.txt", "x");
+        let sha = commit_index(&repo, "c2", 2000);
+        let files = b.commit_files(&repo, &sha).unwrap();
+        let find = |p: &str| files.iter().find(|f| f.path == p).map(|f| f.status);
+        assert_eq!(find("a.txt"), Some(FileState::Modified));
+        assert_eq!(find("b.txt"), Some(FileState::Added));
+    }
+
+    #[test]
+    fn commit_files_delete() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "v1"); commit_index(&repo, "c1", 1000);
+        remove(&repo, "a.txt");
+        let sha = commit_index(&repo, "c2", 2000);
+        let files = b.commit_files(&repo, &sha).unwrap();
+        assert_eq!(files.iter().find(|f| f.path == "a.txt").unwrap().status, FileState::Deleted);
+    }
+
+    #[test]
+    fn commit_files_rename_reported_as_delete_plus_add() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "same"); commit_index(&repo, "c1", 1000);
+        remove(&repo, "a.txt"); stage(&repo, "c.txt", "same");
+        let sha = commit_index(&repo, "c2", 2000);
+        let files = b.commit_files(&repo, &sha).unwrap();
+        let find = |p: &str| files.iter().find(|f| f.path == p).map(|f| f.status);
+        assert_eq!(find("a.txt"), Some(FileState::Deleted));
+        assert_eq!(find("c.txt"), Some(FileState::Added));
+        assert!(files.iter().all(|f| f.status != FileState::Renamed));
+    }
+
+    // ===== Task 4: current_branch =====
+
+    #[test]
+    fn current_branch_some_after_commit() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "x"); commit_index(&repo, "c1", 1000);
+        let branch = b.current_branch(&repo).unwrap();
+        assert!(branch.is_some());
+        assert!(!branch.unwrap().is_empty());
+    }
+
+    #[test]
+    fn current_branch_none_on_empty_repo() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        assert_eq!(b.current_branch(&repo).unwrap(), None);
     }
 }
