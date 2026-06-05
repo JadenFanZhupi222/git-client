@@ -41,6 +41,9 @@ fn log(&self, repo: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, Git
 
 /// 某提交相对其(第一个)父提交改动了哪些文件,只到文件级状态。
 fn commit_files(&self, repo: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError>;
+
+/// 当前 HEAD 指向的分支短名(如 "main")。分离头/空仓库返回 None。
+fn current_branch(&self, repo: &Path) -> Result<Option<String>, GitError>;
 ```
 `Commit` 模型已存在(复用)。**新增模型** `model/diff.rs`:
 ```rust
@@ -50,7 +53,7 @@ pub struct FileChange {
     pub status: FileState,   // 复用已有枚举:Added/Modified/Deleted/Renamed
 }
 ```
-(`FileState` 已有六变体,commit diff 只会用到 Added/Modified/Deleted/Renamed。)
+(`FileState` 已有六变体,commit diff 在 1b-1 实际只会产出 Added/Modified/Deleted —— 重命名不检测,见 2.2 末尾说明。)
 
 ### 2.2 git-engine Git2Backend 实现
 
@@ -95,7 +98,7 @@ for delta in diff.deltas() {
     let status = match delta.status() {
         git2::Delta::Added | git2::Delta::Copied => FileState::Added,
         git2::Delta::Deleted => FileState::Deleted,
-        git2::Delta::Renamed => FileState::Renamed,
+        git2::Delta::Renamed => FileState::Renamed, // 1b-1 不开重命名检测,此分支当前不命中(保留以备 1b-x)
         git2::Delta::Modified | git2::Delta::Typechange => FileState::Modified,
         _ => continue,                     // Unmodified/Ignored/Untracked 等在 commit diff 不该出现,跳过
     };
@@ -108,13 +111,24 @@ for delta in diff.deltas() {
 }
 Ok(out)
 ```
+> ⚠️ **重命名暂不检测(YAGNI)**:`diff_tree_to_tree` 默认**不**做相似度检测,一次重命名会被报成 **Deleted(旧名)+ Added(新名)** 两条。1b-1 接受这个行为、不调 `Diff::find_similar`;上面 `Delta::Renamed` 分支当前不会命中(保留无害)。真正的重命名检测留到以后切片。
+
+**`current_branch`** —— 读真实分支名,别写死:
+```
+match repo.head() {
+    Ok(head) => Ok(head.shorthand().map(|s| s.to_string())),  // 如 "main";分离头时 shorthand 可能为 None
+    Err(e) if e.code() == git2::ErrorCode::UnbornBranch => Ok(None), // 空仓库无分支
+    Err(e) => Err(Backend(e)),
+}
+```
 
 ### 2.3 FakeBackend
 加 `log`/`commit_files` 的桩 + 可预置返回值(Mutex,供 app-service TDD):
 ```rust
 canned_log: Mutex<Vec<Commit>>,
 canned_commit_files: Mutex<Vec<FileChange>>,
-// + with_log(...) / with_commit_files(...) 构造器或 setter
+canned_branch: Mutex<Option<String>>,
+// + with_log(...) / with_commit_files(...) / with_branch(...) 构造器或 setter
 ```
 
 ---
@@ -136,6 +150,7 @@ pub struct FileChangeDto {
 ```
 get_log(repo_path: String, limit: usize, skip: usize) -> Vec<CommitDto>
 get_commit_files(repo_path: String, commit_id: String) -> Vec<FileChangeDto>
+get_current_branch(repo_path: String) -> Option<String>
 ```
 
 ---
@@ -151,12 +166,12 @@ get_commit_files(repo_path: String, commit_id: String) -> Vec<FileChangeDto>
 ### 4.2 组件(新)
 - `TabBar`:`更改` | `历史` 两标签,受控切换。
 - `HistoryView`:三栏壳(flex)。**左** `CommitList`,**中** `CommitFileList`,**右** diff 占位区(灰字"选中文件后在 1b-2 显示 diff")。
-- `CommitList`:每行 = 圆点+连线轨 + 消息 + 短哈希(等宽)+ 相对时间;HEAD 那行带 `HEAD → main` 徽章(分支名 1b-1 可先只显示当前分支,或 HEAD 标记);选中高亮;底部"加载更多"按钮。
+- `CommitList`:每行 = 圆点+连线轨 + 消息 + 短哈希(等宽)+ 相对时间;HEAD 那行(skip=0 时的首条)带 `HEAD → <branch>` 徽章,**分支名来自 `getCurrentBranch` 的真实值**(如 "main"),不写死;branch 为 null(分离头/空仓库)时只显示 `HEAD`;选中高亮;底部"加载更多"按钮。
 - `CommitFileList`:选中提交的改动文件,每行 = 状态色标(A 绿/M 蓝/D 红)+ 路径(等宽)。
 - 现有「更改」视图(status/stage/commit)迁进 `更改` 标签,功能不变,顺手用 Tailwind 重写样式与历史视图统一(不改逻辑)。
 
 ### 4.3 ipc.ts
-加 `getLog(repoPath, limit, skip)`、`getCommitFiles(repoPath, commitId)` + 类型。
+加 `getLog(repoPath, limit, skip)`、`getCommitFiles(repoPath, commitId)`、`getCurrentBranch(repoPath)` + 类型。
 
 ### 4.4 状态(hooks)
 `activeTab`、`commits`(累加分页)、`logSkip`、`selectedCommit`、`commitFiles`。选中提交 → 拉 `getCommitFiles`。
@@ -174,13 +189,17 @@ get_commit_files(repo_path: String, commit_id: String) -> Vec<FileChangeDto>
 ## 6. 测试(TDD)
 
 **git-engine(tempfile 真仓库):**
-1. `log` 顺序:建 3 个提交 → `log(10,0)` 返回 3 个,**时间倒序**(新在前),按 summary 断言。
+> ⚠️ **fixture 必须显式控制提交时间戳递增**:不要用 `repo.signature()`(取系统当前时间,连续提交可能落在同一秒 → `Sort::TIME` 顺序 flaky)。测试用一个 `commit_at(repo, msg, secs)` 辅助函数,用 `git2::Signature::new(name, email, &git2::Time::new(secs, 0))` 给每个提交显式、递增的时间(如 1000/2000/3000),保证排序确定。
+
+1. `log` 顺序:用 `commit_at` 建 3 个提交(t=1000/2000/3000)→ `log(10,0)` 返回 3 个,**时间倒序**(t=3000 在前),按 summary 断言。
 2. `log` 分页:`log(1,1)` 只返回第 2 新的提交(验证惰性 skip/take)。
 3. `log` 空仓库:unborn HEAD → 返回**空 vec**(坑3 的 UnbornBranch 分支)。
 4. `commit_files` 首提交:初始提交加 a.txt → 返回 `[a.txt: Added]`(坑1,和空树 diff)。
 5. `commit_files` 改+增:第二提交改 a.txt、加 b.txt → `[a.txt: Modified, b.txt: Added]`。
 6. `commit_files` 删:某提交删 a.txt → 含 `[a.txt: Deleted]`(验证 new_file None 回退 old_file)。
-7. (可选)合并提交:构造一个 merge,断言只反映与第一个父的差异(坑2),或仅在 spec/代码注释写明简化、暂不测。
+7. `commit_files` 重命名按删+增报告:某提交把 a.txt 重命名为 c.txt → 断言结果是 `[a.txt: Deleted, c.txt: Added]`(**不是** Renamed),固化"1b-1 不检测重命名"的行为。
+8. `current_branch`:有提交的仓库 → 返回 `Some("main")`(或 init 时的默认分支名,按 fixture 实际);空仓库 → `None`。
+9. (可选)合并提交:构造一个 merge,断言只反映与第一个父的差异(坑2),或仅在 spec/代码注释写明简化、暂不测。
 
 **app-service(FakeBackend):** `log`/`commit_files` 的 DTO 映射(`FileState`→字符串、`Commit`→`CommitDto`)+ 调用转发。
 
@@ -203,8 +222,11 @@ get_commit_files(repo_path: String, commit_id: String) -> Vec<FileChangeDto>
 
 ---
 
-## 9. 四个 git2 坑(实现务必照做)
+## 9. git2 坑(实现务必照做)
 1. **首次提交无父** → `diff_tree_to_tree(None, Some(&tree), _)` 和空树 diff。
 2. **合并提交只跟第一个父 diff**(`parent(0)`),简化处理,代码注释写明。
-3. **Revwalk** 必须 `push_head()` + `set_sorting(Sort::TIME)`;unborn HEAD 时 `push_head` 报 `UnbornBranch`,返回空历史。
+3. **Revwalk** 必须 `set_sorting(Sort::TIME)` **在** `push_head()` **之前**(set_sorting 会重置遍历,顺序调换则排序失效);unborn HEAD 时 `push_head` 报 `UnbornBranch`,返回空历史。
 4. **分页**用 Revwalk 惰性迭代器的 `.skip(skip).take(limit)`,**不要**先 `collect` 全部再切片(大仓库性能灾难)。
+5. **重命名不检测**:`diff_tree_to_tree` 默认不做相似度检测,重命名报成 Deleted+Added;1b-1 接受此行为,不调 `find_similar`(YAGNI),`Delta::Renamed` 分支当前不命中。
+6. **测试时间戳**:log 排序测试的 fixture 用显式递增时间戳(`Signature::new` + `Time`),避免同秒提交导致 `Sort::TIME` flaky。
+7. **分支名读真实值**:HEAD 徽章经 `current_branch`(`repo.head()?.shorthand()`)取真实分支名,不写死 "main"。
