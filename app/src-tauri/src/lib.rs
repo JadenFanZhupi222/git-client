@@ -1,8 +1,8 @@
-use std::path::PathBuf;
-use std::sync::Arc;
 use app_service::RepoService;
 use git_engine::Git2Backend; // 真实后端
 use ipc_types::{CommitDto, IpcError, StatusDto};
+use std::path::PathBuf;
+use std::sync::Arc;
 
 // 把领域错误翻译成给前端的结构化错误(带 code,前端可据此做分支)
 fn to_ipc(e: git_core::GitError) -> IpcError {
@@ -11,12 +11,16 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         RepoNotFound(_) => ("REPO_NOT_FOUND", false),
         NoHead => ("NO_HEAD", false),
         Cancelled => ("CANCELLED", true),
-        NothingToCommit    => ("NOTHING_TO_COMMIT", false),
+        NothingToCommit => ("NOTHING_TO_COMMIT", false),
         EmptyCommitMessage => ("EMPTY_COMMIT_MESSAGE", false),
-        EmptySignature     => ("EMPTY_SIGNATURE", false),
+        EmptySignature => ("EMPTY_SIGNATURE", false),
         Backend(_) => ("BACKEND", true),
     };
-    IpcError { code: code.into(), message: e.to_string(), recoverable }
+    IpcError {
+        code: code.into(),
+        message: e.to_string(),
+        recoverable,
+    }
 }
 
 /// 命令层:极薄。只做"接参数 → 丢阻塞线程池调 service → 返回"。

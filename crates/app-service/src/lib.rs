@@ -2,11 +2,11 @@
 //! 关键点:它依赖 `dyn GitBackend`(trait 对象),而不是任何具体后端 ——
 //! 后端通过构造函数注入(依赖注入),所以测试时能塞 FakeBackend。
 
-use std::path::Path;
-use std::sync::Arc;
 use git_core::{GitBackend, GitError};
 use ipc_types::CommitDto;
 use ipc_types::StatusDto;
+use std::path::Path;
+use std::sync::Arc;
 
 /// 仓库服务。生产版本里它会演化成第 4 部分讲的 RepoActor(独占状态 + 消息驱动)。
 /// 阶段 0 先用最简单的形式跑通分层。
@@ -56,8 +56,8 @@ impl RepoService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use git_engine::FakeBackend;
     use git_core::model::{FileEntry, FileState};
+    use git_engine::FakeBackend;
 
     #[test]
     fn head_commit_via_fake_backend() {
@@ -70,9 +70,11 @@ mod tests {
 
     #[test]
     fn status_maps_to_dto() {
-        let fb = FakeBackend::with_status(vec![
-            FileEntry { path: "a.txt".into(), state: FileState::Modified, staged: false },
-        ]);
+        let fb = FakeBackend::with_status(vec![FileEntry {
+            path: "a.txt".into(),
+            state: FileState::Modified,
+            staged: false,
+        }]);
         let service = RepoService::new(Arc::new(fb));
         let dto = service.status(Path::new("/r")).unwrap();
         assert_eq!(dto.entries.len(), 1);

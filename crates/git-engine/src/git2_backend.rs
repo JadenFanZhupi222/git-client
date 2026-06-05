@@ -1,6 +1,6 @@
-use std::path::Path;
+use git_core::model::{Commit, FileEntry, FileState, Signature, WorkingTreeStatus};
 use git_core::{GitBackend, GitError};
-use git_core::model::{Commit, Signature, WorkingTreeStatus, FileEntry, FileState};
+use std::path::Path;
 
 /// git2 的 add_path/remove_path 要求"仓库根相对路径"。
 /// 若传入绝对路径,用 workdir 前缀剥成相对路径;否则原样返回。
@@ -8,9 +8,15 @@ use git_core::model::{Commit, Signature, WorkingTreeStatus, FileEntry, FileState
 fn to_repo_relative(repo: &git2::Repository, file: &Path) -> std::path::PathBuf {
     if file.is_absolute()
         && let Some(wd) = repo.workdir()
-            && let Ok(stripped) = file.strip_prefix(wd) {
-                return stripped.to_path_buf();
-            }
+    {
+        // canonicalize 两边再剥前缀:macOS 临时目录 /var 是 /private/var 的符号链接,
+        // 不规范化会导致 strip_prefix 误判失败。canonicalize 失败(如文件已删)时回退原值。
+        let wd_c = wd.canonicalize().unwrap_or_else(|_| wd.to_path_buf());
+        let file_c = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
+        if let Ok(stripped) = file_c.strip_prefix(&wd_c) {
+            return stripped.to_path_buf();
+        }
+    }
     file.to_path_buf()
 }
 
@@ -27,11 +33,12 @@ impl GitBackend for Git2Backend {
     }
 
     fn head_commit(&self, path: &Path) -> Result<Commit, GitError> {
-        let repo = git2::Repository::open(path)
-            .map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
 
         let head = repo.head().map_err(|_| GitError::NoHead)?;
-        let commit = head.peel_to_commit()
+        let commit = head
+            .peel_to_commit()
             .map_err(|e| GitError::Backend(e.to_string()))?;
 
         let id = commit.id().to_string();
@@ -52,9 +59,10 @@ impl GitBackend for Git2Backend {
     }
 
     fn status(&self, path: &Path) -> Result<WorkingTreeStatus, GitError> {
-        let repo = git2::Repository::open(path)
-            .map_err(|e| GitError::RepoNotFound(e.to_string()))?;
-        let statuses = repo.statuses(None)
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let statuses = repo
+            .statuses(None)
             .map_err(|e| GitError::Backend(e.to_string()))?;
 
         let mut entries = Vec::new();
@@ -85,19 +93,23 @@ impl GitBackend for Git2Backend {
     }
 
     fn stage(&self, path: &Path, file: &Path) -> Result<(), GitError> {
-        let repo = git2::Repository::open(path)
-            .map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
         let rel = to_repo_relative(&repo, file);
         let mut index = repo.index().map_err(|e| GitError::Backend(e.to_string()))?;
         // 已知限制(阶段 1):add_path 只覆盖修改/新增;暂存"已删除文件"需 remove_path,留待后续。
-        index.add_path(&rel).map_err(|e| GitError::Backend(e.to_string()))?;
-        index.write().map_err(|e| GitError::Backend(e.to_string()))?;
+        index
+            .add_path(&rel)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        index
+            .write()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
         Ok(())
     }
 
     fn unstage(&self, path: &Path, file: &Path) -> Result<(), GitError> {
-        let repo = git2::Repository::open(path)
-            .map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
         let rel = to_repo_relative(&repo, file);
 
         // ⚠️ 精确判断 unborn:只认 UnbornBranch 这个错误码,别拿 head() 任何报错当无 HEAD。
@@ -115,8 +127,12 @@ impl GitBackend for Git2Backend {
             Err(e) if e.code() == git2::ErrorCode::UnbornBranch => {
                 // 无 HEAD(首次提交前):没有可重置的目标,直接从 index 删除条目。
                 let mut index = repo.index().map_err(|e| GitError::Backend(e.to_string()))?;
-                index.remove_path(&rel).map_err(|e| GitError::Backend(e.to_string()))?;
-                index.write().map_err(|e| GitError::Backend(e.to_string()))?;
+                index
+                    .remove_path(&rel)
+                    .map_err(|e| GitError::Backend(e.to_string()))?;
+                index
+                    .write()
+                    .map_err(|e| GitError::Backend(e.to_string()))?;
             }
             Err(e) => return Err(GitError::Backend(e.to_string())),
         }
@@ -124,15 +140,19 @@ impl GitBackend for Git2Backend {
     }
 
     fn commit(&self, path: &Path, message: &str) -> Result<String, GitError> {
-        let repo = git2::Repository::open(path)
-            .map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
 
         // 读 git config 的身份,未配置 → 友好错误
         let sig = repo.signature().map_err(|_| GitError::EmptySignature)?;
 
         let mut index = repo.index().map_err(|e| GitError::Backend(e.to_string()))?;
-        let tree_oid = index.write_tree().map_err(|e| GitError::Backend(e.to_string()))?;
-        let tree = repo.find_tree(tree_oid).map_err(|e| GitError::Backend(e.to_string()))?;
+        let tree_oid = index
+            .write_tree()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        let tree = repo
+            .find_tree(tree_oid)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
 
         match repo.head() {
             Ok(head_ref) => {
@@ -195,6 +215,22 @@ mod tests {
         let entry = status.entries.iter().find(|e| e.path == "a.txt").unwrap();
         assert!(entry.staged, "stage 后应标记 staged");
         assert_eq!(entry.state, FileState::Added);
+    }
+
+    #[test]
+    fn stage_accepts_absolute_path() {
+        // spec 第 7.1:适配器层兜底把绝对路径剥成仓库根相对路径。
+        let (_tmp, repo) = init_repo();
+        write(&repo, "a.txt", "hello");
+        let backend = Git2Backend;
+
+        let abs = repo.join("a.txt");
+        assert!(abs.is_absolute());
+        backend.stage(&repo, &abs).unwrap();
+
+        let status = backend.status(&repo).unwrap();
+        let entry = status.entries.iter().find(|e| e.path == "a.txt").unwrap();
+        assert!(entry.staged, "传绝对路径也应能正确暂存");
     }
 
     #[test]

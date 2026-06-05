@@ -1,6 +1,6 @@
-use std::path::Path;
-use crate::model::{Commit, WorkingTreeStatus};
 use crate::error::GitError;
+use crate::model::{Commit, WorkingTreeStatus};
+use std::path::Path;
 
 /// 端口(Port):所有 git 后端必须实现它。
 /// 上层只依赖这个 trait,不依赖任何具体实现 —— 这是六边形架构的核心。

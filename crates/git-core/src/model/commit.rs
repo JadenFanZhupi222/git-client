@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// 我们自己的 Commit 模型。底层是 gix 还是 git2,上层和前端都不需要知道。
 #[derive(Debug, Clone, Serialize, Deserialize)]

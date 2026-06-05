@@ -1,7 +1,7 @@
+use git_core::model::{Commit, FileEntry, Signature, WorkingTreeStatus};
+use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use git_core::{GitBackend, GitError};
-use git_core::model::{Commit, Signature, WorkingTreeStatus, FileEntry};
 
 /// 测试/演示用的假后端。阶段 1 起带内部状态,记录被 stage/commit 的调用供断言。
 /// ⚠️ 用 Mutex 而非 RefCell:GitBackend 要求 Send + Sync,RefCell 是 !Sync 编译不过。
@@ -21,9 +21,15 @@ impl FakeBackend {
         *fb.canned_status.lock().unwrap() = entries;
         fb
     }
-    pub fn staged_files(&self) -> Vec<PathBuf> { self.staged.lock().unwrap().clone() }
-    pub fn unstaged_files(&self) -> Vec<PathBuf> { self.unstaged.lock().unwrap().clone() }
-    pub fn commit_messages(&self) -> Vec<String> { self.commits.lock().unwrap().clone() }
+    pub fn staged_files(&self) -> Vec<PathBuf> {
+        self.staged.lock().unwrap().clone()
+    }
+    pub fn unstaged_files(&self) -> Vec<PathBuf> {
+        self.unstaged.lock().unwrap().clone()
+    }
+    pub fn commit_messages(&self) -> Vec<String> {
+        self.commits.lock().unwrap().clone()
+    }
 }
 
 impl GitBackend for FakeBackend {
@@ -37,14 +43,19 @@ impl GitBackend for FakeBackend {
             short_id: "0123456".into(),
             summary: "这是来自 FakeBackend 的假提交".into(),
             body: String::new(),
-            author: Signature { name: "测试者".into(), email: "test@example.com".into() },
+            author: Signature {
+                name: "测试者".into(),
+                email: "test@example.com".into(),
+            },
             timestamp: 1_700_000_000,
             parents: vec![],
         })
     }
 
     fn status(&self, _path: &Path) -> Result<WorkingTreeStatus, GitError> {
-        Ok(WorkingTreeStatus { entries: self.canned_status.lock().unwrap().clone() })
+        Ok(WorkingTreeStatus {
+            entries: self.canned_status.lock().unwrap().clone(),
+        })
     }
 
     fn stage(&self, _path: &Path, file: &Path) -> Result<(), GitError> {
