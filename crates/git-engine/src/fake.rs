@@ -12,6 +12,9 @@ pub struct FakeBackend {
     staged: Mutex<Vec<PathBuf>>,
     unstaged: Mutex<Vec<PathBuf>>,
     commits: Mutex<Vec<String>>,
+    canned_log: Mutex<Vec<Commit>>,
+    canned_commit_files: Mutex<Vec<FileChange>>,
+    canned_branch: Mutex<Option<String>>,
 }
 
 impl FakeBackend {
@@ -29,6 +32,18 @@ impl FakeBackend {
     }
     pub fn commit_messages(&self) -> Vec<String> {
         self.commits.lock().unwrap().clone()
+    }
+    pub fn with_log(self, commits: Vec<Commit>) -> Self {
+        *self.canned_log.lock().unwrap() = commits;
+        self
+    }
+    pub fn with_commit_files(self, files: Vec<FileChange>) -> Self {
+        *self.canned_commit_files.lock().unwrap() = files;
+        self
+    }
+    pub fn with_branch(self, branch: Option<String>) -> Self {
+        *self.canned_branch.lock().unwrap() = branch;
+        self
     }
 }
 
@@ -74,19 +89,20 @@ impl GitBackend for FakeBackend {
     }
 
     fn log(&self, _path: &Path, _limit: usize, _skip: usize) -> Result<Vec<Commit>, GitError> {
-        Ok(Vec::new())
+        Ok(self.canned_log.lock().unwrap().clone())
     }
     fn commit_files(&self, _path: &Path, _commit_id: &str) -> Result<Vec<FileChange>, GitError> {
-        Ok(Vec::new())
+        Ok(self.canned_commit_files.lock().unwrap().clone())
     }
     fn current_branch(&self, _path: &Path) -> Result<Option<String>, GitError> {
-        Ok(None)
+        Ok(self.canned_branch.lock().unwrap().clone())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use git_core::model::{FileState, Signature};
 
     #[test]
     fn records_stage_and_commit() {
@@ -97,5 +113,25 @@ mod tests {
         let sha = fb.commit(Path::new("/r"), "msg").unwrap();
         assert!(!sha.is_empty());
         assert_eq!(fb.commit_messages(), vec!["msg".to_string()]);
+    }
+
+    #[test]
+    fn fake_returns_canned_log_and_files() {
+        let commit = Commit {
+            id: "x".into(),
+            short_id: "x".into(),
+            summary: "s".into(),
+            body: "".into(),
+            author: Signature { name: "n".into(), email: "e".into() },
+            timestamp: 1,
+            parents: vec![],
+        };
+        let fb = FakeBackend::default()
+            .with_log(vec![commit])
+            .with_commit_files(vec![FileChange { path: "a".into(), status: FileState::Added }])
+            .with_branch(Some("main".into()));
+        assert_eq!(fb.log(Path::new("/r"), 10, 0).unwrap().len(), 1);
+        assert_eq!(fb.commit_files(Path::new("/r"), "x").unwrap()[0].path, "a");
+        assert_eq!(fb.current_branch(Path::new("/r")).unwrap(), Some("main".into()));
     }
 }
