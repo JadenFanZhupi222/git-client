@@ -125,8 +125,43 @@ impl GitBackend for Git2Backend {
         Ok(())
     }
 
-    fn commit(&self, _path: &Path, _message: &str) -> Result<String, GitError> {
-        todo!("Task 6")
+    fn commit(&self, path: &Path, message: &str) -> Result<String, GitError> {
+        let repo = git2::Repository::open(path)
+            .map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+
+        // 读 git config 的身份,未配置 → 友好错误
+        let sig = repo.signature().map_err(|_| GitError::EmptySignature)?;
+
+        let mut index = repo.index().map_err(|e| GitError::Backend(e.to_string()))?;
+        let tree_oid = index.write_tree().map_err(|e| GitError::Backend(e.to_string()))?;
+        let tree = repo.find_tree(tree_oid).map_err(|e| GitError::Backend(e.to_string()))?;
+
+        match repo.head() {
+            Ok(head_ref) => {
+                let parent = head_ref
+                    .peel_to_commit()
+                    .map_err(|e| GitError::Backend(e.to_string()))?;
+                // 没有任何改动(tree 与父提交相同)→ 无可提交
+                if parent.tree_id() == tree_oid {
+                    return Err(GitError::NothingToCommit);
+                }
+                let oid = repo
+                    .commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent])
+                    .map_err(|e| GitError::Backend(e.to_string()))?;
+                Ok(oid.to_string())
+            }
+            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => {
+                // 首次提交:index 为空则无可提交,否则空 parents
+                if index.is_empty() {
+                    return Err(GitError::NothingToCommit);
+                }
+                let oid = repo
+                    .commit(Some("HEAD"), &sig, &sig, message, &tree, &[])
+                    .map_err(|e| GitError::Backend(e.to_string()))?;
+                Ok(oid.to_string())
+            }
+            Err(e) => Err(GitError::Backend(e.to_string())),
+        }
     }
 }
 
@@ -195,5 +230,51 @@ mod tests {
         let entry = status.entries.iter().find(|e| e.path == "a.txt").unwrap();
         assert!(!entry.staged, "无 HEAD 时取消暂存应把条目从 index 移除");
         assert_eq!(entry.state, FileState::Untracked);
+    }
+
+    #[test]
+    fn initial_commit_succeeds_and_status_clean() {
+        let (_tmp, repo) = init_repo();
+        let backend = Git2Backend::default();
+        write(&repo, "a.txt", "hello");
+        backend.stage(&repo, Path::new("a.txt")).unwrap();
+
+        let sha = backend.commit(&repo, "init").unwrap();
+        assert_eq!(sha.len(), 40, "返回完整 SHA");
+
+        // 提交后工作区应干净
+        let status = backend.status(&repo).unwrap();
+        assert!(status.entries.is_empty(), "commit 后 status 应为空");
+
+        // HEAD 现在存在且无父提交(首次提交)
+        let g = git2::Repository::open(&repo).unwrap();
+        let head = g.head().unwrap().peel_to_commit().unwrap();
+        assert_eq!(head.parent_count(), 0);
+    }
+
+    #[test]
+    fn second_commit_has_parent() {
+        let (_tmp, repo) = init_repo();
+        let backend = Git2Backend::default();
+        write(&repo, "a.txt", "v1");
+        backend.stage(&repo, Path::new("a.txt")).unwrap();
+        backend.commit(&repo, "init").unwrap();
+
+        write(&repo, "a.txt", "v2");
+        backend.stage(&repo, Path::new("a.txt")).unwrap();
+        backend.commit(&repo, "second").unwrap();
+
+        let g = git2::Repository::open(&repo).unwrap();
+        let head = g.head().unwrap().peel_to_commit().unwrap();
+        assert_eq!(head.parent_count(), 1);
+    }
+
+    #[test]
+    fn commit_nothing_staged_errors() {
+        let (_tmp, repo) = init_repo();
+        let backend = Git2Backend::default();
+        // 全新仓库,index 为空
+        let err = backend.commit(&repo, "empty").unwrap_err();
+        assert!(matches!(err, GitError::NothingToCommit));
     }
 }
