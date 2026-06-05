@@ -1,0 +1,6 @@
+# 锁定整个项目使用的 Rust 工具链版本。
+# rustup 读到这个文件后,会在本目录自动切换/安装指定版本,
+# 保证你、协作者、CI 三方编出来的结果一致(edition 2024 需要 >= 1.85)。
+[toolchain]
+channel = "1.89.0"
+components = ["rustfmt", "clippy"]
