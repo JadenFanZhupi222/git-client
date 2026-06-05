@@ -1,6 +1,6 @@
 use app_service::RepoService;
 use git_engine::Git2Backend; // 真实后端
-use ipc_types::{CommitDto, IpcError, StatusDto};
+use ipc_types::{CommitDto, FileChangeDto, IpcError, StatusDto};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -98,6 +98,39 @@ async fn commit(repo_path: String, message: String) -> Result<String, IpcError> 
     .map_err(to_ipc)
 }
 
+#[tauri::command]
+async fn get_log(repo_path: String, limit: usize, skip: usize) -> Result<Vec<CommitDto>, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(Git2Backend));
+        service.log(&PathBuf::from(repo_path), limit, skip)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn get_commit_files(repo_path: String, commit_id: String) -> Result<Vec<FileChangeDto>, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(Git2Backend));
+        service.commit_files(&PathBuf::from(repo_path), &commit_id)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn get_current_branch(repo_path: String) -> Result<Option<String>, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(Git2Backend));
+        service.current_branch(&PathBuf::from(repo_path))
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -108,7 +141,10 @@ pub fn run() {
             get_status,
             stage_file,
             unstage_file,
-            commit
+            commit,
+            get_log,
+            get_commit_files,
+            get_current_branch
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
