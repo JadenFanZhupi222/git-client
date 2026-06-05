@@ -2,7 +2,7 @@
 //! 生产项目里这里会接入 specta/ts-rs,从这些结构体自动生成 TypeScript 类型,
 //! 让前后端类型在编译期对齐。阶段 0 先保持简单。
 
-use git_core::model::{Commit, FileEntry, FileState, WorkingTreeStatus};
+use git_core::model::{Commit, FileChange, FileEntry, FileState, WorkingTreeStatus};
 use serde::{Deserialize, Serialize};
 
 /// 传给前端的提交 DTO。这里特意和领域模型 Commit 分开:
@@ -75,10 +75,38 @@ impl From<WorkingTreeStatus> for StatusDto {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileChangeDto {
+    pub path: String,
+    pub status: String, // added | modified | deleted | renamed | untracked | conflicted
+}
+
+impl From<FileChange> for FileChangeDto {
+    fn from(c: FileChange) -> Self {
+        let status = match c.status {
+            FileState::Added => "added",
+            FileState::Modified => "modified",
+            FileState::Deleted => "deleted",
+            FileState::Renamed => "renamed",
+            FileState::Untracked => "untracked",
+            FileState::Conflicted => "conflicted",
+        };
+        FileChangeDto { path: c.path, status: status.to_string() }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use git_core::model::{FileEntry, FileState, WorkingTreeStatus};
+
+    #[test]
+    fn maps_file_change_to_dto() {
+        use git_core::model::{FileChange, FileState};
+        let dto = FileChangeDto::from(FileChange { path: "a.rs".into(), status: FileState::Deleted });
+        assert_eq!(dto.path, "a.rs");
+        assert_eq!(dto.status, "deleted");
+    }
 
     #[test]
     fn maps_status_to_dto_with_string_state() {
