@@ -1,0 +1,18 @@
+use std::path::Path;
+use crate::model::{Commit, WorkingTreeStatus};
+use crate::error::GitError;
+
+/// 端口(Port):所有 git 后端必须实现它。
+/// 上层只依赖这个 trait,不依赖任何具体实现 —— 这是六边形架构的核心。
+///
+/// `Send + Sync`:声明这个对象可以安全地跨线程使用(我们要放进多线程环境)。
+pub trait GitBackend: Send + Sync {
+    /// 打开仓库,顺手验证它是不是个有效仓库。
+    fn open(&self, path: &Path) -> Result<(), GitError>;
+
+    /// 读 HEAD 指向的提交。阶段 0 的验证目标。
+    fn head_commit(&self, path: &Path) -> Result<Commit, GitError>;
+
+    /// 工作区状态(阶段 1 用)。
+    fn status(&self, path: &Path) -> Result<WorkingTreeStatus, GitError>;
+}

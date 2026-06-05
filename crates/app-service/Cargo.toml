@@ -1,0 +1,17 @@
+[package]
+name = "app-service"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+git-core = { path = "../git-core" }
+git-engine = { path = "../git-engine", default-features = false }
+ipc-types = { path = "../ipc-types" }
+tracing.workspace = true
+
+[features]
+default = ["git2-backend"]
+git2-backend = ["git-engine/git2-backend"]
+
+[dev-dependencies]
+git-engine = { path = "../git-engine", default-features = false }

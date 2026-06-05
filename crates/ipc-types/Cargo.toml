@@ -1,0 +1,8 @@
+[package]
+name = "ipc-types"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde.workspace = true
+git-core = { path = "../git-core" }

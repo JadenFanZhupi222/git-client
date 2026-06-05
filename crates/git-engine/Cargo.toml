@@ -1,0 +1,14 @@
+[package]
+name = "git-engine"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# 默认启用真实的 git2 后端。验证骨架时可用 --no-default-features 关掉,
+# 只编译纯 Rust 的 FakeBackend(不需要系统 git 库)。
+default = ["git2-backend"]
+git2-backend = ["dep:git2"]
+
+[dependencies]
+git-core = { path = "../git-core" }
+git2 = { version = "0.18", optional = true }

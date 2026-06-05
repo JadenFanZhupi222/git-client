@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/git-core",
+    "crates/git-engine",
+    "crates/app-service",
+    "crates/ipc-types",
+    "app/src-tauri",
+]
+
+# 统一管理依赖版本:子 crate 用 `xxx.workspace = true` 引用,
+# 保证整个项目所有 crate 用的是同一个版本,避免版本碎片。
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+anyhow = "1"
+tracing = "0.1"
