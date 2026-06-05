@@ -213,8 +213,14 @@ impl GitBackend for Git2Backend {
         }
         Ok(out)
     }
-    fn current_branch(&self, _path: &Path) -> Result<Option<String>, GitError> {
-        todo!("Task 4")
+    fn current_branch(&self, path: &Path) -> Result<Option<String>, GitError> {
+        let repo = git2::Repository::open(path)
+            .map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        match repo.head() {
+            Ok(head) => Ok(head.shorthand().map(|s| s.to_string())),
+            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => Ok(None),
+            Err(e) => Err(GitError::Backend(e.to_string())),
+        }
     }
 
     fn commit(&self, path: &Path, message: &str) -> Result<String, GitError> {
