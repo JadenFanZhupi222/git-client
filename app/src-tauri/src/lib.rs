@@ -243,6 +243,17 @@ async fn get_ahead_behind(repo_path: String) -> Result<Option<AheadBehindDto>, I
 }
 
 #[tauri::command]
+async fn get_remotes(repo_path: String) -> Result<Vec<String>, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.remotes(&PathBuf::from(repo_path))
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
 async fn checkout_branch(repo_path: String, name: String) -> Result<(), IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
@@ -365,6 +376,7 @@ pub fn run() {
             get_current_branch,
             list_branches,
             get_ahead_behind,
+            get_remotes,
             checkout_branch,
             create_branch,
             delete_branch,

@@ -103,6 +103,11 @@ export async function getAheadBehind(repoPath: string): Promise<AheadBehindDto |
   return await invoke<AheadBehindDto | null>("get_ahead_behind", { repoPath });
 }
 
+/** 列出远程名(["origin", ...])。 */
+export async function getRemotes(repoPath: string): Promise<string[]> {
+  return await invoke<string[]>("get_remotes", { repoPath });
+}
+
 /** 切换到已有本地分支。脏工作区冲突会抛 IpcError(code: CHECKOUT_CONFLICT)。 */
 export async function checkoutBranch(repoPath: string, name: string): Promise<void> {
   await invoke("checkout_branch", { repoPath, name });

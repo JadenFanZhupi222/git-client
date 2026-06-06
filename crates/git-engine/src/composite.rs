@@ -63,6 +63,9 @@ impl GitBackend for CompositeBackend {
     fn ahead_behind(&self, repo: &Path) -> Result<Option<AheadBehind>, GitError> {
         self.git2.ahead_behind(repo)
     }
+    fn remotes(&self, repo: &Path) -> Result<Vec<String>, GitError> {
+        self.git2.remotes(repo)
+    }
     fn checkout_branch(&self, repo: &Path, name: &str) -> Result<(), GitError> {
         self.git2.checkout_branch(repo, name)
     }

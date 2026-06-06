@@ -60,6 +60,9 @@ pub trait GitBackend: Send + Sync {
     /// 当前分支相对上游的领先/落后数。无上游 / 分离头 / 空仓库 → None。
     fn ahead_behind(&self, repo: &Path) -> Result<Option<AheadBehind>, GitError>;
 
+    /// 列出远程名(如 ["origin", "upstream"]),按 git 返回顺序。
+    fn remotes(&self, repo: &Path) -> Result<Vec<String>, GitError>;
+
     /// 切换到已有的本地分支(更新工作区 + 移动 HEAD)。
     /// 工作区有冲突改动时应失败而非覆盖(安全 checkout)。
     fn checkout_branch(&self, repo: &Path, name: &str) -> Result<(), GitError>;

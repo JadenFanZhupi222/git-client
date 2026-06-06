@@ -431,6 +431,13 @@ impl GitBackend for Git2Backend {
         Ok(Some(AheadBehind { ahead, behind }))
     }
 
+    fn remotes(&self, path: &Path) -> Result<Vec<String>, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let arr = repo.remotes().map_err(|e| GitError::Backend(e.to_string()))?;
+        Ok(arr.iter().flatten().map(|s| s.to_string()).collect())
+    }
+
     fn checkout_branch(&self, path: &Path, name: &str) -> Result<(), GitError> {
         let repo =
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
@@ -1156,6 +1163,18 @@ mod tests {
         let ab = b.ahead_behind(&repo).unwrap().expect("配了上游应有结果");
         assert_eq!(ab.ahead, 1, "本地领先上游 1 个提交");
         assert_eq!(ab.behind, 0, "不落后");
+    }
+
+    #[test]
+    fn remotes_lists_configured_remotes() {
+        let (_tmp, repo) = init_repo();
+        let g = git2::Repository::open(&repo).unwrap();
+        g.remote("origin", "https://example.invalid/a.git").unwrap();
+        g.remote("upstream", "https://example.invalid/b.git").unwrap();
+
+        let mut names = Git2Backend.remotes(&repo).unwrap();
+        names.sort();
+        assert_eq!(names, vec!["origin".to_string(), "upstream".to_string()]);
     }
 
     #[test]

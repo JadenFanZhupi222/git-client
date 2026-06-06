@@ -149,6 +149,11 @@ impl RepoService {
         Ok(self.backend.ahead_behind(repo_path)?.map(AheadBehindDto::from))
     }
 
+    /// 用例:列出远程名。
+    pub fn remotes(&self, repo_path: &Path) -> Result<Vec<String>, GitError> {
+        self.backend.remotes(repo_path)
+    }
+
     /// 用例:切换分支。空名在本层拦截。
     pub fn checkout_branch(&self, repo_path: &Path, name: &str) -> Result<(), GitError> {
         if name.trim().is_empty() {
@@ -396,6 +401,13 @@ mod tests {
     fn ahead_behind_none_passthrough() {
         let svc = RepoService::new(Arc::new(FakeBackend::default()));
         assert!(svc.ahead_behind(Path::new("/r")).unwrap().is_none());
+    }
+
+    #[test]
+    fn remotes_forwards() {
+        let fb = FakeBackend::default().with_remotes(vec!["origin".into(), "upstream".into()]);
+        let svc = RepoService::new(Arc::new(fb));
+        assert_eq!(svc.remotes(Path::new("/r")).unwrap(), vec!["origin", "upstream"]);
     }
 
     #[test]

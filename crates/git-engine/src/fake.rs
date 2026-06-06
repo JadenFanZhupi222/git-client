@@ -22,6 +22,7 @@ pub struct FakeBackend {
     canned_branches: Mutex<Vec<BranchInfo>>,
     canned_refs: Mutex<Vec<CommitRef>>,
     canned_ahead_behind: Mutex<Option<AheadBehind>>,
+    canned_remotes: Mutex<Vec<String>>,
     checked_out: Mutex<Vec<String>>,
     created: Mutex<Vec<String>>,
     deleted: Mutex<Vec<String>>,
@@ -77,6 +78,10 @@ impl FakeBackend {
     }
     pub fn with_ahead_behind(self, ab: AheadBehind) -> Self {
         *self.canned_ahead_behind.lock().unwrap() = Some(ab);
+        self
+    }
+    pub fn with_remotes(self, remotes: Vec<String>) -> Self {
+        *self.canned_remotes.lock().unwrap() = remotes;
         self
     }
     /// 断言用:记录被 checkout 的分支名(按调用顺序)。
@@ -201,6 +206,9 @@ impl GitBackend for FakeBackend {
     }
     fn ahead_behind(&self, _path: &Path) -> Result<Option<AheadBehind>, GitError> {
         Ok(*self.canned_ahead_behind.lock().unwrap())
+    }
+    fn remotes(&self, _path: &Path) -> Result<Vec<String>, GitError> {
+        Ok(self.canned_remotes.lock().unwrap().clone())
     }
     fn checkout_branch(&self, _path: &Path, name: &str) -> Result<(), GitError> {
         self.checked_out.lock().unwrap().push(name.to_string());

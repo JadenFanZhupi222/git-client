@@ -3,7 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
-import { getCurrentBranch, getAheadBehind, watchRepo, onRepoChanged, fetchRemote, pullRemote, pushRemote, type AheadBehindDto, type IpcError } from "./ipc";
+import { getCurrentBranch, getAheadBehind, getRemotes, watchRepo, onRepoChanged, fetchRemote, pullRemote, pushRemote, type AheadBehindDto, type IpcError } from "./ipc";
 import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
@@ -29,6 +29,9 @@ export default function App() {
   const [pushing, setPushing] = useState(false);
   const [pullRebase, setPullRebase] = useState(() => localStorage.getItem("pull.rebase") === "1");
   const [pullMenu, setPullMenu] = useState(false);
+  const [remotes, setRemotes] = useState<string[]>([]);
+  const [selectedRemote, setSelectedRemote] = useState<string | null>(null);
+  const [remoteMenu, setRemoteMenu] = useState(false);
   const toast = useToast();
   const busy = fetching || pulling || pushing;
   // 同步提示:落后 → 建议 Pull;领先 → 建议 Push(无上游时 sync 为 null,不提示)
@@ -45,7 +48,7 @@ export default function App() {
     if (!repo) return;
     setFetching(true);
     try {
-      const r = await fetchRemote(repo);
+      const r = await fetchRemote(repo, selectedRemote ?? undefined);
       // refs 变化会触发文件监听 → 各视图自动重载;这里只用 toast 反馈结果。
       toast({
         kind: "success",
@@ -70,7 +73,7 @@ export default function App() {
     setPullMenu(false);
     setPulling(true);
     try {
-      const r = await pullRemote(repo, rebase);
+      const r = await pullRemote(repo, rebase, selectedRemote ?? undefined);
       // 成功后工作区/HEAD 变化触发文件监听 → 图谱自动前进。
       const upToDate = /up to date|已是最新/i.test(r.summary);
       toast({ kind: "success", title: upToDate ? "已是最新" : rebase ? "已拉取并变基" : "已拉取并合并" });
@@ -87,7 +90,7 @@ export default function App() {
     if (!repo) return;
     setPushing(true);
     try {
-      const r = await pushRemote(repo);
+      const r = await pushRemote(repo, selectedRemote ?? undefined);
       // push 成功后远程跟踪分支前进 → watcher(ref)刷新底栏/角标。
       const upToDate = /up-to-date|up to date|已是最新/i.test(r.summary);
       toast({
@@ -110,12 +113,14 @@ export default function App() {
 
   // 仓库变化时:刷新底栏分支名 + ahead/behind、启动文件监听、订阅变化事件
   useEffect(() => {
-    if (!repo) { setBranch(null); setSync(null); return; }
+    if (!repo) { setBranch(null); setSync(null); setRemotes([]); setSelectedRemote(null); return; }
     const loadInfo = () => {
       getCurrentBranch(repo).then(setBranch).catch(() => setBranch(null));
       getAheadBehind(repo).then(setSync).catch(() => setSync(null));
     };
     loadInfo();
+    getRemotes(repo).then(setRemotes).catch(() => setRemotes([]));
+    setSelectedRemote(null);
     watchRepo(repo).catch(() => {});
     let un: (() => void) | undefined;
     // ref 变化(提交/切分支/fetch/pull/push 后远程跟踪变动)→ 重算分支与同步状态
@@ -139,6 +144,38 @@ export default function App() {
         <div className="ml-auto flex items-center gap-2">
           {repo && (
             <div className="flex items-center gap-1.5">
+              {remotes.length > 1 && (
+                <div className="relative">
+                  <button
+                    onClick={() => setRemoteMenu((o) => !o)}
+                    disabled={busy}
+                    title="选择远程仓库"
+                    className="flex items-center gap-1 rounded-md border border-line-strong bg-elevated px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
+                  >
+                    <span className="max-w-[8rem] truncate font-mono">{selectedRemote ?? remotes[0]}</span>
+                    <ChevronDownIcon width={11} height={11} />
+                  </button>
+                  {remoteMenu && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setRemoteMenu(false)} />
+                      <div className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs shadow-lg">
+                        {remotes.map((r) => (
+                          <button
+                            key={r}
+                            onClick={() => { setSelectedRemote(r); setRemoteMenu(false); }}
+                            className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
+                          >
+                            <span className="grid w-3.5 shrink-0 place-items-center text-accent">
+                              {(selectedRemote ?? remotes[0]) === r ? <CheckIcon width={12} height={12} /> : null}
+                            </span>
+                            <span className="truncate font-mono">{r}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
               <button
                 onClick={doFetch}
                 disabled={busy}
