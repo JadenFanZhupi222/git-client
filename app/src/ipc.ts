@@ -61,6 +61,11 @@ export async function unstageHunk(repoPath: string, file: string, hunkIndex: num
   await invoke("unstage_hunk", { repoPath, file, hunkIndex });
 }
 
+/** 暂存某未暂存 hunk 中的指定行(lines 为该 hunk 内行下标)。 */
+export async function stageLines(repoPath: string, file: string, hunkIndex: number, lines: number[]): Promise<void> {
+  await invoke("stage_lines", { repoPath, file, hunkIndex, lines });
+}
+
 export async function commit(repoPath: string, message: string): Promise<string> {
   return await invoke<string>("commit", { repoPath, message });
 }

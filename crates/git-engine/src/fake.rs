@@ -220,6 +220,13 @@ impl GitBackend for FakeBackend {
             .push((file.to_string(), hunk_index));
         Ok(())
     }
+    fn stage_lines(&self, _path: &Path, file: &str, hunk_index: usize, lines: &[usize]) -> Result<(), GitError> {
+        self.staged_hunks
+            .lock()
+            .unwrap()
+            .push((format!("{file}#{hunk_index}:{lines:?}"), lines.len()));
+        Ok(())
+    }
     fn branches(&self, _path: &Path) -> Result<Vec<BranchInfo>, GitError> {
         Ok(self.canned_branches.lock().unwrap().clone())
     }
