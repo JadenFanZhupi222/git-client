@@ -3,7 +3,7 @@
 //! 后端通过构造函数注入(依赖注入),所以测试时能塞 FakeBackend。
 
 use git_core::{GitBackend, GitError};
-use ipc_types::{CommitDto, FileChangeDto, StatusDto};
+use ipc_types::{CommitDto, FileChangeDto, FileDiffDto, StatusDto};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -64,6 +64,17 @@ impl RepoService {
         Ok(files.into_iter().map(FileChangeDto::from).collect())
     }
 
+    /// 用例:某提交中单个文件的行级 diff。
+    pub fn commit_file_diff(
+        &self,
+        repo_path: &Path,
+        commit_id: &str,
+        file: &str,
+    ) -> Result<FileDiffDto, GitError> {
+        let diff = self.backend.commit_file_diff(repo_path, commit_id, file)?;
+        Ok(FileDiffDto::from(diff))
+    }
+
     /// 用例:当前 HEAD 分支短名;分离头/空仓库返回 None。
     pub fn current_branch(&self, repo_path: &Path) -> Result<Option<String>, GitError> {
         self.backend.current_branch(repo_path)
@@ -106,6 +117,31 @@ mod tests {
         let dtos = svc.log(Path::new("/r"), 10, 0).unwrap();
         assert_eq!(dtos.len(), 1);
         assert_eq!(dtos[0].summary, "hi");
+    }
+
+    #[test]
+    fn commit_file_diff_maps_dto() {
+        use git_core::model::{DiffLine, DiffLineKind, FileDiff, Hunk};
+        let fb = FakeBackend::default().with_file_diff(FileDiff {
+            path: "a.txt".into(),
+            is_binary: false,
+            hunks: vec![Hunk {
+                header: "@@ -1 +1 @@".into(),
+                lines: vec![DiffLine {
+                    kind: DiffLineKind::Addition,
+                    old_lineno: None,
+                    new_lineno: Some(1),
+                    content: "hi".into(),
+                }],
+            }],
+        });
+        let svc = RepoService::new(Arc::new(fb));
+        let dto = svc.commit_file_diff(Path::new("/r"), "x", "a.txt").unwrap();
+        assert_eq!(dto.path, "a.txt");
+        assert!(!dto.is_binary);
+        assert_eq!(dto.hunks.len(), 1);
+        assert_eq!(dto.hunks[0].lines[0].kind, "add");
+        assert_eq!(dto.hunks[0].lines[0].new_lineno, Some(1));
     }
 
     #[test]

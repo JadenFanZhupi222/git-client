@@ -67,3 +67,29 @@ export async function getCommitFiles(repoPath: string, commitId: string): Promis
 export async function getCurrentBranch(repoPath: string): Promise<string | null> {
   return await invoke<string | null>("get_current_branch", { repoPath });
 }
+
+export interface DiffLineDto {
+  kind: string; // "context" | "add" | "del"
+  old_lineno: number | null;
+  new_lineno: number | null;
+  content: string;
+}
+
+export interface HunkDto {
+  header: string;
+  lines: DiffLineDto[];
+}
+
+export interface FileDiffDto {
+  path: string;
+  is_binary: boolean;
+  hunks: HunkDto[];
+}
+
+export async function getCommitFileDiff(
+  repoPath: string,
+  commitId: string,
+  file: string,
+): Promise<FileDiffDto> {
+  return await invoke<FileDiffDto>("get_commit_file_diff", { repoPath, commitId, file });
+}

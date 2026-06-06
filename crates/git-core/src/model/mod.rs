@@ -3,5 +3,5 @@ mod diff;
 mod status;
 
 pub use commit::{Commit, Signature};
-pub use diff::FileChange;
+pub use diff::{DiffLine, DiffLineKind, FileChange, FileDiff, Hunk};
 pub use status::{FileEntry, FileState, WorkingTreeStatus};
