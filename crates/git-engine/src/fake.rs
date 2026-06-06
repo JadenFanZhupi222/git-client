@@ -245,6 +245,10 @@ impl GitBackend for FakeBackend {
         self.conflict_ops.lock().unwrap().push("abort".into());
         Ok(())
     }
+    fn cherry_pick(&self, _path: &Path, commit_id: &str) -> Result<(), GitError> {
+        self.conflict_ops.lock().unwrap().push(format!("cherry-pick:{commit_id}"));
+        Ok(())
+    }
     fn ahead_behind(&self, _path: &Path) -> Result<Option<AheadBehind>, GitError> {
         Ok(*self.canned_ahead_behind.lock().unwrap())
     }

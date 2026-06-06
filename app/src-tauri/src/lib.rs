@@ -390,6 +390,17 @@ async fn abort_op(repo_path: String) -> Result<(), IpcError> {
     .map_err(to_ipc)
 }
 
+#[tauri::command]
+async fn cherry_pick(repo_path: String, commit_id: String) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.cherry_pick(&PathBuf::from(repo_path), &commit_id)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
 /// 读工作区某文件原文(用于冲突文件只读展示)。不经 git,直接 fs;防目录穿越。
 #[tauri::command]
 async fn read_working_file(repo_path: String, file: String) -> Result<String, IpcError> {
@@ -533,6 +544,7 @@ pub fn run() {
             resolve_theirs,
             continue_op,
             abort_op,
+            cherry_pick,
             read_working_file,
             stash_list,
             stash_save,

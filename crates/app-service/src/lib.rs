@@ -188,6 +188,13 @@ impl RepoService {
     pub fn abort_op(&self, repo_path: &Path) -> Result<(), GitError> {
         self.backend.abort_op(repo_path)
     }
+    /// 把某提交拣选到当前分支。
+    pub fn cherry_pick(&self, repo_path: &Path, commit_id: &str) -> Result<(), GitError> {
+        if commit_id.trim().is_empty() {
+            return Err(GitError::Backend("提交 ID 不能为空".into()));
+        }
+        self.backend.cherry_pick(repo_path, commit_id)
+    }
 
     // ---- 贮藏 ----
     pub fn stash_list(&self, repo_path: &Path) -> Result<Vec<StashDto>, GitError> {
@@ -480,7 +487,11 @@ mod tests {
         svc.resolve_theirs(Path::new("/r"), "b.txt").unwrap();
         svc.continue_op(Path::new("/r")).unwrap();
         svc.abort_op(Path::new("/r")).unwrap();
-        assert_eq!(fb.conflict_ops(), vec!["ours:a.txt", "theirs:b.txt", "continue", "abort"]);
+        svc.cherry_pick(Path::new("/r"), "abc123").unwrap();
+        assert_eq!(
+            fb.conflict_ops(),
+            vec!["ours:a.txt", "theirs:b.txt", "continue", "abort", "cherry-pick:abc123"]
+        );
     }
 
     #[test]

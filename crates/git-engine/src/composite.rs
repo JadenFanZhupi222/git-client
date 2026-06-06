@@ -78,6 +78,9 @@ impl GitBackend for CompositeBackend {
         let state = self.git2.repo_state(repo)?;
         self.cli.abort_op(repo, state)
     }
+    fn cherry_pick(&self, repo: &Path, commit_id: &str) -> Result<(), GitError> {
+        self.cli.cherry_pick(repo, commit_id)
+    }
     fn ahead_behind(&self, repo: &Path) -> Result<Option<AheadBehind>, GitError> {
         self.git2.ahead_behind(repo)
     }
