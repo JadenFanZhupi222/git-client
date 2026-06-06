@@ -4,7 +4,7 @@ import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
 import { getCurrentBranch, watchRepo, onRepoChanged, fetchRemote, type IpcError } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon, FetchIcon } from "./components/icons";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon, SpinnerIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { useToast } from "./components/Toast";
 import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
@@ -70,6 +70,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col bg-canvas text-fg">
+      {fetching && <TopProgress />}
       {/* 顶栏:轻、紧凑、左标题右仓库 */}
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line px-3">
         <div className="flex items-center gap-2 font-semibold">
@@ -85,7 +86,11 @@ export default function App() {
               title="Fetch(从远程拉取更新)"
               className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50"
             >
-              <FetchIcon width={13} height={13} className={fetching ? "animate-spin" : ""} />
+              {fetching ? (
+                <SpinnerIcon width={13} height={13} />
+              ) : (
+                <FetchIcon width={13} height={13} />
+              )}
               {fetching ? "Fetch…" : "Fetch"}
             </button>
           )}
@@ -135,6 +140,15 @@ export default function App() {
           </span>
         </footer>
       )}
+    </div>
+  );
+}
+
+/** 顶部不确定态进度条:非阻塞的全局加载信号(fetch 等后台操作进行时显示) */
+function TopProgress() {
+  return (
+    <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] h-0.5 overflow-hidden bg-accent/15">
+      <div className="progress-bar h-full w-1/3 bg-accent" />
     </div>
   );
 }

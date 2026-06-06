@@ -76,6 +76,14 @@ export const FetchIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+/** 圆环 + 缺口 spinner(径向对称,旋转顺滑)。始终自旋。 */
+export const SpinnerIcon = ({ className = "", ...p }: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p} className={`animate-spin ${className}`}>
+    <circle cx="8" cy="8" r="6" opacity="0.25" />
+    <path d="M8 2a6 6 0 0 1 6 6" />
+  </svg>
+);
+
 export const AlertIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
     <path d="M8 2.5 1.5 13.5h13L8 2.5Z" />
