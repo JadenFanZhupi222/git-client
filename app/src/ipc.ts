@@ -208,6 +208,11 @@ export async function readWorkingFile(repoPath: string, file: string): Promise<s
   return await invoke<string>("read_working_file", { repoPath, file });
 }
 
+/** 写入解决后的内容并标记已解决(写文件 + git add)。 */
+export async function writeResolved(repoPath: string, file: string, content: string): Promise<void> {
+  await invoke("write_resolved", { repoPath, file, content });
+}
+
 /** 把某提交拣选到当前分支。冲突抛 MERGE_CONFLICT(进入 cherry-pick 中)。 */
 export async function cherryPick(repoPath: string, commitId: string): Promise<void> {
   await invoke("cherry_pick", { repoPath, commitId });
