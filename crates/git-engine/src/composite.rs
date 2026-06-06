@@ -1,7 +1,8 @@
 use crate::cli_backend::CliBackend;
 use crate::git2_backend::Git2Backend;
 use git_core::model::{
-    BranchInfo, Commit, FetchOutcome, FileChange, FileDiff, PullOutcome, WorkingTreeStatus,
+    BranchInfo, Commit, FetchOutcome, FileChange, FileDiff, PullOutcome, PushOutcome,
+    WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -69,6 +70,9 @@ impl GitBackend for CompositeBackend {
     }
     fn pull(&self, repo: &Path, remote: Option<&str>) -> Result<PullOutcome, GitError> {
         self.cli.pull(repo, remote)
+    }
+    fn push(&self, repo: &Path, remote: Option<&str>) -> Result<PushOutcome, GitError> {
+        self.cli.push(repo, remote)
     }
 }
 
