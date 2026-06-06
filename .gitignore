@@ -11,5 +11,8 @@ node_modules
 # macOS 目录元数据垃圾文件
 .DS_Store
 
+# JetBrains IDE 项目配置
+.idea/
+
 # Brainstorm 可视化伴侣临时文件
 .superpowers/
