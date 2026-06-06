@@ -33,6 +33,18 @@
   --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
 }
 
+/* 提交图谱泳道调色板(数据可视化色,与语义 UI token 分开)。 */
+:root {
+  --lane-0: #58a6ff;
+  --lane-1: #3fb950;
+  --lane-2: #d29922;
+  --lane-3: #db61a2;
+  --lane-4: #a371f7;
+  --lane-5: #f85149;
+  --lane-6: #2dd4bf;
+  --lane-7: #e3b341;
+}
+
 /* 全局基线 */
 html,
 body,

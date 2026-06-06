@@ -1,7 +1,7 @@
 use app_service::RepoService;
 use app_service::watcher::{ChangeKind, RepoWatcher};
 use git_engine::Git2Backend; // 真实后端
-use ipc_types::{CommitDto, FileChangeDto, FileDiffDto, IpcError, StatusDto};
+use ipc_types::{CommitDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError, StatusDto};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -146,6 +146,17 @@ async fn get_commit_file_diff(
 }
 
 #[tauri::command]
+async fn get_commit_graph(repo_path: String, limit: usize) -> Result<Vec<GraphRowDto>, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(Git2Backend));
+        service.commit_graph(&PathBuf::from(repo_path), limit)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
 async fn get_current_branch(repo_path: String) -> Result<Option<String>, IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(Git2Backend));
@@ -202,6 +213,7 @@ pub fn run() {
             get_log,
             get_commit_files,
             get_commit_file_diff,
+            get_commit_graph,
             get_current_branch,
             watch_repo
         ])

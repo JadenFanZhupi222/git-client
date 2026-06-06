@@ -3,10 +3,11 @@
 //! 后端通过构造函数注入(依赖注入),所以测试时能塞 FakeBackend。
 
 use git_core::{GitBackend, GitError};
-use ipc_types::{CommitDto, FileChangeDto, FileDiffDto, StatusDto};
+use ipc_types::{CommitDto, FileChangeDto, FileDiffDto, GraphRowDto, StatusDto};
 use std::path::Path;
 use std::sync::Arc;
 
+pub mod graph;
 pub mod watcher;
 
 /// 仓库服务。生产版本里它会演化成第 4 部分讲的 RepoActor(独占状态 + 消息驱动)。
@@ -54,6 +55,17 @@ impl RepoService {
     ) -> Result<Vec<CommitDto>, GitError> {
         let commits = self.backend.log(repo_path, limit, skip)?;
         Ok(commits.into_iter().map(CommitDto::from).collect())
+    }
+
+    /// 用例:提交图谱。取 HEAD 起 limit 条提交,算 lane 布局后返回。
+    /// 从头(skip=0)整段计算,保证泳道一致。
+    pub fn commit_graph(
+        &self,
+        repo_path: &Path,
+        limit: usize,
+    ) -> Result<Vec<GraphRowDto>, GitError> {
+        let commits = self.backend.log(repo_path, limit, 0)?;
+        Ok(crate::graph::layout(&commits))
     }
 
     /// 用例:某提交改动的文件列表。
@@ -119,6 +131,30 @@ mod tests {
         let dtos = svc.log(Path::new("/r"), 10, 0).unwrap();
         assert_eq!(dtos.len(), 1);
         assert_eq!(dtos[0].summary, "hi");
+    }
+
+    #[test]
+    fn commit_graph_lays_out_log() {
+        use git_core::model::{Commit, Signature};
+        let mk = |id: &str, parents: Vec<&str>| Commit {
+            id: id.into(),
+            short_id: id.into(),
+            summary: "s".into(),
+            body: String::new(),
+            author: Signature {
+                name: "n".into(),
+                email: "e".into(),
+            },
+            timestamp: 0,
+            parents: parents.iter().map(|s| s.to_string()).collect(),
+        };
+        let fb = FakeBackend::default().with_log(vec![mk("a", vec!["b"]), mk("b", vec![])]);
+        let svc = RepoService::new(Arc::new(fb));
+        let rows = svc.commit_graph(Path::new("/r"), 10).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].commit.id, "a");
+        assert_eq!(rows[0].commit.parents, vec!["b".to_string()]);
+        assert_eq!(rows[0].column, 0);
     }
 
     #[test]
