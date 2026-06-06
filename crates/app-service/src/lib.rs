@@ -4,8 +4,8 @@
 
 use git_core::{GitBackend, GitError};
 use ipc_types::{
-    BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto,
-    PushResultDto, RefDto, StatusDto,
+    AheadBehindDto, BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto,
+    PullResultDto, PushResultDto, RefDto, StatusDto,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -116,6 +116,11 @@ impl RepoService {
     pub fn branches(&self, repo_path: &Path) -> Result<Vec<BranchDto>, GitError> {
         let list = self.backend.branches(repo_path)?;
         Ok(list.into_iter().map(BranchDto::from).collect())
+    }
+
+    /// 用例:当前分支相对上游的领先/落后;无上游返回 None。
+    pub fn ahead_behind(&self, repo_path: &Path) -> Result<Option<AheadBehindDto>, GitError> {
+        Ok(self.backend.ahead_behind(repo_path)?.map(AheadBehindDto::from))
     }
 
     /// 用例:切换分支。空名在本层拦截。
@@ -344,6 +349,22 @@ mod tests {
         assert_eq!(dtos[0].name, "main");
         assert!(dtos[0].is_head);
         assert!(!dtos[1].is_head);
+    }
+
+    #[test]
+    fn ahead_behind_forwards_and_maps() {
+        use git_core::model::AheadBehind;
+        let fb = FakeBackend::default().with_ahead_behind(AheadBehind { ahead: 2, behind: 3 });
+        let svc = RepoService::new(Arc::new(fb));
+        let ab = svc.ahead_behind(Path::new("/r")).unwrap().expect("应有结果");
+        assert_eq!(ab.ahead, 2);
+        assert_eq!(ab.behind, 3);
+    }
+
+    #[test]
+    fn ahead_behind_none_passthrough() {
+        let svc = RepoService::new(Arc::new(FakeBackend::default()));
+        assert!(svc.ahead_behind(Path::new("/r")).unwrap().is_none());
     }
 
     #[test]
