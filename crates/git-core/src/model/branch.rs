@@ -29,6 +29,8 @@ pub enum RefKind {
     LocalBranch,
     /// 远程跟踪分支 refs/remotes/*(如 origin/main)。
     RemoteBranch,
+    /// 标签 refs/tags/*。
+    Tag,
 }
 
 /// 一个指向某 commit 的引用。图谱据此在对应提交上画分支/远程标签。

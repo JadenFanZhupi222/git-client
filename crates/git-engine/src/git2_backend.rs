@@ -390,6 +390,21 @@ impl GitBackend for Git2Backend {
             }
         }
 
+        // 标签 refs/tags/*(轻量标签直接指向 commit;附注标签 peel 到 commit)。
+        if let Ok(iter) = repo.references_glob("refs/tags/*") {
+            for r in iter.flatten() {
+                let Some(full) = r.name() else { continue };
+                let name = full.strip_prefix("refs/tags/").unwrap_or(full).to_string();
+                if let Ok(commit) = r.peel_to_commit() {
+                    out.push(CommitRef {
+                        name,
+                        kind: RefKind::Tag,
+                        target: commit.id().to_string(),
+                    });
+                }
+            }
+        }
+
         // HEAD:用当前分支短名;分离头则名为 "HEAD"。空仓库(未出生)跳过。
         match repo.head() {
             Ok(head) => {
@@ -1124,8 +1139,14 @@ mod tests {
         // 手动建一个远程跟踪 ref origin/main 指向同一提交
         g.reference("refs/remotes/origin/main", commit.id(), true, "arrange")
             .unwrap();
+        // 轻量标签
+        g.reference("refs/tags/v1.0", commit.id(), true, "arrange").unwrap();
 
         let refs = Git2Backend.refs(&repo).unwrap();
+        assert!(
+            refs.iter().any(|r| r.kind == RefKind::Tag && r.name == "v1.0"),
+            "应含标签 v1.0"
+        );
         assert!(
             refs.iter().any(|r| r.kind == RefKind::Head),
             "应含 HEAD 引用"
