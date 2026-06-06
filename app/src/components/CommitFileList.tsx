@@ -31,10 +31,18 @@ export function CommitFileList({
             }`}
           >
             <span className={`w-3.5 shrink-0 text-center text-xs font-semibold ${s.cls}`}>{s.letter}</span>
-            <span className="truncate">
+            <span className="min-w-0 flex-1 truncate">
               {dir && <span className="text-fg-subtle">{dir}</span>}
               <span className="text-fg">{name}</span>
             </span>
+            {/* 增删行数(diff --stat);二进制为 0/0 → 不显示 */}
+            {(f.additions > 0 || f.deletions > 0) && (
+              <span className="shrink-0 text-[11px] tabular-nums">
+                {f.additions > 0 && <span className="text-success">+{f.additions}</span>}
+                {f.additions > 0 && f.deletions > 0 && " "}
+                {f.deletions > 0 && <span className="text-danger">−{f.deletions}</span>}
+              </span>
+            )}
           </div>
         );
       })}

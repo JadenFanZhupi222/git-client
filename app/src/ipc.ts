@@ -68,6 +68,8 @@ export async function commit(repoPath: string, message: string): Promise<string>
 export interface FileChangeDto {
   path: string;
   status: string; // added | modified | deleted | renamed
+  additions: number;
+  deletions: number;
 }
 
 export async function getLog(repoPath: string, limit: number, skip: number): Promise<CommitDto[]> {
