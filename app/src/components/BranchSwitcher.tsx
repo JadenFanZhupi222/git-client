@@ -1,13 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { listBranches, checkoutBranch, type BranchDto, type IpcError } from "../ipc";
-import { BranchIcon, CheckIcon } from "./icons";
+import {
+  listBranches,
+  checkoutBranch,
+  createBranch,
+  deleteBranch,
+  type BranchDto,
+  type IpcError,
+} from "../ipc";
+import { BranchIcon, CheckIcon, PlusIcon, TrashIcon } from "./icons";
 
 /**
- * 底栏分支切换器(VSCode 状态栏式):点当前分支名 → 向上弹出本地分支列表 →
- * 点选即 checkout。脏工作区冲突等错误就地提示,不打断。
- *
- * 切换成功后:① 立刻回调更新外层分支名(手感跟手);
- * ② 工作区/HEAD 变化会触发文件监听的 repo-changed,各视图自动重载。
+ * 底栏分支切换器(VSCode 状态栏式):点当前分支名 → 向上弹出本地分支列表。
+ * 支持:点选 checkout、新建分支(建完即切)、删除分支(行内二次确认)。
+ * 错误就地提示;切换/新建成功即时回调 onSwitched,文件监听会让各视图自动重载。
  */
 export function BranchSwitcher({
   repo,
@@ -22,42 +27,55 @@ export function BranchSwitcher({
   const [branches, setBranches] = useState<BranchDto[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null); // 正在 checkout 的分支名
+  const [busy, setBusy] = useState<string | null>(null); // 正在操作的分支名
   const [filter, setFilter] = useState("");
-  const rootRef = useRef<HTMLDivElement>(null);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const newInputRef = useRef<HTMLInputElement>(null);
 
-  // 打开时拉取分支列表
-  useEffect(() => {
-    if (!open) return;
+  function refresh() {
     setLoading(true);
     setError(null);
-    listBranches(repo)
+    return listBranches(repo)
       .then(setBranches)
       .catch((e) => setError((e as IpcError).message ?? String(e)))
       .finally(() => setLoading(false));
+  }
+
+  // 打开时拉取分支列表
+  useEffect(() => {
+    if (open) refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, repo]);
 
-  // Esc 关闭 + 打开时聚焦过滤框
+  // Esc 关闭
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") close();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // 进入新建态时聚焦输入框
+  useEffect(() => {
+    if (creating) newInputRef.current?.focus();
+  }, [creating]);
 
   function close() {
     setOpen(false);
     setFilter("");
     setError(null);
+    setCreating(false);
+    setNewName("");
+    setConfirmDelete(null);
   }
 
   async function select(name: string) {
-    if (name === branch) {
-      close();
-      return;
-    }
+    if (name === branch) return close();
     setBusy(name);
     setError(null);
     try {
@@ -71,10 +89,41 @@ export function BranchSwitcher({
     }
   }
 
+  async function create(e: React.FormEvent) {
+    e.preventDefault();
+    const name = newName.trim();
+    if (!name) return;
+    setBusy(name);
+    setError(null);
+    try {
+      await createBranch(repo, name, true); // 建完即切
+      onSwitched(name);
+      close();
+    } catch (e) {
+      setError((e as IpcError).message ?? String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function doDelete(name: string) {
+    setBusy(name);
+    setError(null);
+    try {
+      await deleteBranch(repo, name);
+      setConfirmDelete(null);
+      await refresh();
+    } catch (e) {
+      setError((e as IpcError).message ?? String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const shown = branches.filter((b) => b.name.toLowerCase().includes(filter.toLowerCase()));
 
   return (
-    <div ref={rootRef} className="relative">
+    <div className="relative">
       <button
         onClick={() => (open ? close() : setOpen(true))}
         title="切换分支"
@@ -87,7 +136,6 @@ export function BranchSwitcher({
 
       {open && (
         <>
-          {/* 点击空白处关闭 */}
           <div className="fixed inset-0 z-40" onClick={close} />
           <div className="absolute bottom-full left-0 z-50 mb-1.5 w-64 overflow-hidden rounded-md border border-line-strong bg-elevated shadow-lg">
             <div className="border-b border-line p-1.5">
@@ -104,7 +152,7 @@ export function BranchSwitcher({
               <p className="border-b border-line px-2.5 py-1.5 text-[11px] text-danger">{error}</p>
             )}
 
-            <ul className="max-h-72 overflow-y-auto py-1">
+            <ul className="max-h-64 overflow-y-auto py-1">
               {loading ? (
                 <li className="px-2.5 py-1.5 text-xs text-fg-subtle">加载中…</li>
               ) : shown.length === 0 ? (
@@ -114,12 +162,13 @@ export function BranchSwitcher({
               ) : (
                 shown.map((b) => {
                   const current = b.name === branch || b.is_head;
+                  const confirming = confirmDelete === b.name;
                   return (
-                    <li key={b.name}>
+                    <li key={b.name} className="group flex items-center pr-1.5">
                       <button
                         onClick={() => select(b.name)}
                         disabled={busy !== null}
-                        className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-overlay disabled:opacity-50 ${
+                        className={`flex min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-overlay disabled:opacity-50 ${
                           current ? "text-fg" : "text-fg-muted"
                         }`}
                       >
@@ -127,19 +176,84 @@ export function BranchSwitcher({
                           {current ? <CheckIcon width={12} height={12} /> : null}
                         </span>
                         <span className="truncate font-mono">{b.name}</span>
-                        {busy === b.name && (
-                          <span className="ml-auto text-[10px] text-fg-subtle">切换中…</span>
-                        )}
                       </button>
+
+                      {/* 当前分支不可删 */}
+                      {!current &&
+                        (confirming ? (
+                          <span className="flex shrink-0 items-center gap-0.5">
+                            <button
+                              onClick={() => doDelete(b.name)}
+                              disabled={busy !== null}
+                              title="确认删除"
+                              className="rounded p-1 text-danger hover:bg-danger/10 disabled:opacity-50"
+                            >
+                              <CheckIcon width={12} height={12} />
+                            </button>
+                            <button
+                              onClick={() => setConfirmDelete(null)}
+                              title="取消"
+                              className="rounded p-1 text-fg-subtle hover:bg-overlay"
+                            >
+                              <CloseGlyph />
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmDelete(b.name)}
+                            title="删除分支"
+                            className="shrink-0 rounded p-1 text-fg-subtle opacity-0 transition-opacity hover:bg-overlay hover:text-danger group-hover:opacity-100"
+                          >
+                            <TrashIcon width={12} height={12} />
+                          </button>
+                        ))}
                     </li>
                   );
                 })
               )}
             </ul>
+
+            {/* 新建分支 */}
+            <div className="border-t border-line p-1.5">
+              {creating ? (
+                <form onSubmit={create} className="flex items-center gap-1">
+                  <input
+                    ref={newInputRef}
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder="新分支名(基于当前 HEAD)…"
+                    className="min-w-0 flex-1 rounded bg-canvas px-2 py-1 font-mono text-xs text-fg placeholder:text-fg-subtle focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!newName.trim() || busy !== null}
+                    className="shrink-0 rounded bg-done px-2 py-1 text-xs text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+                  >
+                    创建
+                  </button>
+                </form>
+              ) : (
+                <button
+                  onClick={() => setCreating(true)}
+                  className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
+                >
+                  <PlusIcon width={12} height={12} />
+                  新建分支
+                </button>
+              )}
+            </div>
           </div>
         </>
       )}
     </div>
+  );
+}
+
+function CloseGlyph() {
+  return (
+    <svg width={12} height={12} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+      <path d="M4 4l8 8M12 4l-8 8" />
+    </svg>
   );
 }
 

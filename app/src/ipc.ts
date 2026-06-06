@@ -86,6 +86,16 @@ export async function checkoutBranch(repoPath: string, name: string): Promise<vo
   await invoke("checkout_branch", { repoPath, name });
 }
 
+/** 在 HEAD 新建分支;checkout=true 时建完即切过去。同名抛 BRANCH_EXISTS。 */
+export async function createBranch(repoPath: string, name: string, checkout: boolean): Promise<void> {
+  await invoke("create_branch", { repoPath, name, checkout });
+}
+
+/** 删除本地分支。删当前分支抛 CANNOT_DELETE_CURRENT。 */
+export async function deleteBranch(repoPath: string, name: string): Promise<void> {
+  await invoke("delete_branch", { repoPath, name });
+}
+
 export interface DiffLineDto {
   kind: string; // "context" | "add" | "del"
   old_lineno: number | null;

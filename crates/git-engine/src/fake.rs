@@ -20,6 +20,8 @@ pub struct FakeBackend {
     canned_file_diff: Mutex<FileDiff>,
     canned_branches: Mutex<Vec<BranchInfo>>,
     checked_out: Mutex<Vec<String>>,
+    created: Mutex<Vec<String>>,
+    deleted: Mutex<Vec<String>>,
 }
 
 impl FakeBackend {
@@ -61,6 +63,12 @@ impl FakeBackend {
     /// 断言用:记录被 checkout 的分支名(按调用顺序)。
     pub fn checked_out_branches(&self) -> Vec<String> {
         self.checked_out.lock().unwrap().clone()
+    }
+    pub fn created_branches(&self) -> Vec<String> {
+        self.created.lock().unwrap().clone()
+    }
+    pub fn deleted_branches(&self) -> Vec<String> {
+        self.deleted.lock().unwrap().clone()
     }
 }
 
@@ -127,6 +135,14 @@ impl GitBackend for FakeBackend {
     }
     fn checkout_branch(&self, _path: &Path, name: &str) -> Result<(), GitError> {
         self.checked_out.lock().unwrap().push(name.to_string());
+        Ok(())
+    }
+    fn create_branch(&self, _path: &Path, name: &str) -> Result<(), GitError> {
+        self.created.lock().unwrap().push(name.to_string());
+        Ok(())
+    }
+    fn delete_branch(&self, _path: &Path, name: &str) -> Result<(), GitError> {
+        self.deleted.lock().unwrap().push(name.to_string());
         Ok(())
     }
 }

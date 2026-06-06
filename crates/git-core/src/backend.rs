@@ -49,4 +49,10 @@ pub trait GitBackend: Send + Sync {
     /// 切换到已有的本地分支(更新工作区 + 移动 HEAD)。
     /// 工作区有冲突改动时应失败而非覆盖(安全 checkout)。
     fn checkout_branch(&self, repo: &Path, name: &str) -> Result<(), GitError>;
+
+    /// 在当前 HEAD 上新建本地分支(不切换)。同名已存在 → 错误。
+    fn create_branch(&self, repo: &Path, name: &str) -> Result<(), GitError>;
+
+    /// 删除本地分支。不能删除当前所在分支。
+    fn delete_branch(&self, repo: &Path, name: &str) -> Result<(), GitError>;
 }

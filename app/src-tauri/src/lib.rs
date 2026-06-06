@@ -24,6 +24,8 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         EmptyCommitMessage => ("EMPTY_COMMIT_MESSAGE", false),
         EmptySignature => ("EMPTY_SIGNATURE", false),
         BranchNotFound(_) => ("BRANCH_NOT_FOUND", false),
+        BranchAlreadyExists(_) => ("BRANCH_EXISTS", false),
+        CannotDeleteCurrentBranch => ("CANNOT_DELETE_CURRENT", false),
         CheckoutConflict => ("CHECKOUT_CONFLICT", true),
         Backend(_) => ("BACKEND", true),
     };
@@ -193,6 +195,28 @@ async fn checkout_branch(repo_path: String, name: String) -> Result<(), IpcError
     .map_err(to_ipc)
 }
 
+#[tauri::command]
+async fn create_branch(repo_path: String, name: String, checkout: bool) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(Git2Backend));
+        service.create_branch(&PathBuf::from(repo_path), &name, checkout)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn delete_branch(repo_path: String, name: String) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(Git2Backend));
+        service.delete_branch(&PathBuf::from(repo_path), &name)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
 /// 开始监听某仓库的文件变化。变化经 debounce + 分类后,
 /// 通过 `repo-changed` 事件通知前端(payload: "worktree" | "index" | "ref")。
 /// 这个命令很快(只注册 OS 监听),无需 spawn_blocking。
@@ -243,6 +267,8 @@ pub fn run() {
             get_current_branch,
             list_branches,
             checkout_branch,
+            create_branch,
+            delete_branch,
             watch_repo
         ])
         .run(tauri::generate_context!())

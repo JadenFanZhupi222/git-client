@@ -284,6 +284,42 @@ impl GitBackend for Git2Backend {
         Ok(())
     }
 
+    fn create_branch(&self, path: &Path, name: &str) -> Result<(), GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let target = repo
+            .head()
+            .map_err(|_| GitError::NoHead)?
+            .peel_to_commit()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        // force=false:同名已存在则报错,不覆盖。
+        match repo.branch(name, &target, false) {
+            Ok(_) => Ok(()),
+            Err(e) if e.code() == git2::ErrorCode::Exists => {
+                Err(GitError::BranchAlreadyExists(name.to_string()))
+            }
+            Err(e) => Err(GitError::Backend(e.to_string())),
+        }
+    }
+
+    fn delete_branch(&self, path: &Path, name: &str) -> Result<(), GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        // 当前分支不可删。
+        if let Ok(head) = repo.head()
+            && head.shorthand() == Some(name)
+        {
+            return Err(GitError::CannotDeleteCurrentBranch);
+        }
+        let mut branch = repo
+            .find_branch(name, git2::BranchType::Local)
+            .map_err(|_| GitError::BranchNotFound(name.to_string()))?;
+        branch
+            .delete()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        Ok(())
+    }
+
     fn commit_file_diff(
         &self,
         path: &Path,
@@ -853,5 +889,67 @@ mod tests {
             matches!(err, GitError::CheckoutConflict),
             "脏工作区切分支应报 CheckoutConflict,实际: {err:?}"
         );
+    }
+
+    #[test]
+    fn create_branch_then_listable() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+
+        b.create_branch(&repo, "feature/new").unwrap();
+        let names: Vec<String> = b.branches(&repo).unwrap().into_iter().map(|x| x.name).collect();
+        assert!(names.contains(&"feature/new".to_string()));
+        // 新建不切换:当前分支不变
+        assert_ne!(b.current_branch(&repo).unwrap(), Some("feature/new".into()));
+    }
+
+    #[test]
+    fn create_branch_duplicate_errors() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+
+        b.create_branch(&repo, "dup").unwrap();
+        let err = b.create_branch(&repo, "dup").unwrap_err();
+        assert!(matches!(err, GitError::BranchAlreadyExists(_)));
+    }
+
+    #[test]
+    fn delete_branch_removes_it() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        b.create_branch(&repo, "tmp").unwrap();
+
+        b.delete_branch(&repo, "tmp").unwrap();
+        let names: Vec<String> = b.branches(&repo).unwrap().into_iter().map(|x| x.name).collect();
+        assert!(!names.contains(&"tmp".to_string()));
+    }
+
+    #[test]
+    fn delete_current_branch_errors() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        let main = b.current_branch(&repo).unwrap().unwrap();
+
+        let err = b.delete_branch(&repo, &main).unwrap_err();
+        assert!(matches!(err, GitError::CannotDeleteCurrentBranch));
+    }
+
+    #[test]
+    fn delete_missing_branch_errors() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+
+        let err = b.delete_branch(&repo, "ghost").unwrap_err();
+        assert!(matches!(err, GitError::BranchNotFound(_)));
     }
 }

@@ -25,6 +25,12 @@ pub enum GitError {
     #[error("分支不存在: {0}")]
     BranchNotFound(String),
 
+    #[error("分支已存在: {0}")]
+    BranchAlreadyExists(String),
+
+    #[error("不能删除当前所在的分支,请先切到别的分支")]
+    CannotDeleteCurrentBranch,
+
     #[error("工作区有未提交的改动,切换分支会被覆盖,请先提交或暂存")]
     CheckoutConflict,
 
