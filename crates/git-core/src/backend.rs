@@ -1,7 +1,7 @@
 use crate::error::GitError;
 use crate::model::{
-    BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff, PullOutcome, PushOutcome,
-    WorkingTreeStatus,
+    AheadBehind, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff, PullOutcome,
+    PushOutcome, WorkingTreeStatus,
 };
 use std::path::Path;
 
@@ -52,6 +52,9 @@ pub trait GitBackend: Send + Sync {
     /// 列出仓库引用(本地分支 / 远程跟踪分支 / HEAD),含各自指向的 commit SHA。
     /// 供图谱在对应提交上渲染分支/远程标签。
     fn refs(&self, repo: &Path) -> Result<Vec<CommitRef>, GitError>;
+
+    /// 当前分支相对上游的领先/落后数。无上游 / 分离头 / 空仓库 → None。
+    fn ahead_behind(&self, repo: &Path) -> Result<Option<AheadBehind>, GitError>;
 
     /// 切换到已有的本地分支(更新工作区 + 移动 HEAD)。
     /// 工作区有冲突改动时应失败而非覆盖(安全 checkout)。
