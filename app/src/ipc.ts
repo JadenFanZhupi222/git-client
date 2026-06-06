@@ -193,6 +193,11 @@ export async function readWorkingFile(repoPath: string, file: string): Promise<s
   return await invoke<string>("read_working_file", { repoPath, file });
 }
 
+/** 把某提交拣选到当前分支。冲突抛 MERGE_CONFLICT(进入 cherry-pick 中)。 */
+export async function cherryPick(repoPath: string, commitId: string): Promise<void> {
+  await invoke("cherry_pick", { repoPath, commitId });
+}
+
 // ── 贮藏(stash) ──
 export interface StashDto {
   index: number;

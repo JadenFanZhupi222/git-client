@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
-import { type CommitDto, type GraphRowDto, type FileChangeDto } from "../ipc";
-import { useGraph, useCommitFiles, useCommitDiff, useCurrentBranch } from "../lib/queries";
+import { useQueryClient } from "@tanstack/react-query";
+import { cherryPick, type CommitDto, type GraphRowDto, type FileChangeDto, type IpcError } from "../ipc";
+import { useGraph, useCommitFiles, useCommitDiff, useCurrentBranch, invalidateHistory, invalidateWorktree, qk } from "../lib/queries";
 import { CommitGraph } from "../components/CommitGraph";
 import { CommitFileList } from "../components/CommitFileList";
 import { CommitDetail } from "../components/CommitDetail";
 import { DiffView } from "../components/DiffView";
 import { Resizer, useResizableWidth } from "../components/Resizer";
+import { useToast } from "../components/Toast";
 import { BranchIcon, CommitIcon, FileDiffIcon } from "../components/icons";
 
 const PAGE = 50;
@@ -24,6 +26,9 @@ export function HistoryView({ repo }: { repo: string }) {
   const [limit, setLimit] = useState(PAGE);
   const [selected, setSelected] = useState<CommitDto | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const qc = useQueryClient();
+  const toast = useToast();
 
   // 图谱从 HEAD 整段计算(skip=0,limit 递增),保证泳道一致。失效/limit 变化自动重取。
   const graphQ = useGraph(repo, limit);
@@ -47,6 +52,28 @@ export function HistoryView({ repo }: { repo: string }) {
     setSelectedFile(null);
   }
 
+  async function doCherryPick(commit: CommitDto) {
+    setBusy(true);
+    try {
+      await cherryPick(repo, commit.id);
+      invalidateHistory(qc, repo);
+      invalidateWorktree(qc, repo);
+      qc.invalidateQueries({ queryKey: qk.repoState(repo) });
+      toast({ kind: "success", title: `已拣选 ${commit.short_id} 到当前分支` });
+    } catch (e) {
+      const err = e as IpcError;
+      // 冲突也进入 cherry-pick 中 → 刷新让「更改」页出现冲突与横幅
+      invalidateWorktree(qc, repo);
+      qc.invalidateQueries({ queryKey: qk.repoState(repo) });
+      toast({
+        kind: "error",
+        title: err.code === "MERGE_CONFLICT" ? "拣选有冲突,请到「更改」页解决" : (err.message ?? String(e)),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="flex h-full">
       {/* 提交图谱 */}
@@ -68,6 +95,8 @@ export function HistoryView({ repo }: { repo: string }) {
         files={filesQ.data ?? []}
         selectedFile={selectedFile}
         onSelectFile={setSelectedFile}
+        onCherryPick={selected ? () => doCherryPick(selected) : undefined}
+        busy={busy}
       />
 
       {/* Diff */}
@@ -119,19 +148,34 @@ function GraphColumn({
 
 /** 中间列:提交详情 + 改动文件(含可拖拽宽度) */
 function MidColumn({
-  commit, files, selectedFile, onSelectFile,
+  commit, files, selectedFile, onSelectFile, onCherryPick, busy,
 }: {
   commit: CommitDto | null;
   files: FileChangeDto[];
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
+  onCherryPick?: () => void;
+  busy?: boolean;
 }) {
   const col = useResizableWidth("history.midW", 288, 200, 640);
   const list = files;
   return (
     <>
       <div className="flex shrink-0 flex-col overflow-hidden" style={{ width: col.w }}>
-        <ColumnHead icon={<CommitIcon width={13} height={13} />}>提交详情</ColumnHead>
+        <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
+          <CommitIcon width={13} height={13} />
+          <span>提交详情</span>
+          {commit && onCherryPick && (
+            <button
+              onClick={onCherryPick}
+              disabled={busy}
+              title="把此提交拣选(cherry-pick)到当前分支"
+              className="ml-auto rounded border border-line-strong bg-elevated px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-40"
+            >
+              Cherry-pick
+            </button>
+          )}
+        </div>
         <div className="max-h-[45%] shrink-0 overflow-hidden border-b border-line">
           <CommitDetail commit={commit} />
         </div>

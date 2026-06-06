@@ -447,7 +447,12 @@ impl CliBackend {
         self.run_op(repo, args)
     }
 
-    /// 跑 continue/abort 命令;GIT_EDITOR=true 防止 rebase/cherry-pick 续接时弹编辑器卡住。
+    /// 把某提交拣选到当前分支。冲突 → MergeConflict(进入 cherry-pick 中)。
+    pub fn cherry_pick(&self, repo: &Path, commit_id: &str) -> Result<(), GitError> {
+        self.run_op(repo, &["cherry-pick", commit_id])
+    }
+
+    /// 跑 continue/abort/cherry-pick 命令;GIT_EDITOR=true 防止弹编辑器卡住,冲突归 MergeConflict。
     fn run_op(&self, repo: &Path, args: &[&str]) -> Result<(), GitError> {
         let out = Command::new("git")
             .arg("-C")
@@ -915,6 +920,48 @@ mod tests {
             .output()
             .unwrap();
         String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn cherry_pick_applies_commit() {
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-b", "main", "."]);
+        git(repo.path(), &["config", "user.email", "t@e"]);
+        git(repo.path(), &["config", "user.name", "t"]);
+        std::fs::write(repo.path().join("a.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+        // feature 上加 g.txt
+        git(repo.path(), &["checkout", "-b", "feature"]);
+        std::fs::write(repo.path().join("g.txt"), "from feature\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c2"]);
+        let sha = rev_parse(repo.path(), "HEAD");
+        // 回 main 拣选 c2
+        git(repo.path(), &["checkout", "main"]);
+        CliBackend.cherry_pick(repo.path(), &sha).unwrap();
+        assert!(repo.path().join("g.txt").exists(), "拣选后 main 应有 g.txt");
+    }
+
+    #[test]
+    fn cherry_pick_conflict_reports_mergeconflict() {
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-b", "main", "."]);
+        git(repo.path(), &["config", "user.email", "t@e"]);
+        git(repo.path(), &["config", "user.name", "t"]);
+        std::fs::write(repo.path().join("f.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+        git(repo.path(), &["checkout", "-b", "feature"]);
+        std::fs::write(repo.path().join("f.txt"), "feature\n").unwrap();
+        git(repo.path(), &["commit", "-am", "cF"]);
+        let sha = rev_parse(repo.path(), "HEAD");
+        git(repo.path(), &["checkout", "main"]);
+        std::fs::write(repo.path().join("f.txt"), "main\n").unwrap();
+        git(repo.path(), &["commit", "-am", "cM"]);
+        // 拣选 feature 的提交 → 同行冲突
+        let err = CliBackend.cherry_pick(repo.path(), &sha).unwrap_err();
+        assert!(matches!(err, GitError::MergeConflict { .. }), "实际: {err:?}");
     }
 
     #[test]
