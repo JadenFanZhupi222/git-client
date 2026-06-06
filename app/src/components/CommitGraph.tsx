@@ -99,7 +99,7 @@ export function CommitGraph({
                     HEAD{branch ? `→${branch}` : ""}
                   </span>
                 )}
-                <span className="truncate">{r.commit.short_id} · {formatRelative(r.commit.timestamp)}</span>
+                <span className="truncate">{r.commit.short_id} · {r.commit.author_name} · {formatRelative(r.commit.timestamp)}</span>
               </div>
             </div>
           </div>
