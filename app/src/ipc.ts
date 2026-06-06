@@ -159,12 +159,18 @@ export interface GraphSegDto {
   color: number;
 }
 
+export interface RefDto {
+  name: string;
+  kind: "head" | "local" | "remote";
+}
+
 export interface GraphRowDto {
   commit: CommitDto;
   column: number;
   color: number;
   top: GraphSegDto[];
   bottom: GraphSegDto[];
+  refs: RefDto[]; // 指向本行提交的引用(分支/远程/HEAD),多数为空
 }
 
 /** 从 HEAD 取 limit 条提交并算好 lane 布局。 */

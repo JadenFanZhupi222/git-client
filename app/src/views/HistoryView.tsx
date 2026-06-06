@@ -89,7 +89,6 @@ export function HistoryView({ repo }: { repo: string }) {
         {error && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{error}</p>}
         <CommitGraph
           rows={rows}
-          branch={branch}
           selectedId={selected?.id ?? null}
           onSelect={selectCommit}
           onLoadMore={() => loadGraph(limitRef.current + PAGE)}

@@ -5,8 +5,9 @@
 use git_core::{GitBackend, GitError};
 use ipc_types::{
     BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto,
-    PushResultDto, StatusDto,
+    PushResultDto, RefDto, StatusDto,
 };
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -61,14 +62,28 @@ impl RepoService {
     }
 
     /// 用例:提交图谱。取 HEAD 起 limit 条提交,算 lane 布局后返回。
-    /// 从头(skip=0)整段计算,保证泳道一致。
+    /// 从头(skip=0)整段计算,保证泳道一致。再把引用(分支/远程/HEAD)
+    /// 按 SHA 挂到对应行,供前端渲染标签。
     pub fn commit_graph(
         &self,
         repo_path: &Path,
         limit: usize,
     ) -> Result<Vec<GraphRowDto>, GitError> {
         let commits = self.backend.log(repo_path, limit, 0)?;
-        Ok(crate::graph::layout(&commits))
+        let refs = self.backend.refs(repo_path)?;
+        let mut rows = crate::graph::layout(&commits);
+
+        // 按目标 SHA 分组引用,然后挂到可见行上(指向窗口外提交的引用自然落空)。
+        let mut by_sha: HashMap<String, Vec<RefDto>> = HashMap::new();
+        for r in refs {
+            by_sha.entry(r.target.clone()).or_default().push(RefDto::from(r));
+        }
+        for row in &mut rows {
+            if let Some(rs) = by_sha.remove(&row.commit.id) {
+                row.refs = rs;
+            }
+        }
+        Ok(rows)
     }
 
     /// 用例:某提交改动的文件列表。
@@ -220,6 +235,48 @@ mod tests {
         assert_eq!(rows[0].commit.id, "a");
         assert_eq!(rows[0].commit.parents, vec!["b".to_string()]);
         assert_eq!(rows[0].column, 0);
+    }
+
+    #[test]
+    fn commit_graph_attaches_refs_by_sha() {
+        use git_core::model::{Commit, CommitRef, RefKind, Signature};
+        let mk = |id: &str, parents: Vec<&str>| Commit {
+            id: id.into(),
+            short_id: id.into(),
+            summary: "s".into(),
+            body: String::new(),
+            author: Signature {
+                name: "n".into(),
+                email: "e".into(),
+            },
+            timestamp: 0,
+            parents: parents.iter().map(|s| s.to_string()).collect(),
+        };
+        let fb = FakeBackend::default()
+            .with_log(vec![mk("a", vec!["b"]), mk("b", vec![])])
+            .with_refs(vec![
+                CommitRef {
+                    name: "main".into(),
+                    kind: RefKind::Head,
+                    target: "a".into(),
+                },
+                CommitRef {
+                    name: "origin/main".into(),
+                    kind: RefKind::RemoteBranch,
+                    target: "b".into(),
+                },
+            ]);
+        let svc = RepoService::new(Arc::new(fb));
+        let rows = svc.commit_graph(Path::new("/r"), 10).unwrap();
+        // a 行挂 HEAD(kind=head, name=main)
+        assert_eq!(rows[0].commit.id, "a");
+        assert_eq!(rows[0].refs.len(), 1);
+        assert_eq!(rows[0].refs[0].kind, "head");
+        assert_eq!(rows[0].refs[0].name, "main");
+        // b 行挂 origin/main(kind=remote)
+        assert_eq!(rows[1].refs.len(), 1);
+        assert_eq!(rows[1].refs[0].kind, "remote");
+        assert_eq!(rows[1].refs[0].name, "origin/main");
     }
 
     #[test]

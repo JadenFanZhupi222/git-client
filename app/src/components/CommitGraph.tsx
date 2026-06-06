@@ -1,4 +1,4 @@
-import { type CommitDto, type GraphRowDto } from "../ipc";
+import { type CommitDto, type GraphRowDto, type RefDto } from "../ipc";
 import { formatRelative } from "../lib/time";
 
 const LANE_W = 16; // 每条 lane 的像素宽
@@ -6,11 +6,39 @@ const ROW_H = 48; // 行高必须固定,否则跨行的连线对不齐
 const NLANE = 8;
 const laneColor = (c: number) => `var(--lane-${((c % NLANE) + NLANE) % NLANE})`;
 
+/** 行内引用徽章:HEAD(绿)/ 本地分支(强调色)/ 远程跟踪(中性)。
+ *  HEAD 指向的当前分支并入「HEAD → 名」一枚,避免与本地分支重复。 */
+function RefBadges({ refs }: { refs: RefDto[] }) {
+  if (!refs.length) return null;
+  const head = refs.find((r) => r.kind === "head");
+  const locals = refs.filter((r) => r.kind === "local" && r.name !== head?.name);
+  const remotes = refs.filter((r) => r.kind === "remote");
+  const pill = "shrink-0 rounded-full px-1.5 text-[10px] font-mono not-italic leading-[1.4]";
+  return (
+    <>
+      {head && (
+        <span className={`${pill} border border-success/40 bg-success/10 text-success`}>
+          {head.name === "HEAD" ? "HEAD" : `HEAD → ${head.name}`}
+        </span>
+      )}
+      {locals.map((r) => (
+        <span key={`l-${r.name}`} className={`${pill} border border-accent/40 bg-accent/10 text-accent`}>
+          {r.name}
+        </span>
+      ))}
+      {remotes.map((r) => (
+        <span key={`r-${r.name}`} className={`${pill} border border-line-strong bg-elevated text-fg-muted`}>
+          {r.name}
+        </span>
+      ))}
+    </>
+  );
+}
+
 export function CommitGraph({
-  rows, branch, selectedId, onSelect, onLoadMore, loading, hasMore,
+  rows, selectedId, onSelect, onLoadMore, loading, hasMore,
 }: {
   rows: GraphRowDto[];
-  branch: string | null;
   selectedId: string | null;
   onSelect: (c: CommitDto) => void;
   onLoadMore: () => void;
@@ -60,9 +88,9 @@ export function CommitGraph({
 
   return (
     <div className="fade-in overflow-y-auto">
-      {rows.map((r, i) => {
+      {rows.map((r) => {
         const on = selectedId === r.commit.id;
-        const head = i === 0;
+        const isHead = r.refs.some((x) => x.kind === "head");
         return (
           <div
             key={r.commit.id}
@@ -86,20 +114,18 @@ export function CommitGraph({
               <circle cx={cx(r.column)} cy={ROW_H / 2} r={6.5} fill="var(--color-canvas)" />
               <circle cx={cx(r.column)} cy={ROW_H / 2} r={4.5}
                 fill={laneColor(r.color)}
-                stroke={head ? "var(--color-accent)" : "transparent"}
-                strokeWidth={head ? 2.5 : 0} />
+                stroke={isHead ? "var(--color-accent)" : "transparent"}
+                strokeWidth={isHead ? 2.5 : 0} />
             </svg>
 
             {/* 提交信息 */}
             <div className="flex min-w-0 flex-1 flex-col justify-center pr-3">
-              <div className="truncate text-[13px] text-fg">{r.commit.summary}</div>
-              <div className="flex items-center gap-1.5 truncate font-mono text-[11px] text-fg-muted">
-                {head && (
-                  <span className="rounded-full border border-success/40 bg-success/10 px-1 text-[10px] not-italic text-success">
-                    HEAD{branch ? `→${branch}` : ""}
-                  </span>
-                )}
-                <span className="truncate">{r.commit.short_id} · {formatRelative(r.commit.timestamp)}</span>
+              <div className="flex items-center gap-1 overflow-hidden">
+                <RefBadges refs={r.refs} />
+                <span className="truncate text-[13px] text-fg">{r.commit.summary}</span>
+              </div>
+              <div className="truncate font-mono text-[11px] text-fg-muted">
+                {r.commit.short_id} · {r.commit.author_name} · {formatRelative(r.commit.timestamp)}
               </div>
             </div>
           </div>
