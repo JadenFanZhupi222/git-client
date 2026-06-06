@@ -83,6 +83,16 @@ export async function listBranches(repoPath: string): Promise<BranchDto[]> {
   return await invoke<BranchDto[]>("list_branches", { repoPath });
 }
 
+export interface AheadBehindDto {
+  ahead: number; // 本地领先上游(可 push)
+  behind: number; // 本地落后上游(可 pull)
+}
+
+/** 当前分支相对上游的领先/落后;无上游返回 null。 */
+export async function getAheadBehind(repoPath: string): Promise<AheadBehindDto | null> {
+  return await invoke<AheadBehindDto | null>("get_ahead_behind", { repoPath });
+}
+
 /** 切换到已有本地分支。脏工作区冲突会抛 IpcError(code: CHECKOUT_CONFLICT)。 */
 export async function checkoutBranch(repoPath: string, name: string): Promise<void> {
   await invoke("checkout_branch", { repoPath, name });

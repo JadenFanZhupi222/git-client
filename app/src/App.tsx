@@ -3,9 +3,10 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
-import { getCurrentBranch, watchRepo, onRepoChanged, fetchRemote, pullRemote, pushRemote, type IpcError } from "./ipc";
+import { getCurrentBranch, getAheadBehind, watchRepo, onRepoChanged, fetchRemote, pullRemote, pushRemote, type AheadBehindDto, type IpcError } from "./ipc";
 import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
+import { SyncBadge } from "./components/SyncBadge";
 import { useToast } from "./components/Toast";
 import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
 
@@ -21,12 +22,16 @@ export default function App() {
   const [repo, setRepo] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("changes");
   const [branch, setBranch] = useState<string | null>(null);
+  const [sync, setSync] = useState<AheadBehindDto | null>(null);
   const [theme, setTheme] = useState<Theme>(getStoredTheme);
   const [fetching, setFetching] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [pushing, setPushing] = useState(false);
   const toast = useToast();
   const busy = fetching || pulling || pushing;
+  // 同步提示:落后 → 建议 Pull;领先 → 建议 Push(无上游时 sync 为 null,不提示)
+  const canPull = !!sync && sync.behind > 0;
+  const canPush = !!sync && sync.ahead > 0;
 
   function toggleTheme() {
     const next: Theme = theme === "dark" ? "light" : "dark";
@@ -49,6 +54,7 @@ export default function App() {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
       setFetching(false);
+      getAheadBehind(repo).then(setSync).catch(() => {}); // 兜底:packed-refs 时 watcher 可能不触发
     }
   }
 
@@ -65,6 +71,7 @@ export default function App() {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
       setPulling(false);
+      getAheadBehind(repo).then(setSync).catch(() => {});
     }
   }
 
@@ -84,6 +91,7 @@ export default function App() {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
       setPushing(false);
+      getAheadBehind(repo).then(setSync).catch(() => {});
     }
   }
 
@@ -92,14 +100,18 @@ export default function App() {
     if (typeof dir === "string") setRepo(dir);
   }
 
-  // 仓库变化时:刷新底栏分支名、启动文件监听、订阅变化事件
+  // 仓库变化时:刷新底栏分支名 + ahead/behind、启动文件监听、订阅变化事件
   useEffect(() => {
-    if (!repo) { setBranch(null); return; }
-    const loadBranch = () => getCurrentBranch(repo).then(setBranch).catch(() => setBranch(null));
-    loadBranch();
+    if (!repo) { setBranch(null); setSync(null); return; }
+    const loadInfo = () => {
+      getCurrentBranch(repo).then(setBranch).catch(() => setBranch(null));
+      getAheadBehind(repo).then(setSync).catch(() => setSync(null));
+    };
+    loadInfo();
     watchRepo(repo).catch(() => {});
     let un: (() => void) | undefined;
-    onRepoChanged((kind) => { if (kind === "ref") loadBranch(); }).then((u) => { un = u; });
+    // ref 变化(提交/切分支/fetch/pull/push 后远程跟踪变动)→ 重算分支与同步状态
+    onRepoChanged((kind) => { if (kind === "ref") loadInfo(); }).then((u) => { un = u; });
     return () => un?.();
   }, [repo]);
 
@@ -135,8 +147,10 @@ export default function App() {
               <button
                 onClick={doPull}
                 disabled={busy}
-                title="Pull(拉取并合并到当前分支)"
-                className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50"
+                title={canPull ? `落后上游 ${sync!.behind} 个提交,建议 Pull` : "Pull(拉取并合并到当前分支)"}
+                className={`flex items-center gap-1.5 rounded-md border bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50 ${
+                  canPull ? "border-accent/60 ring-1 ring-accent/40" : "border-line-strong"
+                }`}
               >
                 {pulling ? (
                   <SpinnerIcon width={13} height={13} />
@@ -144,12 +158,19 @@ export default function App() {
                   <PullIcon width={13} height={13} />
                 )}
                 {pulling ? "Pull…" : "Pull"}
+                {canPull && !pulling && (
+                  <span className="rounded-full bg-accent/15 px-1 font-mono text-[10px] font-semibold text-accent">
+                    ↓{sync!.behind}
+                  </span>
+                )}
               </button>
               <button
                 onClick={doPush}
                 disabled={busy}
-                title="Push(把当前分支推到远程;首次自动建立上游)"
-                className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50"
+                title={canPush ? `领先上游 ${sync!.ahead} 个提交,建议 Push` : "Push(把当前分支推到远程;首次自动建立上游)"}
+                className={`flex items-center gap-1.5 rounded-md border bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50 ${
+                  canPush ? "border-success/60 ring-1 ring-success/40" : "border-line-strong"
+                }`}
               >
                 {pushing ? (
                   <SpinnerIcon width={13} height={13} />
@@ -157,6 +178,11 @@ export default function App() {
                   <PushIcon width={13} height={13} />
                 )}
                 {pushing ? "Push…" : "Push"}
+                {canPush && !pushing && (
+                  <span className="rounded-full bg-success/15 px-1 font-mono text-[10px] font-semibold text-success">
+                    ↑{sync!.ahead}
+                  </span>
+                )}
               </button>
             </div>
           )}
@@ -201,6 +227,7 @@ export default function App() {
       {repo && (
         <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-elevated px-3 text-[11px] text-fg-muted">
           <BranchSwitcher repo={repo} branch={branch} onSwitched={setBranch} />
+          <SyncBadge sync={sync} />
           <span className="ml-auto truncate font-mono text-fg-subtle" title={repo}>
             {repo}
           </span>
