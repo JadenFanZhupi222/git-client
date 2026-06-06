@@ -161,6 +161,7 @@ pub fn layout(commits: &[Commit]) -> Vec<GraphRowDto> {
             color: node_color,
             top,
             bottom,
+            refs: Vec::new(), // 由 service 在布局后按 SHA 挂上引用。
         });
     }
 

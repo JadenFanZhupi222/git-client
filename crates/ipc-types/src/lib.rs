@@ -3,8 +3,8 @@
 //! 让前后端类型在编译期对齐。阶段 0 先保持简单。
 
 use git_core::model::{
-    BranchInfo, Commit, DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry,
-    FileState, Hunk, PullOutcome, PushOutcome, WorkingTreeStatus,
+    BranchInfo, Commit, CommitRef, DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff,
+    FileEntry, FileState, Hunk, PullOutcome, PushOutcome, RefKind, WorkingTreeStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -173,7 +173,28 @@ pub struct GraphSegDto {
     pub color: u32,
 }
 
-/// 图谱一行:嵌入提交信息 + 节点列/颜色 + 上下半段连线。
+/// 指向某 commit 的引用 DTO。kind:head | local | remote。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RefDto {
+    pub name: String,
+    pub kind: String,
+}
+
+impl From<CommitRef> for RefDto {
+    fn from(r: CommitRef) -> Self {
+        let kind = match r.kind {
+            RefKind::Head => "head",
+            RefKind::LocalBranch => "local",
+            RefKind::RemoteBranch => "remote",
+        };
+        RefDto {
+            name: r.name,
+            kind: kind.to_string(),
+        }
+    }
+}
+
+/// 图谱一行:嵌入提交信息 + 节点列/颜色 + 上下半段连线 + 指向该提交的引用。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphRowDto {
     pub commit: CommitDto,
@@ -181,6 +202,8 @@ pub struct GraphRowDto {
     pub color: u32,
     pub top: Vec<GraphSegDto>,
     pub bottom: Vec<GraphSegDto>,
+    /// 指向本行提交的引用(分支/远程/HEAD);多数行为空。
+    pub refs: Vec<RefDto>,
 }
 
 /// 行级 diff 的一行 DTO。kind:context | add | del。
