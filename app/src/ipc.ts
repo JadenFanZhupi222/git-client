@@ -287,7 +287,7 @@ export interface GraphSegDto {
 
 export interface RefDto {
   name: string;
-  kind: "head" | "local" | "remote";
+  kind: "head" | "local" | "remote" | "tag";
 }
 
 export interface GraphRowDto {

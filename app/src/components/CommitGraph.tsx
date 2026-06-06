@@ -13,6 +13,7 @@ function RefBadges({ refs }: { refs: RefDto[] }) {
   const head = refs.find((r) => r.kind === "head");
   const locals = refs.filter((r) => r.kind === "local" && r.name !== head?.name);
   const remotes = refs.filter((r) => r.kind === "remote");
+  const tags = refs.filter((r) => r.kind === "tag");
   const pill = "shrink-0 rounded-full px-1.5 text-[10px] font-mono not-italic leading-[1.4]";
   return (
     <>
@@ -29,6 +30,11 @@ function RefBadges({ refs }: { refs: RefDto[] }) {
       {remotes.map((r) => (
         <span key={`r-${r.name}`} className={`${pill} border border-line-strong bg-elevated text-fg-muted`}>
           {r.name}
+        </span>
+      ))}
+      {tags.map((r) => (
+        <span key={`t-${r.name}`} className={`${pill} border border-warning/40 bg-warning/10 text-warning`}>
+          ⌖ {r.name}
         </span>
       ))}
     </>

@@ -249,6 +249,7 @@ impl From<CommitRef> for RefDto {
             RefKind::Head => "head",
             RefKind::LocalBranch => "local",
             RefKind::RemoteBranch => "remote",
+            RefKind::Tag => "tag",
         };
         RefDto {
             name: r.name,
