@@ -4,12 +4,20 @@ import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
 import { getCurrentBranch, watchRepo, onRepoChanged } from "./ipc";
-import { FolderIcon, BranchIcon } from "./components/icons";
+import { FolderIcon, BranchIcon, SunIcon, MoonIcon } from "./components/icons";
+import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
 
 export default function App() {
   const [repo, setRepo] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("changes");
   const [branch, setBranch] = useState<string | null>(null);
+  const [theme, setTheme] = useState<Theme>(getStoredTheme);
+
+  function toggleTheme() {
+    const next: Theme = theme === "dark" ? "light" : "dark";
+    applyTheme(next);
+    setTheme(next);
+  }
 
   async function pickRepo() {
     const dir = await open({ directory: true, title: "选择一个 git 仓库" });
@@ -48,6 +56,14 @@ export default function App() {
               {repoName}
             </span>
           )}
+          <button
+            onClick={toggleTheme}
+            title={theme === "dark" ? "切换到浅色" : "切换到暗色"}
+            aria-label="切换主题"
+            className="grid h-7 w-7 place-items-center rounded-md border border-line-strong bg-elevated text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle"
+          >
+            {theme === "dark" ? <SunIcon width={14} height={14} /> : <MoonIcon width={14} height={14} />}
+          </button>
           <button
             onClick={pickRepo}
             className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle"

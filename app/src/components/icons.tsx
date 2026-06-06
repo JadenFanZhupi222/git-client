@@ -56,3 +56,16 @@ export const FileDiffIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M9 1.5v4h4M6 8h4M6 10.5h4" />
   </svg>
 );
+
+export const SunIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <circle cx="8" cy="8" r="3" />
+    <path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3 3l1 1M12 12l1 1M13 3l-1 1M4 12l-1 1" />
+  </svg>
+);
+
+export const MoonIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a5.5 5.5 0 1 0 7 7Z" />
+  </svg>
+);

@@ -82,6 +82,8 @@ export function CommitGraph({
                 <path key={`b${j}`} d={botPath(s.from, s.to)} fill="none"
                   stroke={laneColor(s.color)} strokeWidth={2} strokeLinecap="round" />
               ))}
+              {/* 光晕:用画布色描边把节点背后的泳道线「挖空」,圆点更干净 */}
+              <circle cx={cx(r.column)} cy={ROW_H / 2} r={6.5} fill="var(--color-canvas)" />
               <circle cx={cx(r.column)} cy={ROW_H / 2} r={4.5}
                 fill={laneColor(r.color)}
                 stroke={head ? "var(--color-accent)" : "transparent"}
