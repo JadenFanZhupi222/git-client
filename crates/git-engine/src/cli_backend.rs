@@ -306,6 +306,11 @@ impl CliBackend {
         apply_cached(repo, &patch, false)
     }
 
+    /// 把一段(已构造好的)patch 应用到 index(`git apply --cached`)。供行级暂存用。
+    pub fn apply_cached_patch(&self, repo: &Path, patch: &str) -> Result<(), GitError> {
+        apply_cached(repo, patch, false)
+    }
+
     /// 取消暂存某文件第 `hunk_index` 个已暂存 hunk:取 `git diff --cached` 抽出该块,反向 apply。
     pub fn unstage_hunk(&self, repo: &Path, file: &str, hunk_index: usize) -> Result<(), GitError> {
         let diff = self.diff_text(repo, file, true)?;

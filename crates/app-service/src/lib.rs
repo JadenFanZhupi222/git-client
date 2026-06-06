@@ -55,6 +55,17 @@ impl RepoService {
         self.backend.stage_hunk(repo_path, file, hunk_index)
     }
 
+    /// 用例:暂存某未暂存 hunk 中的指定行。
+    pub fn stage_lines(
+        &self,
+        repo_path: &Path,
+        file: &str,
+        hunk_index: usize,
+        lines: &[usize],
+    ) -> Result<(), GitError> {
+        self.backend.stage_lines(repo_path, file, hunk_index, lines)
+    }
+
     /// 用例:取消暂存某文件的第 hunk_index 个已暂存改动块。
     pub fn unstage_hunk(
         &self,

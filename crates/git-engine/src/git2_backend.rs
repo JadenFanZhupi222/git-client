@@ -101,6 +101,94 @@ fn file_diff_from(diff: &git2::Diff, file: &str) -> Result<FileDiff, GitError> {
 #[derive(Default)]
 pub struct Git2Backend;
 
+impl Git2Backend {
+    /// 为「行级暂存」重建一个只含选定行的 patch(应用到 index 即只暂存这些行)。
+    /// `lines` 是该 hunk 内行下标(与 working_diff/FileDiff 的行顺序一致)。
+    /// 规则:选中的 +/- 行保留;未选的「+」丢弃;未选的「-」转成上下文(保留)。
+    pub fn build_line_stage_patch(
+        &self,
+        path: &Path,
+        file: &str,
+        hunk_index: usize,
+        lines: &[usize],
+    ) -> Result<String, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let mut opts = git2::DiffOptions::new();
+        opts.pathspec(file);
+        let diff = repo
+            .diff_index_to_workdir(None, Some(&mut opts))
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+
+        let target = Path::new(file);
+        let idx = diff
+            .deltas()
+            .position(|d| d.new_file().path().or_else(|| d.old_file().path()) == Some(target))
+            .ok_or_else(|| GitError::Backend("文件无未暂存改动".into()))?;
+        let patch = git2::Patch::from_diff(&diff, idx)
+            .map_err(|e| GitError::Backend(e.to_string()))?
+            .ok_or_else(|| GitError::Backend("二进制文件不支持行级暂存".into()))?;
+        if hunk_index >= patch.num_hunks() {
+            return Err(GitError::Backend("hunk 越界".into()));
+        }
+        let (hunk, n) = patch
+            .hunk(hunk_index)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        let old_start = hunk.old_start();
+
+        let sel: std::collections::HashSet<usize> = lines.iter().copied().collect();
+        let mut body = String::new();
+        let (mut old_count, mut new_count) = (0u32, 0u32);
+        let mut staged_any = false;
+        for l in 0..n {
+            let dl = patch
+                .line_in_hunk(hunk_index, l)
+                .map_err(|e| GitError::Backend(e.to_string()))?;
+            let content = String::from_utf8_lossy(dl.content());
+            let content = content.trim_end_matches(['\r', '\n']);
+            match dl.origin() {
+                '+' | '>' => {
+                    if sel.contains(&l) {
+                        body.push('+');
+                        body.push_str(content);
+                        body.push('\n');
+                        new_count += 1;
+                        staged_any = true;
+                    } // 未选的新增 → 丢弃
+                }
+                '-' | '<' => {
+                    if sel.contains(&l) {
+                        body.push('-');
+                        old_count += 1;
+                        staged_any = true;
+                    } else {
+                        body.push(' '); // 未选的删除 → 保留为上下文
+                        old_count += 1;
+                        new_count += 1;
+                    }
+                    body.push_str(content);
+                    body.push('\n');
+                }
+                _ => {
+                    body.push(' ');
+                    body.push_str(content);
+                    body.push('\n');
+                    old_count += 1;
+                    new_count += 1;
+                }
+            }
+        }
+        if !staged_any {
+            return Err(GitError::Backend("未选择任何可暂存的行".into()));
+        }
+        // newStart 与 oldStart 取一致:git apply 用 - 侧 + 上下文定位,+ 计数正确即可。
+        let header = format!(
+            "--- a/{file}\n+++ b/{file}\n@@ -{old_start},{old_count} +{old_start},{new_count} @@\n"
+        );
+        Ok(format!("{header}{body}"))
+    }
+}
+
 impl GitBackend for Git2Backend {
     fn open(&self, path: &Path) -> Result<(), GitError> {
         git2::Repository::open(path)

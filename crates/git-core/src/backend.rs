@@ -162,6 +162,18 @@ pub trait GitBackend: Send + Sync {
         Err(GitError::Unsupported)
     }
 
+    /// 暂存某未暂存 hunk 中的指定行(`lines` 为该 hunk 内行下标,与 working_diff 一致)。
+    /// 默认实现返回 Unsupported。
+    fn stage_lines(
+        &self,
+        _repo: &Path,
+        _file: &str,
+        _hunk_index: usize,
+        _lines: &[usize],
+    ) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+
     /// 把当前分支推到远程。remote = None 用默认远程(通常 origin)。
     /// 当前分支无上游时自动 `-u` 建立跟踪;被拒(non-fast-forward)→ PushRejected。
     /// 默认实现返回 Unsupported —— 不做网络的后端无需覆盖。

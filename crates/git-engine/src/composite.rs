@@ -124,6 +124,11 @@ impl GitBackend for CompositeBackend {
     fn unstage_hunk(&self, repo: &Path, file: &str, hunk_index: usize) -> Result<(), GitError> {
         self.cli.unstage_hunk(repo, file, hunk_index)
     }
+    fn stage_lines(&self, repo: &Path, file: &str, hunk_index: usize, lines: &[usize]) -> Result<(), GitError> {
+        // git2 按选定行重建 patch(行序与前端一致),CLI 应用到 index。
+        let patch = self.git2.build_line_stage_patch(repo, file, hunk_index, lines)?;
+        self.cli.apply_cached_patch(repo, &patch)
+    }
 
     // 贮藏走 CLI 后端。
     fn stash_list(&self, repo: &Path) -> Result<Vec<StashEntry>, GitError> {
@@ -182,5 +187,43 @@ mod tests {
             .collect();
         assert_eq!(via_composite, via_git2, "composite 应把 branches 透传给 git2");
         assert!(via_composite.contains(&"main".to_string()));
+    }
+
+    #[test]
+    fn stage_lines_stages_only_selected_line() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-b", "main", "."]);
+        git(dir.path(), &["config", "user.email", "t@e"]);
+        git(dir.path(), &["config", "user.name", "t"]);
+        std::fs::write(dir.path().join("f.txt"), "a\nb\nc\n").unwrap();
+        git(dir.path(), &["add", "."]);
+        git(dir.path(), &["commit", "-m", "c1"]);
+        // 改首行和末行(同一 hunk):a→A,c→C。hunk 行序:0:-a 1:+A 2: b 3:-c 4:+C
+        std::fs::write(dir.path().join("f.txt"), "A\nb\nC\n").unwrap();
+
+        let composite = CompositeBackend::default();
+        // 只暂存第一处改动(-a / +A)
+        composite.stage_lines(dir.path(), "f.txt", 0, &[0, 1]).unwrap();
+
+        let cached = String::from_utf8(
+            std::process::Command::new("git")
+                .current_dir(dir.path())
+                .args(["diff", "--cached"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap();
+        let unstaged = String::from_utf8(
+            std::process::Command::new("git")
+                .current_dir(dir.path())
+                .args(["diff"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap();
+        assert!(cached.contains("+A") && !cached.contains("+C"), "已暂存应只含 A:\n{cached}");
+        assert!(unstaged.contains("+C") && !unstaged.contains("+A"), "未暂存应只剩 C:\n{unstaged}");
     }
 }
