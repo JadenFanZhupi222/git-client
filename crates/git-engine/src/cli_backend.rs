@@ -1,5 +1,5 @@
 use git_core::GitError;
-use git_core::model::{FetchOutcome, PullOutcome, PushOutcome, StashEntry};
+use git_core::model::{FetchOutcome, PullOutcome, PushOutcome, RepoState, StashEntry};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -379,6 +379,98 @@ impl CliBackend {
     }
     pub fn stash_drop(&self, repo: &Path, index: usize) -> Result<(), GitError> {
         self.run_stash_mutation(repo, "drop", index)
+    }
+
+    /// 整文件采用我方,并 add 标记已解决。
+    pub fn resolve_ours(&self, repo: &Path, file: &str) -> Result<(), GitError> {
+        self.resolve_side(repo, file, "--ours")
+    }
+    /// 整文件采用对方,并 add 标记已解决。
+    pub fn resolve_theirs(&self, repo: &Path, file: &str) -> Result<(), GitError> {
+        self.resolve_side(repo, file, "--theirs")
+    }
+
+    fn resolve_side(&self, repo: &Path, file: &str, side: &str) -> Result<(), GitError> {
+        let co = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .arg("checkout")
+            .arg(side)
+            .arg("--")
+            .arg(file)
+            .output()
+            .map_err(spawn_err)?;
+        if !co.status.success() {
+            return Err(GitError::Backend(
+                String::from_utf8_lossy(&co.stderr).trim().to_string(),
+            ));
+        }
+        let add = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["add", "--", file])
+            .output()
+            .map_err(spawn_err)?;
+        if !add.status.success() {
+            return Err(GitError::Backend(
+                String::from_utf8_lossy(&add.stderr).trim().to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// 继续进行中的操作(按状态分派)。仍有冲突 → MergeConflict。
+    pub fn continue_op(&self, repo: &Path, state: RepoState) -> Result<(), GitError> {
+        let args: &[&str] = match state {
+            RepoState::Merging => &["commit", "--no-edit"],
+            RepoState::Rebasing => &["rebase", "--continue"],
+            RepoState::CherryPicking => &["cherry-pick", "--continue"],
+            RepoState::Reverting => &["revert", "--continue"],
+            RepoState::Clean | RepoState::Other => {
+                return Err(GitError::Backend("没有进行中的操作可继续".into()));
+            }
+        };
+        self.run_op(repo, args)
+    }
+
+    /// 中止进行中的操作(按状态分派)。
+    pub fn abort_op(&self, repo: &Path, state: RepoState) -> Result<(), GitError> {
+        let args: &[&str] = match state {
+            RepoState::Merging => &["merge", "--abort"],
+            RepoState::Rebasing => &["rebase", "--abort"],
+            RepoState::CherryPicking => &["cherry-pick", "--abort"],
+            RepoState::Reverting => &["revert", "--abort"],
+            RepoState::Clean | RepoState::Other => {
+                return Err(GitError::Backend("没有进行中的操作可中止".into()));
+            }
+        };
+        self.run_op(repo, args)
+    }
+
+    /// 跑 continue/abort 命令;GIT_EDITOR=true 防止 rebase/cherry-pick 续接时弹编辑器卡住。
+    fn run_op(&self, repo: &Path, args: &[&str]) -> Result<(), GitError> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .env("GIT_EDITOR", "true")
+            .env("GIT_SEQUENCE_EDITOR", "true")
+            .output()
+            .map_err(spawn_err)?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let combined = format!("{stdout}\n{stderr}").to_lowercase();
+        if combined.contains("conflict") || combined.contains("unmerged") || combined.contains("needs merge") {
+            let files = stdout
+                .lines()
+                .filter(|l| l.trim_start().starts_with("CONFLICT"))
+                .count();
+            return Err(GitError::MergeConflict { files });
+        }
+        Err(GitError::Backend(stderr.trim().to_string()))
     }
 
     /// apply/pop/drop 共用:`git stash <sub> stash@{index}`;apply/pop 冲突 → MergeConflict。
@@ -790,6 +882,82 @@ mod tests {
         git(repo.path(), &["commit", "-m", "c1"]);
         std::fs::write(repo.path().join("f.txt"), "changed\n").unwrap();
         repo
+    }
+
+    /// 造一个处于合并冲突中的仓库(f.txt 冲突)。
+    fn repo_in_merge_conflict() -> tempfile::TempDir {
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-b", "main", "."]);
+        git(repo.path(), &["config", "user.email", "t@e"]);
+        git(repo.path(), &["config", "user.name", "t"]);
+        std::fs::write(repo.path().join("f.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+        git(repo.path(), &["checkout", "-b", "other"]);
+        std::fs::write(repo.path().join("f.txt"), "other\n").unwrap();
+        git(repo.path(), &["commit", "-am", "cO"]);
+        git(repo.path(), &["checkout", "main"]);
+        std::fs::write(repo.path().join("f.txt"), "main\n").unwrap();
+        git(repo.path(), &["commit", "-am", "cM"]);
+        // merge 会因冲突返回非零退出 —— 不能用断言成功的 git() helper。
+        let _ = Command::new("git")
+            .current_dir(repo.path())
+            .args(["merge", "other"])
+            .output()
+            .unwrap();
+        repo
+    }
+
+    fn porcelain(repo: &Path) -> String {
+        let out = Command::new("git")
+            .current_dir(repo)
+            .args(["status", "--porcelain"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn resolve_theirs_then_continue_completes_merge() {
+        let repo = repo_in_merge_conflict();
+        CliBackend.resolve_theirs(repo.path(), "f.txt").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("f.txt")).unwrap().trim_end(),
+            "other",
+            "采用对方后内容应为 other"
+        );
+        CliBackend.continue_op(repo.path(), RepoState::Merging).unwrap();
+        assert!(porcelain(repo.path()).is_empty(), "合并完成后工作区应干净");
+    }
+
+    #[test]
+    fn resolve_ours_keeps_our_side() {
+        let repo = repo_in_merge_conflict();
+        CliBackend.resolve_ours(repo.path(), "f.txt").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("f.txt")).unwrap().trim_end(),
+            "main",
+            "采用我方后内容应为 main"
+        );
+    }
+
+    #[test]
+    fn continue_with_unresolved_conflict_errors() {
+        let repo = repo_in_merge_conflict();
+        let err = CliBackend.continue_op(repo.path(), RepoState::Merging).unwrap_err();
+        assert!(matches!(err, GitError::MergeConflict { .. }), "实际: {err:?}");
+    }
+
+    #[test]
+    fn abort_merge_restores_clean() {
+        let repo = repo_in_merge_conflict();
+        CliBackend.abort_op(repo.path(), RepoState::Merging).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("f.txt")).unwrap().trim_end(),
+            "main",
+            "中止合并应回到我方版本"
+        );
+        assert!(porcelain(repo.path()).is_empty(), "中止后工作区应干净");
     }
 
     #[test]
