@@ -3,6 +3,7 @@
 // 后端契约变了,只改这里。
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 // 这些类型生产环境应由 ipc-types(specta/ts-rs)自动生成。
 // 阶段 0 先手写,和后端 DTO 保持一致。
@@ -92,4 +93,17 @@ export async function getCommitFileDiff(
   file: string,
 ): Promise<FileDiffDto> {
   return await invoke<FileDiffDto>("get_commit_file_diff", { repoPath, commitId, file });
+}
+
+// ── 文件监听 ──
+export type RepoChangeKind = "worktree" | "index" | "ref";
+
+/** 开始监听该仓库;切仓库再调一次会自动替换旧监听。 */
+export async function watchRepo(repoPath: string): Promise<void> {
+  await invoke("watch_repo", { repoPath });
+}
+
+/** 订阅仓库变化事件。返回取消订阅函数(在 cleanup 里调用)。 */
+export function onRepoChanged(cb: (kind: RepoChangeKind) => void): Promise<() => void> {
+  return listen<RepoChangeKind>("repo-changed", (e) => cb(e.payload));
 }

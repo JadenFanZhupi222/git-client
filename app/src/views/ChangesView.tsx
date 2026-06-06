@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getStatus, stageFile, unstageFile, commit, type StatusDto, type FileEntryDto, type IpcError } from "../ipc";
+import { getStatus, stageFile, unstageFile, commit, onRepoChanged, type StatusDto, type FileEntryDto, type IpcError } from "../ipc";
 import { RefreshIcon, CheckIcon } from "../components/icons";
 
 /** 工作区状态 → 颜色 + 单字母徽章 */
@@ -29,6 +29,14 @@ export function ChangesView({ repo }: { repo: string }) {
     catch (e) { setError((e as IpcError).message ?? String(e)); }
   }
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [repo]);
+
+  // 文件/暂存/提交任何变化都自动刷新 status
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    onRepoChanged(() => refresh()).then((u) => { un = u; });
+    return () => un?.();
+    // eslint-disable-next-line
+  }, [repo]);
 
   async function run(action: () => Promise<void>) {
     setBusy(true); setError(null);
