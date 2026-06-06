@@ -41,6 +41,61 @@ fn build_commit(c: &git2::Commit) -> Commit {
     }
 }
 
+/// 从一个 git2::Diff 里抽出指定文件的行级 FileDiff。
+/// commit_file_diff(树↔树)与 working_diff(工作区/index)共用,保证渲染一致。
+fn file_diff_from(diff: &git2::Diff, file: &str) -> Result<FileDiff, GitError> {
+    let target = Path::new(file);
+    let mut result = FileDiff {
+        path: file.to_string(),
+        is_binary: false,
+        hunks: Vec::new(),
+    };
+
+    for (idx, delta) in diff.deltas().enumerate() {
+        let p = delta.new_file().path().or_else(|| delta.old_file().path());
+        if p != Some(target) {
+            continue;
+        }
+        // Patch::from_diff 对二进制 delta 返回 None。
+        match git2::Patch::from_diff(diff, idx).map_err(|e| GitError::Backend(e.to_string()))? {
+            None => {
+                result.is_binary = true;
+            }
+            Some(patch) => {
+                for h in 0..patch.num_hunks() {
+                    let (hunk, line_count) =
+                        patch.hunk(h).map_err(|e| GitError::Backend(e.to_string()))?;
+                    let header = String::from_utf8_lossy(hunk.header()).trim_end().to_string();
+                    let mut lines = Vec::with_capacity(line_count);
+                    for l in 0..line_count {
+                        let dl = patch
+                            .line_in_hunk(h, l)
+                            .map_err(|e| GitError::Backend(e.to_string()))?;
+                        let kind = match dl.origin() {
+                            '+' | '>' => DiffLineKind::Addition,
+                            '-' | '<' => DiffLineKind::Deletion,
+                            _ => DiffLineKind::Context,
+                        };
+                        // content 含行尾换行,去掉以便前端逐行渲染。
+                        let content = String::from_utf8_lossy(dl.content())
+                            .trim_end_matches(['\r', '\n'])
+                            .to_string();
+                        lines.push(DiffLine {
+                            kind,
+                            old_lineno: dl.old_lineno(),
+                            new_lineno: dl.new_lineno(),
+                            content,
+                        });
+                    }
+                    result.hunks.push(Hunk { header, lines });
+                }
+            }
+        }
+        break; // 只处理第一个匹配文件
+    }
+    Ok(result)
+}
+
 /// 基于 git2(libgit2 绑定)的后端。阶段 0/1 用它实现读写。
 /// 注意:git2 是同步阻塞的 —— 调用方必须在 spawn_blocking 里使用它!
 #[derive(Default)]
@@ -461,61 +516,35 @@ impl GitBackend for Git2Backend {
             .diff_tree_to_tree(parent_tree.as_ref(), Some(&new_tree), Some(&mut opts))
             .map_err(|e| GitError::Backend(e.to_string()))?;
 
-        let target = Path::new(file);
-        let mut result = FileDiff {
-            path: file.to_string(),
-            is_binary: false,
-            hunks: Vec::new(),
+        file_diff_from(&diff, file)
+    }
+
+    fn working_diff(&self, path: &Path, file: &str, staged: bool) -> Result<FileDiff, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let mut opts = git2::DiffOptions::new();
+        opts.pathspec(file);
+
+        let diff = if staged {
+            // 已暂存:HEAD 树 ↔ index。空仓库(无 HEAD)→ 与空树比。
+            let head_tree = match repo.head() {
+                Ok(h) => Some(h.peel_to_tree().map_err(|e| GitError::Backend(e.to_string()))?),
+                Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+                Err(e) => return Err(GitError::Backend(e.to_string())),
+            };
+            let index = repo.index().map_err(|e| GitError::Backend(e.to_string()))?;
+            repo.diff_tree_to_index(head_tree.as_ref(), Some(&index), Some(&mut opts))
+                .map_err(|e| GitError::Backend(e.to_string()))?
+        } else {
+            // 未暂存:index ↔ 工作区。含未跟踪文件(显示为新增,并带出内容)。
+            opts.include_untracked(true)
+                .recurse_untracked_dirs(true)
+                .show_untracked_content(true);
+            repo.diff_index_to_workdir(None, Some(&mut opts))
+                .map_err(|e| GitError::Backend(e.to_string()))?
         };
 
-        for (idx, delta) in diff.deltas().enumerate() {
-            let p = delta.new_file().path().or_else(|| delta.old_file().path());
-            if p != Some(target) {
-                continue;
-            }
-            // Patch::from_diff 对二进制 delta 返回 None。
-            match git2::Patch::from_diff(&diff, idx)
-                .map_err(|e| GitError::Backend(e.to_string()))?
-            {
-                None => {
-                    result.is_binary = true;
-                }
-                Some(patch) => {
-                    for h in 0..patch.num_hunks() {
-                        let (hunk, line_count) = patch
-                            .hunk(h)
-                            .map_err(|e| GitError::Backend(e.to_string()))?;
-                        let header = String::from_utf8_lossy(hunk.header())
-                            .trim_end()
-                            .to_string();
-                        let mut lines = Vec::with_capacity(line_count);
-                        for l in 0..line_count {
-                            let dl = patch
-                                .line_in_hunk(h, l)
-                                .map_err(|e| GitError::Backend(e.to_string()))?;
-                            let kind = match dl.origin() {
-                                '+' | '>' => DiffLineKind::Addition,
-                                '-' | '<' => DiffLineKind::Deletion,
-                                _ => DiffLineKind::Context,
-                            };
-                            // content 含行尾换行,去掉以便前端逐行渲染。
-                            let content = String::from_utf8_lossy(dl.content())
-                                .trim_end_matches(['\r', '\n'])
-                                .to_string();
-                            lines.push(DiffLine {
-                                kind,
-                                old_lineno: dl.old_lineno(),
-                                new_lineno: dl.new_lineno(),
-                                content,
-                            });
-                        }
-                        result.hunks.push(Hunk { header, lines });
-                    }
-                }
-            }
-            break; // 只处理第一个匹配文件
-        }
-        Ok(result)
+        file_diff_from(&diff, file)
     }
 
     fn commit(&self, path: &Path, message: &str) -> Result<String, GitError> {
@@ -984,6 +1013,70 @@ mod tests {
         );
         // 本测试所有引用都指向同一提交
         assert!(refs.iter().all(|r| r.target == sha), "所有引用应指向 c1");
+    }
+
+    #[test]
+    fn working_diff_unstaged_shows_workdir_change() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        // 提交一版,再改工作区但不暂存
+        stage(&repo, "a.txt", "line1\n");
+        commit_index(&repo, "c1", 1000);
+        write(&repo, "a.txt", "line1\nline2\n");
+
+        let diff = b.working_diff(&repo, "a.txt", false).unwrap();
+        assert!(!diff.is_binary);
+        let added: Vec<_> = diff
+            .hunks
+            .iter()
+            .flat_map(|h| &h.lines)
+            .filter(|l| matches!(l.kind, DiffLineKind::Addition))
+            .collect();
+        assert!(
+            added.iter().any(|l| l.content == "line2"),
+            "未暂存 diff 应含新增的 line2"
+        );
+    }
+
+    #[test]
+    fn working_diff_unstaged_includes_untracked() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "x\n");
+        commit_index(&repo, "c1", 1000);
+        // 新建未跟踪文件
+        write(&repo, "new.txt", "hello\n");
+
+        let diff = b.working_diff(&repo, "new.txt", false).unwrap();
+        assert!(
+            diff.hunks
+                .iter()
+                .flat_map(|h| &h.lines)
+                .any(|l| l.content == "hello"),
+            "未跟踪文件也应能看到内容"
+        );
+    }
+
+    #[test]
+    fn working_diff_staged_shows_index_change() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "v1\n");
+        commit_index(&repo, "c1", 1000);
+        // 改并暂存
+        stage(&repo, "a.txt", "v1\nv2\n");
+
+        let diff = b.working_diff(&repo, "a.txt", true).unwrap();
+        assert!(
+            diff.hunks
+                .iter()
+                .flat_map(|h| &h.lines)
+                .any(|l| matches!(l.kind, DiffLineKind::Addition) && l.content == "v2"),
+            "已暂存 diff 应含 v2"
+        );
+        // 未暂存侧此时应无改动(都已进 index)
+        let unstaged = b.working_diff(&repo, "a.txt", false).unwrap();
+        assert!(unstaged.hunks.is_empty(), "改动已全部暂存,未暂存侧应为空");
     }
 
     #[test]

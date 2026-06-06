@@ -43,6 +43,10 @@ pub trait GitBackend: Send + Sync {
         file: &str,
     ) -> Result<FileDiff, GitError>;
 
+    /// 工作区某文件的行级 diff:`staged=false` 为 index↔工作区(未暂存改动,
+    /// 含未跟踪文件),`staged=true` 为 HEAD↔index(已暂存改动)。
+    fn working_diff(&self, repo: &Path, file: &str, staged: bool) -> Result<FileDiff, GitError>;
+
     /// 当前 HEAD 分支短名(如 "main");分离头/空仓库为 None。
     fn current_branch(&self, repo: &Path) -> Result<Option<String>, GitError>;
 
