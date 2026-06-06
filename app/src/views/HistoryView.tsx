@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
-import { getLog, getCommitFiles, getCurrentBranch, type CommitDto, type FileChangeDto, type IpcError } from "../ipc";
+import {
+  getLog, getCommitFiles, getCurrentBranch, getCommitFileDiff,
+  type CommitDto, type FileChangeDto, type FileDiffDto, type IpcError,
+} from "../ipc";
 import { CommitList } from "../components/CommitList";
 import { CommitFileList } from "../components/CommitFileList";
+import { DiffView } from "../components/DiffView";
 import { BranchIcon, FileDiffIcon } from "../components/icons";
 
 const PAGE = 50;
@@ -22,6 +26,8 @@ export function HistoryView({ repo }: { repo: string }) {
   const [selected, setSelected] = useState<CommitDto | null>(null);
   const [files, setFiles] = useState<FileChangeDto[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [diff, setDiff] = useState<FileDiffDto | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -45,9 +51,17 @@ export function HistoryView({ repo }: { repo: string }) {
   }, [repo]);
 
   async function selectCommit(c: CommitDto) {
-    setSelected(c); setSelectedFile(null); setFiles([]);
+    setSelected(c); setSelectedFile(null); setFiles([]); setDiff(null);
     try { setFiles(await getCommitFiles(repo, c.id)); }
     catch (e) { setError((e as IpcError).message ?? String(e)); }
+  }
+
+  async function selectFile(path: string) {
+    if (!selected) return;
+    setSelectedFile(path); setDiff(null); setDiffLoading(true);
+    try { setDiff(await getCommitFileDiff(repo, selected.id, path)); }
+    catch (e) { setError((e as IpcError).message ?? String(e)); }
+    finally { setDiffLoading(false); }
   }
 
   return (
@@ -73,20 +87,16 @@ export function HistoryView({ repo }: { repo: string }) {
       <div className="flex w-64 shrink-0 flex-col overflow-hidden border-r border-line">
         <ColumnHead icon={<FileDiffIcon width={13} height={13} />}>改动文件{selected && ` (${files.length})`}</ColumnHead>
         {selected
-          ? <CommitFileList files={files} selected={selectedFile} onSelect={setSelectedFile} />
+          ? <CommitFileList files={files} selected={selectedFile} onSelect={selectFile} />
           : <div className="p-3 text-xs text-fg-subtle">选择一个提交</div>}
       </div>
 
       {/* Diff */}
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <ColumnHead>Diff</ColumnHead>
-        <div className="flex flex-1 items-center justify-center p-4 text-center text-sm text-fg-subtle">
-          {selectedFile ? (
-            <span className="font-mono">{selectedFile} 的行级 diff 将在 1b-2 显示</span>
-          ) : (
-            <span>选择一个文件查看 diff(1b-2)</span>
-          )}
-        </div>
+        <ColumnHead>
+          {selectedFile ? <span className="font-mono normal-case tracking-normal text-fg">{selectedFile}</span> : "Diff"}
+        </ColumnHead>
+        <DiffView diff={diff} loading={diffLoading} hasFile={!!selectedFile} />
       </main>
     </div>
   );

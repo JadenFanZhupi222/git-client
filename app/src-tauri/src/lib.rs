@@ -1,6 +1,6 @@
 use app_service::RepoService;
 use git_engine::Git2Backend; // 真实后端
-use ipc_types::{CommitDto, FileChangeDto, IpcError, StatusDto};
+use ipc_types::{CommitDto, FileChangeDto, FileDiffDto, IpcError, StatusDto};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -124,6 +124,21 @@ async fn get_commit_files(
 }
 
 #[tauri::command]
+async fn get_commit_file_diff(
+    repo_path: String,
+    commit_id: String,
+    file: String,
+) -> Result<FileDiffDto, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(Git2Backend));
+        service.commit_file_diff(&PathBuf::from(repo_path), &commit_id, &file)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
 async fn get_current_branch(repo_path: String) -> Result<Option<String>, IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(Git2Backend));
@@ -147,6 +162,7 @@ pub fn run() {
             commit,
             get_log,
             get_commit_files,
+            get_commit_file_diff,
             get_current_branch
         ])
         .run(tauri::generate_context!())

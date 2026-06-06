@@ -2,7 +2,10 @@
 //! 生产项目里这里会接入 specta/ts-rs,从这些结构体自动生成 TypeScript 类型,
 //! 让前后端类型在编译期对齐。阶段 0 先保持简单。
 
-use git_core::model::{Commit, FileChange, FileEntry, FileState, WorkingTreeStatus};
+use git_core::model::{
+    Commit, DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry, FileState, Hunk,
+    WorkingTreeStatus,
+};
 use serde::{Deserialize, Serialize};
 
 /// 传给前端的提交 DTO。这里特意和领域模型 Commit 分开:
@@ -94,6 +97,63 @@ impl From<FileChange> for FileChangeDto {
         FileChangeDto {
             path: c.path,
             status: status.to_string(),
+        }
+    }
+}
+
+/// 行级 diff 的一行 DTO。kind:context | add | del。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiffLineDto {
+    pub kind: String,
+    pub old_lineno: Option<u32>,
+    pub new_lineno: Option<u32>,
+    pub content: String,
+}
+
+impl From<DiffLine> for DiffLineDto {
+    fn from(l: DiffLine) -> Self {
+        let kind = match l.kind {
+            DiffLineKind::Context => "context",
+            DiffLineKind::Addition => "add",
+            DiffLineKind::Deletion => "del",
+        };
+        DiffLineDto {
+            kind: kind.to_string(),
+            old_lineno: l.old_lineno,
+            new_lineno: l.new_lineno,
+            content: l.content,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HunkDto {
+    pub header: String,
+    pub lines: Vec<DiffLineDto>,
+}
+
+impl From<Hunk> for HunkDto {
+    fn from(h: Hunk) -> Self {
+        HunkDto {
+            header: h.header,
+            lines: h.lines.into_iter().map(DiffLineDto::from).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileDiffDto {
+    pub path: String,
+    pub is_binary: bool,
+    pub hunks: Vec<HunkDto>,
+}
+
+impl From<FileDiff> for FileDiffDto {
+    fn from(d: FileDiff) -> Self {
+        FileDiffDto {
+            path: d.path,
+            is_binary: d.is_binary,
+            hunks: d.hunks.into_iter().map(HunkDto::from).collect(),
         }
     }
 }

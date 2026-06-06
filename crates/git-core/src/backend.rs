@@ -1,5 +1,5 @@
 use crate::error::GitError;
-use crate::model::{Commit, FileChange, WorkingTreeStatus};
+use crate::model::{Commit, FileChange, FileDiff, WorkingTreeStatus};
 use std::path::Path;
 
 /// 端口(Port):所有 git 后端必须实现它。
@@ -30,6 +30,15 @@ pub trait GitBackend: Send + Sync {
 
     /// 某提交相对第一个父的改动文件(文件级)。
     fn commit_files(&self, repo: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError>;
+
+    /// 某提交中单个文件相对第一个父的行级 diff。
+    /// `file` 为仓库根相对路径(git 风格,正斜杠)。
+    fn commit_file_diff(
+        &self,
+        repo: &Path,
+        commit_id: &str,
+        file: &str,
+    ) -> Result<FileDiff, GitError>;
 
     /// 当前 HEAD 分支短名(如 "main");分离头/空仓库为 None。
     fn current_branch(&self, repo: &Path) -> Result<Option<String>, GitError>;

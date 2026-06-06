@@ -1,4 +1,4 @@
-use git_core::model::{Commit, FileChange, FileEntry, Signature, WorkingTreeStatus};
+use git_core::model::{Commit, FileChange, FileDiff, FileEntry, Signature, WorkingTreeStatus};
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -15,6 +15,7 @@ pub struct FakeBackend {
     canned_log: Mutex<Vec<Commit>>,
     canned_commit_files: Mutex<Vec<FileChange>>,
     canned_branch: Mutex<Option<String>>,
+    canned_file_diff: Mutex<FileDiff>,
 }
 
 impl FakeBackend {
@@ -43,6 +44,10 @@ impl FakeBackend {
     }
     pub fn with_branch(self, branch: Option<String>) -> Self {
         *self.canned_branch.lock().unwrap() = branch;
+        self
+    }
+    pub fn with_file_diff(self, diff: FileDiff) -> Self {
+        *self.canned_file_diff.lock().unwrap() = diff;
         self
     }
 }
@@ -96,6 +101,14 @@ impl GitBackend for FakeBackend {
     }
     fn current_branch(&self, _path: &Path) -> Result<Option<String>, GitError> {
         Ok(self.canned_branch.lock().unwrap().clone())
+    }
+    fn commit_file_diff(
+        &self,
+        _path: &Path,
+        _commit_id: &str,
+        _file: &str,
+    ) -> Result<FileDiff, GitError> {
+        Ok(self.canned_file_diff.lock().unwrap().clone())
     }
 }
 
