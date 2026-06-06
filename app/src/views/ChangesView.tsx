@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getStatus, stageFile, unstageFile, commit, onRepoChanged, type StatusDto, type FileEntryDto, type IpcError } from "../ipc";
 import { RefreshIcon, CheckIcon } from "../components/icons";
+import { useToast } from "../components/Toast";
 
 /** 工作区状态 → 颜色 + 单字母徽章 */
 const STATE_STYLE: Record<string, { letter: string; cls: string }> = {
@@ -19,14 +20,12 @@ function styleFor(state: string) {
 export function ChangesView({ repo }: { repo: string }) {
   const [status, setStatus] = useState<StatusDto | null>(null);
   const [message, setMessage] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const toast = useToast();
 
   async function refresh() {
-    setError(null);
     try { setStatus(await getStatus(repo)); }
-    catch (e) { setError((e as IpcError).message ?? String(e)); }
+    catch (e) { toast({ kind: "error", title: (e as IpcError).message ?? String(e) }); }
   }
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [repo]);
 
@@ -39,18 +38,20 @@ export function ChangesView({ repo }: { repo: string }) {
   }, [repo]);
 
   async function run(action: () => Promise<void>) {
-    setBusy(true); setError(null);
+    setBusy(true);
     try { await action(); await refresh(); }
-    catch (e) { setError((e as IpcError).message ?? String(e)); }
+    catch (e) { toast({ kind: "error", title: (e as IpcError).message ?? String(e) }); }
     finally { setBusy(false); }
   }
 
   async function doCommit() {
-    setBusy(true); setError(null);
+    setBusy(true);
     try {
       const sha = await commit(repo, message);
-      setInfo(`已提交 ${sha.slice(0, 7)}`); setMessage(""); await refresh();
-    } catch (e) { setError((e as IpcError).message ?? String(e)); }
+      setMessage("");
+      toast({ kind: "success", title: `已提交 ${sha.slice(0, 7)}` });
+      await refresh();
+    } catch (e) { toast({ kind: "error", title: (e as IpcError).message ?? String(e) }); }
     finally { setBusy(false); }
   }
 
@@ -96,8 +97,6 @@ export function ChangesView({ repo }: { repo: string }) {
         >
           <RefreshIcon width={13} height={13} className={busy ? "animate-spin" : ""} /> 刷新
         </button>
-        {error && <span className="truncate text-xs text-danger" title={error}>错误:{error}</span>}
-        {info && !error && <span className="flex items-center gap-1 text-xs text-success"><CheckIcon width={13} height={13} />{info}</span>}
       </div>
 
       {/* 文件区(滚动) */}
