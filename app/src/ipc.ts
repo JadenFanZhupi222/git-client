@@ -160,6 +160,21 @@ export async function pushRemote(repoPath: string, remote?: string): Promise<Pus
   return await invoke<PushResultDto>("push", { repoPath, remote: remote ?? null });
 }
 
+// ── Blame(追溯) ──
+export interface BlameLineDto {
+  line_no: number;
+  commit_id: string;
+  short_id: string;
+  author_name: string;
+  timestamp: number;
+  content: string;
+}
+
+/** 逐行 blame(file 为仓库根相对路径)。 */
+export async function blame(repoPath: string, file: string): Promise<BlameLineDto[]> {
+  return await invoke<BlameLineDto[]>("blame", { repoPath, file });
+}
+
 // ── 冲突 / 进行中操作 ──
 export type RepoStateStr = "clean" | "merging" | "rebasing" | "cherry-picking" | "reverting" | "other";
 

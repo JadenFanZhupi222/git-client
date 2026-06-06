@@ -7,7 +7,7 @@ import { useEffect } from "react";
 import {
   getStatus, getWorkingDiff, getCommitGraph, getCommitFiles, getCommitFileDiff,
   getCurrentBranch, getAheadBehind, getRemotes, listBranches, stashList,
-  getRepoState, readWorkingFile,
+  getRepoState, readWorkingFile, blame,
   watchRepo, onRepoChanged,
 } from "../ipc";
 
@@ -25,6 +25,7 @@ export const qk = {
   stashes: (repo: string) => ["stashes", repo] as const,
   repoState: (repo: string) => ["repoState", repo] as const,
   fileText: (repo: string) => ["fileText", repo] as const,
+  blame: (repo: string) => ["blame", repo] as const,
 };
 
 // ---- 读 hooks ----
@@ -86,6 +87,15 @@ export function useStashList(repo: string) {
 
 export function useRepoState(repo: string) {
   return useQuery({ queryKey: qk.repoState(repo), queryFn: () => getRepoState(repo), enabled: !!repo });
+}
+
+/** 逐行 blame;file 为仓库根相对路径,null 时不取。 */
+export function useBlame(repo: string, file: string | null) {
+  return useQuery({
+    queryKey: [...qk.blame(repo), file ?? ""],
+    queryFn: () => blame(repo, file!),
+    enabled: !!repo && !!file,
+  });
 }
 
 /** 读工作区文件原文(冲突文件只读展示)。enabled 控制按需取。 */
