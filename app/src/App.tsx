@@ -4,7 +4,7 @@ import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
 import { getCurrentBranch, getAheadBehind, watchRepo, onRepoChanged, fetchRemote, pullRemote, pushRemote, type AheadBehindDto, type IpcError } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon } from "./components/icons";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
 import { useToast } from "./components/Toast";
@@ -27,6 +27,8 @@ export default function App() {
   const [fetching, setFetching] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [pushing, setPushing] = useState(false);
+  const [pullRebase, setPullRebase] = useState(() => localStorage.getItem("pull.rebase") === "1");
+  const [pullMenu, setPullMenu] = useState(false);
   const toast = useToast();
   const busy = fetching || pulling || pushing;
   // 同步提示:落后 → 建议 Pull;领先 → 建议 Push(无上游时 sync 为 null,不提示)
@@ -58,16 +60,22 @@ export default function App() {
     }
   }
 
-  async function doPull() {
+  function setPullMode(rebase: boolean) {
+    setPullRebase(rebase);
+    localStorage.setItem("pull.rebase", rebase ? "1" : "0");
+  }
+
+  async function doPull(rebase: boolean) {
     if (!repo) return;
+    setPullMenu(false);
     setPulling(true);
     try {
-      const r = await pullRemote(repo);
+      const r = await pullRemote(repo, rebase);
       // 成功后工作区/HEAD 变化触发文件监听 → 图谱自动前进。
       const upToDate = /up to date|已是最新/i.test(r.summary);
-      toast({ kind: "success", title: upToDate ? "已是最新" : "已拉取并合并" });
+      toast({ kind: "success", title: upToDate ? "已是最新" : rebase ? "已拉取并变基" : "已拉取并合并" });
     } catch (e) {
-      // 冲突时工作区已留下冲突标记,可到「更改」页查看冲突文件。
+      // 冲突时工作区已留下冲突标记(rebase 会停在中途),可到「更改」页查看。
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
       setPulling(false);
@@ -144,26 +152,47 @@ export default function App() {
                 )}
                 {fetching ? "Fetch…" : "Fetch"}
               </button>
-              <button
-                onClick={doPull}
-                disabled={busy}
-                title={canPull ? `落后上游 ${sync!.behind} 个提交,建议 Pull` : "Pull(拉取并合并到当前分支)"}
-                className={`flex items-center gap-1.5 rounded-md border bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50 ${
-                  canPull ? "border-accent/60 ring-1 ring-accent/40" : "border-line-strong"
-                }`}
-              >
-                {pulling ? (
-                  <SpinnerIcon width={13} height={13} />
-                ) : (
-                  <PullIcon width={13} height={13} />
+              <div className="relative flex items-stretch">
+                <button
+                  onClick={() => doPull(pullRebase)}
+                  disabled={busy}
+                  title={canPull ? `落后上游 ${sync!.behind} 个提交,建议 Pull` : `Pull(${pullRebase ? "变基" : "合并"}到当前分支)`}
+                  className={`flex items-center gap-1.5 rounded-l-md border bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50 ${
+                    canPull ? "border-accent/60" : "border-line-strong"
+                  }`}
+                >
+                  {pulling ? <SpinnerIcon width={13} height={13} /> : <PullIcon width={13} height={13} />}
+                  {pulling ? "Pull…" : pullRebase ? "Pull · 变基" : "Pull"}
+                  {canPull && !pulling && (
+                    <span className="rounded-full bg-accent/15 px-1 font-mono text-[10px] font-semibold text-accent">
+                      ↓{sync!.behind}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setPullMenu((o) => !o)}
+                  disabled={busy}
+                  title="选择拉取方式"
+                  className={`grid place-items-center rounded-r-md border border-l-0 bg-elevated px-1 text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50 ${
+                    canPull ? "border-accent/60" : "border-line-strong"
+                  }`}
+                >
+                  <ChevronDownIcon width={11} height={11} />
+                </button>
+                {pullMenu && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setPullMenu(false)} />
+                    <div className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs shadow-lg">
+                      <PullModeItem active={!pullRebase} onClick={() => { setPullMode(false); doPull(false); }}>
+                        合并(merge)
+                      </PullModeItem>
+                      <PullModeItem active={pullRebase} onClick={() => { setPullMode(true); doPull(true); }}>
+                        变基(rebase)
+                      </PullModeItem>
+                    </div>
+                  </>
                 )}
-                {pulling ? "Pull…" : "Pull"}
-                {canPull && !pulling && (
-                  <span className="rounded-full bg-accent/15 px-1 font-mono text-[10px] font-semibold text-accent">
-                    ↓{sync!.behind}
-                  </span>
-                )}
-              </button>
+              </div>
               <button
                 onClick={doPush}
                 disabled={busy}
@@ -234,6 +263,21 @@ export default function App() {
         </footer>
       )}
     </div>
+  );
+}
+
+/** Pull 方式菜单项:左侧打勾表示当前模式 */
+function PullModeItem({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
+    >
+      <span className="grid w-3.5 shrink-0 place-items-center text-accent">
+        {active ? <CheckIcon width={12} height={12} /> : null}
+      </span>
+      {children}
+    </button>
   );
 }
 

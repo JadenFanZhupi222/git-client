@@ -133,9 +133,9 @@ export interface PullResultDto {
   summary: string;
 }
 
-/** pull(fetch + merge)。冲突抛 MERGE_CONFLICT、无上游抛 NO_UPSTREAM。 */
-export async function pullRemote(repoPath: string, remote?: string): Promise<PullResultDto> {
-  return await invoke<PullResultDto>("pull", { repoPath, remote: remote ?? null });
+/** pull。rebase=true 走 fetch+rebase。冲突抛 MERGE_CONFLICT、无上游抛 NO_UPSTREAM。 */
+export async function pullRemote(repoPath: string, rebase = false, remote?: string): Promise<PullResultDto> {
+  return await invoke<PullResultDto>("pull", { repoPath, remote: remote ?? null, rebase });
 }
 
 export interface PushResultDto {
