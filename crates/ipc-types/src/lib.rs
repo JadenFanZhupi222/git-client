@@ -3,8 +3,8 @@
 //! 让前后端类型在编译期对齐。阶段 0 先保持简单。
 
 use git_core::model::{
-    AheadBehind, BranchInfo, Commit, CommitRef, DiffLine, DiffLineKind, FetchOutcome, FileChange,
-    FileDiff, FileEntry, FileState, Hunk, PullOutcome, PushOutcome, RefKind, StashEntry,
+    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, DiffLine, DiffLineKind, FetchOutcome,
+    FileChange, FileDiff, FileEntry, FileState, Hunk, PullOutcome, PushOutcome, RefKind, StashEntry,
     WorkingTreeStatus,
 };
 use serde::{Deserialize, Serialize};
@@ -125,6 +125,30 @@ impl From<AheadBehind> for AheadBehindDto {
         AheadBehindDto {
             ahead: a.ahead,
             behind: a.behind,
+        }
+    }
+}
+
+/// blame 一行 DTO。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlameLineDto {
+    pub line_no: u32,
+    pub commit_id: String,
+    pub short_id: String,
+    pub author_name: String,
+    pub timestamp: i64,
+    pub content: String,
+}
+
+impl From<BlameLine> for BlameLineDto {
+    fn from(l: BlameLine) -> Self {
+        BlameLineDto {
+            line_no: l.line_no,
+            commit_id: l.commit_id,
+            short_id: l.short_id,
+            author_name: l.author_name,
+            timestamp: l.timestamp,
+            content: l.content,
         }
     }
 }

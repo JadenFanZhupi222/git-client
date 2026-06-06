@@ -1,6 +1,6 @@
 use git_core::model::{
-    AheadBehind, BranchInfo, Commit, CommitRef, DiffLine, DiffLineKind, FileChange, FileDiff,
-    FileEntry, FileState, Hunk, RefKind, RepoState, Signature, WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, DiffLine, DiffLineKind, FileChange,
+    FileDiff, FileEntry, FileState, Hunk, RefKind, RepoState, Signature, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -451,6 +451,47 @@ impl GitBackend for Git2Backend {
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
         let arr = repo.remotes().map_err(|e| GitError::Backend(e.to_string()))?;
         Ok(arr.iter().flatten().map(|s| s.to_string()).collect())
+    }
+
+    fn blame(&self, path: &Path, file: &str) -> Result<Vec<BlameLine>, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let blame = repo
+            .blame_file(Path::new(file), None)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        let workdir = repo
+            .workdir()
+            .ok_or_else(|| GitError::Backend("裸仓库无工作区".into()))?;
+        let bytes = std::fs::read(workdir.join(file)).map_err(|e| GitError::Backend(e.to_string()))?;
+        let text = String::from_utf8_lossy(&bytes);
+
+        let mut out = Vec::new();
+        for (i, line) in text.lines().enumerate() {
+            let lineno = i + 1;
+            let (commit_id, short_id, author_name, timestamp) = match blame.get_line(lineno) {
+                Some(h) => {
+                    let oid = h.final_commit_id();
+                    let sig = h.final_signature();
+                    if oid.is_zero() {
+                        (String::new(), String::new(), "未提交".to_string(), 0)
+                    } else {
+                        let id = oid.to_string();
+                        let short = id.chars().take(7).collect();
+                        (id, short, sig.name().unwrap_or("").to_string(), sig.when().seconds())
+                    }
+                }
+                None => (String::new(), String::new(), String::new(), 0),
+            };
+            out.push(BlameLine {
+                line_no: lineno as u32,
+                commit_id,
+                short_id,
+                author_name,
+                timestamp,
+                content: line.to_string(),
+            });
+        }
+        Ok(out)
     }
 
     fn repo_state(&self, path: &Path) -> Result<RepoState, GitError> {
@@ -1258,6 +1299,27 @@ mod tests {
         let ab = Git2Backend.ahead_behind(&repo).unwrap();
         assert!(ab.is_some(), "设上游后应能计算 ahead/behind");
         assert_eq!(ab.unwrap().ahead, 0);
+    }
+
+    #[test]
+    fn blame_attributes_lines_to_commits() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        // c1:两行
+        stage(&repo, "f.txt", "alpha\nbeta\n");
+        let c1 = commit_index(&repo, "c1", 1000);
+        // c2:追加第三行
+        stage(&repo, "f.txt", "alpha\nbeta\ngamma\n");
+        let c2 = commit_index(&repo, "c2", 2000);
+
+        let lines = b.blame(&repo, "f.txt").unwrap();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].content, "alpha");
+        assert_eq!(lines[0].commit_id, c1, "前两行归 c1");
+        assert_eq!(lines[1].commit_id, c1);
+        assert_eq!(lines[2].commit_id, c2, "第三行归 c2");
+        assert_eq!(lines[2].content, "gamma");
+        assert_eq!(lines[0].short_id, c1.chars().take(7).collect::<String>());
     }
 
     #[test]

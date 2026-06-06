@@ -1,6 +1,6 @@
 use git_core::model::{
-    AheadBehind, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff, FileEntry,
-    PullOutcome, PushOutcome, RepoState, StashEntry, Signature, WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff,
+    FileEntry, PullOutcome, PushOutcome, RepoState, StashEntry, Signature, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -228,6 +228,9 @@ impl GitBackend for FakeBackend {
     }
     fn repo_state(&self, _path: &Path) -> Result<RepoState, GitError> {
         Ok(self.canned_repo_state.lock().unwrap().unwrap_or(RepoState::Clean))
+    }
+    fn blame(&self, _path: &Path, _file: &str) -> Result<Vec<BlameLine>, GitError> {
+        Ok(Vec::new())
     }
     fn resolve_ours(&self, _path: &Path, file: &str) -> Result<(), GitError> {
         self.conflict_ops.lock().unwrap().push(format!("ours:{file}"));

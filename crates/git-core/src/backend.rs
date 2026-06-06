@@ -1,7 +1,7 @@
 use crate::error::GitError;
 use crate::model::{
-    AheadBehind, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff, PullOutcome,
-    PushOutcome, RepoState, StashEntry, WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff,
+    PullOutcome, PushOutcome, RepoState, StashEntry, WorkingTreeStatus,
 };
 use std::path::Path;
 
@@ -59,6 +59,9 @@ pub trait GitBackend: Send + Sync {
 
     /// 仓库当前状态(干净 / 合并中 / 变基中 / cherry-pick / revert)。
     fn repo_state(&self, repo: &Path) -> Result<RepoState, GitError>;
+
+    /// 逐行 blame:返回 `file`(仓库根相对路径)每行最后修改的提交信息。
+    fn blame(&self, repo: &Path, file: &str) -> Result<Vec<BlameLine>, GitError>;
 
     // ---- 冲突解决:整文件采用一边走 CLI;默认 Unsupported ----
 
