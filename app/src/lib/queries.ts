@@ -7,6 +7,7 @@ import { useEffect } from "react";
 import {
   getStatus, getWorkingDiff, getCommitGraph, getCommitFiles, getCommitFileDiff,
   getCurrentBranch, getAheadBehind, getRemotes, listBranches, stashList,
+  getRepoState, readWorkingFile,
   watchRepo, onRepoChanged,
 } from "../ipc";
 
@@ -22,6 +23,8 @@ export const qk = {
   remotes: (repo: string) => ["remotes", repo] as const,
   branches: (repo: string) => ["branches", repo] as const,
   stashes: (repo: string) => ["stashes", repo] as const,
+  repoState: (repo: string) => ["repoState", repo] as const,
+  fileText: (repo: string) => ["fileText", repo] as const,
 };
 
 // ---- 读 hooks ----
@@ -81,6 +84,19 @@ export function useStashList(repo: string) {
   return useQuery({ queryKey: qk.stashes(repo), queryFn: () => stashList(repo), enabled: !!repo });
 }
 
+export function useRepoState(repo: string) {
+  return useQuery({ queryKey: qk.repoState(repo), queryFn: () => getRepoState(repo), enabled: !!repo });
+}
+
+/** 读工作区文件原文(冲突文件只读展示)。enabled 控制按需取。 */
+export function useFileText(repo: string, file: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: [...qk.fileText(repo), file ?? ""],
+    queryFn: () => readWorkingFile(repo, file!),
+    enabled: enabled && !!file,
+  });
+}
+
 // ---- 失效辅助 ----
 /** 工作区相关(status + 工作区 diff):暂存/提交等写操作后调用。 */
 export function invalidateWorktree(qc: QueryClient, repo: string) {
@@ -105,6 +121,8 @@ export function useRepoWatch(repo: string | null) {
     let un: (() => void) | undefined;
     onRepoChanged((kind) => {
       invalidateWorktree(qc, repo);
+      qc.invalidateQueries({ queryKey: qk.repoState(repo) }); // 合并/变基状态可能变
+      qc.invalidateQueries({ queryKey: qk.fileText(repo) }); // 冲突文件内容可能变
       if (kind === "ref") invalidateHistory(qc, repo);
     }).then((u) => { un = u; });
     return () => un?.();

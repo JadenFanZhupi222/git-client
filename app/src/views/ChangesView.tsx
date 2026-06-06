@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  stageFile, unstageFile, stageHunk, unstageHunk, commit,
+  stageFile, unstageFile, stageHunk, unstageHunk, commit, resolveOurs, resolveTheirs,
   type FileEntryDto, type IpcError,
 } from "../ipc";
-import { useStatus, useWorkingDiff, invalidateWorktree, invalidateHistory, qk } from "../lib/queries";
+import { useStatus, useWorkingDiff, useRepoState, invalidateWorktree, invalidateHistory, qk } from "../lib/queries";
 import { RefreshIcon, CheckIcon, FileDiffIcon, PlusIcon, MinusIcon } from "../components/icons";
 import { DiffView } from "../components/DiffView";
+import { ConflictView } from "../components/ConflictView";
+import { ConflictBanner } from "../components/ConflictBanner";
 import { Resizer, useResizableWidth } from "../components/Resizer";
 import { useToast } from "../components/Toast";
 
@@ -34,6 +36,7 @@ export function ChangesView({ repo }: { repo: string }) {
   const qc = useQueryClient();
   const statusQ = useStatus(repo);
   const status = statusQ.data;
+  const repoState = useRepoState(repo).data ?? "clean";
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [sel, setSel] = useState<{ path: string; staged: boolean } | null>(null);
@@ -43,9 +46,11 @@ export function ChangesView({ repo }: { repo: string }) {
   // 选中文件的工作区 diff(随 sel 与失效自动重取)
   const diffQ = useWorkingDiff(repo, sel?.path ?? null, sel?.staged ?? false);
 
-  const staged = status?.entries.filter((e) => e.staged) ?? [];
-  const unstaged = status?.entries.filter((e) => !e.staged) ?? [];
-  const canCommit = !busy && staged.length > 0 && message.trim() !== "";
+  const entries = status?.entries ?? [];
+  const conflicts = entries.filter((e) => e.state.toLowerCase() === "conflicted");
+  const staged = entries.filter((e) => e.staged);
+  const unstaged = entries.filter((e) => !e.staged && e.state.toLowerCase() !== "conflicted");
+  const canCommit = !busy && staged.length > 0 && conflicts.length === 0 && message.trim() !== "";
 
   // 切仓库清空选择
   useEffect(() => { setSel(null); }, [repo]);
@@ -74,6 +79,10 @@ export function ChangesView({ repo }: { repo: string }) {
   const doHunk = (path: string, isStaged: boolean, hunkIndex: number) =>
     run(() => (isStaged ? unstageHunk(repo, path, hunkIndex) : stageHunk(repo, path, hunkIndex)));
 
+  // 冲突解决:采用我方/对方(整文件),或手改后标记已解决(= 暂存)
+  const useOurs = (path: string) => run(() => resolveOurs(repo, path));
+  const useTheirs = (path: string) => run(() => resolveTheirs(repo, path));
+
   async function doCommit() {
     setBusy(true);
     try {
@@ -86,9 +95,10 @@ export function ChangesView({ repo }: { repo: string }) {
     finally { setBusy(false); }
   }
 
-  // 选中文件可做 hunk 级操作吗?未跟踪文件无 git diff hunk,排除。
+  // 选中文件可做 hunk 级操作吗?未跟踪 / 冲突文件无 git diff hunk,排除。
   const selEntry = sel && status ? status.entries.find((e) => e.path === sel.path && e.staged === sel.staged) : undefined;
-  const hunkAction = sel && selEntry && selEntry.state.toLowerCase() !== "untracked"
+  const isConflict = selEntry?.state.toLowerCase() === "conflicted";
+  const hunkAction = sel && selEntry && !isConflict && selEntry.state.toLowerCase() !== "untracked"
     ? { label: sel.staged ? "取消暂存此块" : "暂存此块", disabled: busy, onAct: (hi: number) => doHunk(sel.path, sel.staged, hi) }
     : undefined;
 
@@ -118,6 +128,31 @@ export function ChangesView({ repo }: { repo: string }) {
     );
   };
 
+  const ConflictRow = ({ entry }: { entry: FileEntryDto }) => {
+    const on = sel?.path === entry.path && sel?.staged === false;
+    const { dir, name } = splitPath(entry.path);
+    return (
+      <li
+        onClick={() => setSel({ path: entry.path, staged: false })}
+        className={`group flex cursor-pointer items-center gap-2 py-1 pl-3 pr-1.5 ${on ? "bg-overlay" : "hover:bg-elevated"}`}
+      >
+        <span className="w-3.5 shrink-0 text-center font-mono text-xs font-semibold text-danger" title="冲突">!</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-[13px]" title={entry.path}>
+          {dir && <span className="text-fg-subtle">{dir}</span>}
+          <span className="text-fg">{name}</span>
+        </span>
+        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+          <button onClick={(e) => { e.stopPropagation(); useOurs(entry.path); }} disabled={busy}
+            title="采用我方(ours)" className="rounded px-1.5 py-0.5 text-[11px] text-accent hover:bg-overlay disabled:opacity-40">我方</button>
+          <button onClick={(e) => { e.stopPropagation(); useTheirs(entry.path); }} disabled={busy}
+            title="采用对方(theirs)" className="rounded px-1.5 py-0.5 text-[11px] text-accent hover:bg-overlay disabled:opacity-40">对方</button>
+          <button onClick={(e) => { e.stopPropagation(); run(() => stageFile(repo, entry.path)); }} disabled={busy}
+            title="标记已解决(手动编辑后)" className="rounded px-1.5 py-0.5 text-[11px] text-success hover:bg-overlay disabled:opacity-40">已解决</button>
+        </div>
+      </li>
+    );
+  };
+
   const Section = ({ title, count, accent, onBulk, bulkLabel, bulkIcon, children }: {
     title: string; count: number; accent?: boolean;
     onBulk?: () => void; bulkLabel?: string; bulkIcon?: React.ReactNode;
@@ -143,7 +178,11 @@ export function ChangesView({ repo }: { repo: string }) {
   );
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full flex-col">
+      {repoState !== "clean" && (
+        <ConflictBanner repo={repo} state={repoState} conflicts={conflicts.length} />
+      )}
+      <div className="flex min-h-0 flex-1">
       {/* 左列:文件列表 + 提交框 */}
       <div className="flex shrink-0 flex-col overflow-hidden" style={{ width: listCol.w }}>
         {/* 工具栏 */}
@@ -159,6 +198,13 @@ export function ChangesView({ repo }: { repo: string }) {
 
         {/* 文件区(滚动) */}
         <div className="min-h-0 flex-1 overflow-y-auto">
+          {conflicts.length > 0 && (
+            <Section title="冲突" count={conflicts.length}>
+              <ul>
+                {conflicts.map((e) => <ConflictRow key={e.path} entry={e} />)}
+              </ul>
+            </Section>
+          )}
           <Section
             title="已暂存" count={staged.length} accent
             onBulk={() => unstageAll(staged.map((e) => e.path))}
@@ -222,12 +268,19 @@ export function ChangesView({ repo }: { repo: string }) {
           {sel ? (
             <span className="truncate font-mono normal-case tracking-normal text-fg" title={sel.path}>
               {sel.path}
-              <span className="ml-1.5 text-fg-subtle">{sel.staged ? "(已暂存)" : "(未暂存)"}</span>
+              <span className="ml-1.5 text-fg-subtle">
+                {isConflict ? "(冲突)" : sel.staged ? "(已暂存)" : "(未暂存)"}
+              </span>
             </span>
           ) : "Diff"}
         </div>
-        <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!sel} hunkAction={hunkAction} />
+        {isConflict && sel ? (
+          <ConflictView repo={repo} file={sel.path} />
+        ) : (
+          <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!sel} hunkAction={hunkAction} />
+        )}
       </main>
+      </div>
     </div>
   );
 }
