@@ -45,7 +45,7 @@ export function DiffView({
               <button
                 disabled={hunkAction.disabled}
                 onClick={() => hunkAction.onAct(hi)}
-                className="ml-auto shrink-0 rounded px-1.5 text-[10px] text-accent opacity-0 transition-opacity hover:bg-overlay group-hover:opacity-100 disabled:opacity-40"
+                className="ml-auto shrink-0 rounded border border-line-strong bg-elevated px-1.5 py-px text-[10px] text-fg-muted opacity-0 transition-colors hover:border-accent hover:bg-overlay hover:text-accent group-hover:opacity-100 disabled:opacity-40"
               >
                 {hunkAction.label}
               </button>
