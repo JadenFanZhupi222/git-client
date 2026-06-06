@@ -4,7 +4,7 @@
 
 use git_core::model::{
     BranchInfo, Commit, DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry,
-    FileState, Hunk, PullOutcome, WorkingTreeStatus,
+    FileState, Hunk, PullOutcome, PushOutcome, WorkingTreeStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -144,6 +144,23 @@ pub struct PullResultDto {
 impl From<PullOutcome> for PullResultDto {
     fn from(o: PullOutcome) -> Self {
         PullResultDto { summary: o.summary }
+    }
+}
+
+/// 一次 push 的成功结果 DTO。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PushResultDto {
+    pub summary: String,
+    /// 本次是否顺带建立了上游(首次 push 自动 -u 时为 true,前端可特别提示)。
+    pub set_upstream: bool,
+}
+
+impl From<PushOutcome> for PushResultDto {
+    fn from(o: PushOutcome) -> Self {
+        PushResultDto {
+            summary: o.summary,
+            set_upstream: o.set_upstream,
+        }
     }
 }
 

@@ -1,7 +1,52 @@
 use git_core::GitError;
-use git_core::model::{FetchOutcome, PullOutcome};
+use git_core::model::{FetchOutcome, PullOutcome, PushOutcome};
 use std::path::Path;
 use std::process::Command;
+
+/// 把 spawn 子进程的 io 错误映射成领域错误:git 不在 PATH → GitCliNotFound。
+fn spawn_err(e: std::io::Error) -> GitError {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        GitError::GitCliNotFound
+    } else {
+        GitError::Backend(e.to_string())
+    }
+}
+
+/// git push 的人类摘要:push 把结果写 stderr,优先取它,空则回落 stdout。
+fn push_summary(stdout: &str, stderr: &str) -> String {
+    let s = stderr.trim();
+    if s.is_empty() {
+        stdout.trim().to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+/// 把 push 失败的合并输出(小写)归类成精确错误。
+fn classify_push_error(combined: &str, stderr: &str) -> GitError {
+    let has = |s: &str| combined.contains(s);
+    if has("non-fast-forward")
+        || has("fetch first")
+        || has("updates were rejected")
+        || has("[rejected]")
+    {
+        GitError::PushRejected
+    } else if has("authentication failed")
+        || has("could not read username")
+        || has("permission denied")
+    {
+        GitError::AuthFailed
+    } else if has("could not resolve host") || has("unable to access") || has("timed out") {
+        GitError::NetworkError
+    } else if has("does not appear to be a git")
+        || has("no configured push destination")
+        || has("no such remote")
+    {
+        GitError::NoRemote
+    } else {
+        GitError::Backend(stderr.trim().to_string())
+    }
+}
 
 /// 调用系统 git CLI 的后端,专管网络/复杂流程(凭据交给 git 的凭据助手)。
 /// ⚠️ 子进程是阻塞的 —— 调用方必须在 spawn_blocking 里使用它。
@@ -134,6 +179,77 @@ impl CliBackend {
         };
         Err(err)
     }
+
+    /// 执行 `git -C <repo> push [remote]`,把当前分支推到远程。
+    /// 当前分支无上游时自动 `-u` 建立跟踪后重试一次;
+    /// 被拒(non-fast-forward)→ PushRejected。
+    pub fn push(&self, repo: &Path, remote: Option<&str>) -> Result<PushOutcome, GitError> {
+        let mut cmd = Command::new("git");
+        cmd.arg("-C").arg(repo).arg("push");
+        if let Some(r) = remote {
+            cmd.arg(r);
+        }
+
+        let output = cmd.output().map_err(spawn_err)?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        if output.status.success() {
+            return Ok(PushOutcome {
+                summary: push_summary(&stdout, &stderr),
+                set_upstream: false,
+            });
+        }
+
+        // 当前分支无上游 → 自动建立跟踪后重试(对应「点一下就推上去」的预期)。
+        let combined = format!("{stdout}\n{stderr}").to_lowercase();
+        if combined.contains("has no upstream")
+            || combined.contains("no upstream branch")
+            || combined.contains("set-upstream")
+        {
+            return self.push_set_upstream(repo, remote);
+        }
+
+        Err(classify_push_error(&combined, &stderr))
+    }
+
+    /// 首次 push:`git push -u <remote> <当前分支>`,推送并建立上游跟踪。
+    fn push_set_upstream(
+        &self,
+        repo: &Path,
+        remote: Option<&str>,
+    ) -> Result<PushOutcome, GitError> {
+        // 取当前分支短名;分离头(HEAD)无法自动建上游。
+        let head = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .output()
+            .map_err(spawn_err)?;
+        let branch = String::from_utf8_lossy(&head.stdout).trim().to_string();
+        if branch.is_empty() || branch == "HEAD" {
+            return Err(GitError::NoUpstream);
+        }
+        let remote = remote.unwrap_or("origin");
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["push", "-u", remote, &branch])
+            .output()
+            .map_err(spawn_err)?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        if output.status.success() {
+            return Ok(PushOutcome {
+                summary: push_summary(&stdout, &stderr),
+                set_upstream: true,
+            });
+        }
+        let combined = format!("{stdout}\n{stderr}").to_lowercase();
+        Err(classify_push_error(&combined, &stderr))
+    }
 }
 
 #[cfg(test)]
@@ -216,6 +332,8 @@ mod tests {
         git(dir, &["clone", remote_url, "."]);
         git(dir, &["config", "user.email", "t@e"]);
         git(dir, &["config", "user.name", "t"]);
+        // 固定 push.default,避免被测机器的全局配置影响「无上游」判定。
+        git(dir, &["config", "push.default", "simple"]);
     }
 
     #[test]
@@ -278,6 +396,104 @@ mod tests {
         assert!(
             matches!(err, GitError::MergeConflict { .. }),
             "分叉改动 pull 应报 MergeConflict,实际: {err:?}"
+        );
+    }
+
+    #[test]
+    fn push_uploads_commits_to_remote() {
+        let remote = tempfile::tempdir().unwrap();
+        git(remote.path(), &["init", "--bare", "-b", "main", "."]);
+        let url = remote.path().to_str().unwrap();
+
+        // A 建立上游(push -u),再多提交一条
+        let a = tempfile::tempdir().unwrap();
+        clone_with_identity(url, a.path());
+        std::fs::write(a.path().join("f.txt"), "v1").unwrap();
+        git(a.path(), &["add", "."]);
+        git(a.path(), &["commit", "-m", "c1"]);
+        git(a.path(), &["push", "-u", "origin", "main"]);
+
+        std::fs::write(a.path().join("f.txt"), "v2").unwrap();
+        git(a.path(), &["commit", "-am", "c2"]);
+
+        // 被测:已有上游,普通 push
+        let outcome = CliBackend.push(a.path(), None).unwrap();
+        assert!(!outcome.set_upstream, "已有上游不应再标记 set_upstream");
+        assert_eq!(
+            rev_parse(remote.path(), "main"),
+            rev_parse(a.path(), "HEAD"),
+            "push 后远程 main 应与本地 HEAD 一致"
+        );
+    }
+
+    #[test]
+    fn push_sets_upstream_on_first_push() {
+        let remote = tempfile::tempdir().unwrap();
+        git(remote.path(), &["init", "--bare", "-b", "main", "."]);
+        let url = remote.path().to_str().unwrap();
+
+        // 用 init + remote add(不 clone):本地 main 不会自动配置上游,
+        // 这样才能真正触发「无上游」分支。(clone 空仓库会自动建跟踪。)
+        let a = tempfile::tempdir().unwrap();
+        git(a.path(), &["init", "-b", "main", "."]);
+        git(a.path(), &["config", "user.email", "t@e"]);
+        git(a.path(), &["config", "user.name", "t"]);
+        git(a.path(), &["config", "push.default", "simple"]);
+        git(a.path(), &["remote", "add", "origin", url]);
+        std::fs::write(a.path().join("f.txt"), "v1").unwrap();
+        git(a.path(), &["add", "."]);
+        git(a.path(), &["commit", "-m", "c1"]);
+
+        // 被测:无上游 → 自动 -u
+        let outcome = CliBackend.push(a.path(), None).unwrap();
+        assert!(outcome.set_upstream, "首次 push 应自动建立上游");
+        assert_eq!(
+            rev_parse(remote.path(), "main"),
+            rev_parse(a.path(), "HEAD"),
+            "首次 push 后远程应有该提交"
+        );
+        // 上游确实建立了
+        let up = Command::new("git")
+            .current_dir(a.path())
+            .args(["rev-parse", "--abbrev-ref", "main@{u}"])
+            .output()
+            .unwrap();
+        assert!(up.status.success(), "应已配置上游");
+        assert_eq!(
+            String::from_utf8_lossy(&up.stdout).trim(),
+            "origin/main",
+            "上游应为 origin/main"
+        );
+    }
+
+    #[test]
+    fn push_rejected_when_remote_ahead() {
+        let remote = tempfile::tempdir().unwrap();
+        git(remote.path(), &["init", "--bare", "-b", "main", "."]);
+        let url = remote.path().to_str().unwrap();
+
+        // A 建立 c1 并推
+        let a = tempfile::tempdir().unwrap();
+        clone_with_identity(url, a.path());
+        std::fs::write(a.path().join("f.txt"), "v1").unwrap();
+        git(a.path(), &["add", "."]);
+        git(a.path(), &["commit", "-m", "c1"]);
+        git(a.path(), &["push", "-u", "origin", "main"]);
+
+        // B clone(@ c1,带上游),A 推进远程到 c2
+        let b = tempfile::tempdir().unwrap();
+        clone_with_identity(url, b.path());
+        std::fs::write(a.path().join("f.txt"), "v2").unwrap();
+        git(a.path(), &["commit", "-am", "c2"]);
+        git(a.path(), &["push", "origin", "main"]);
+
+        // B 在本地 c1 上另提交 cB,直接 push → 落后于远程,被拒
+        std::fs::write(b.path().join("f.txt"), "B-side").unwrap();
+        git(b.path(), &["commit", "-am", "cB"]);
+        let err = CliBackend.push(b.path(), None).unwrap_err();
+        assert!(
+            matches!(err, GitError::PushRejected),
+            "落后远程的 push 应报 PushRejected,实际: {err:?}"
         );
     }
 }

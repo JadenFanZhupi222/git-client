@@ -5,7 +5,7 @@
 use git_core::{GitBackend, GitError};
 use ipc_types::{
     BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto,
-    StatusDto,
+    PushResultDto, StatusDto,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -151,6 +151,12 @@ impl RepoService {
     pub fn pull(&self, repo_path: &Path, remote: Option<&str>) -> Result<PullResultDto, GitError> {
         let outcome = self.backend.pull(repo_path, remote)?;
         Ok(PullResultDto::from(outcome))
+    }
+
+    /// 用例:push 当前分支。remote=None 用默认远程;首次自动建上游。
+    pub fn push(&self, repo_path: &Path, remote: Option<&str>) -> Result<PushResultDto, GitError> {
+        let outcome = self.backend.push(repo_path, remote)?;
+        Ok(PushResultDto::from(outcome))
     }
 
     /// 用例:提交。空白信息在本层拦截,不下探后端。
@@ -364,6 +370,27 @@ mod tests {
         let svc = RepoService::new(fb.clone());
         svc.pull(Path::new("/r"), None).unwrap();
         assert_eq!(fb.pull_call_count(), 1);
+    }
+
+    #[test]
+    fn push_forwards_and_maps_dto() {
+        use git_core::model::PushOutcome;
+        let fb = FakeBackend::default().with_push(PushOutcome {
+            summary: "main -> main".into(),
+            set_upstream: true,
+        });
+        let svc = RepoService::new(Arc::new(fb));
+        let dto = svc.push(Path::new("/r"), None).unwrap();
+        assert_eq!(dto.summary, "main -> main");
+        assert!(dto.set_upstream);
+    }
+
+    #[test]
+    fn push_counts_backend_call() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.push(Path::new("/r"), Some("origin")).unwrap();
+        assert_eq!(fb.push_call_count(), 1);
     }
 
     #[test]
