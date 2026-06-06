@@ -2,8 +2,19 @@ import { useEffect, useState } from "react";
 import { getLog, getCommitFiles, getCurrentBranch, type CommitDto, type FileChangeDto, type IpcError } from "../ipc";
 import { CommitList } from "../components/CommitList";
 import { CommitFileList } from "../components/CommitFileList";
+import { BranchIcon, FileDiffIcon } from "../components/icons";
 
 const PAGE = 50;
+
+/** 栏头:小标题 + 可选图标,统一三栏顶部观感 */
+function ColumnHead({ icon, children }: { icon?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
+      {icon}
+      {children}
+    </div>
+  );
+}
 
 export function HistoryView({ repo }: { repo: string }) {
   const [commits, setCommits] = useState<CommitDto[]>([]);
@@ -40,22 +51,41 @@ export function HistoryView({ repo }: { repo: string }) {
   }
 
   return (
-    <div className="flex h-[calc(100vh-6.5rem)]">
-      <aside className="w-72 border-r border-[#21262d] overflow-hidden flex flex-col">
-        {error && <p className="text-[#f85149] text-xs p-2">{error}</p>}
-        <CommitList commits={commits} branch={branch} selectedId={selected?.id ?? null}
-          onSelect={selectCommit} onLoadMore={() => loadPage(commits.length)} loading={loading} hasMore={hasMore} />
+    <div className="flex h-full">
+      {/* 提交列表 */}
+      <aside className="flex w-80 shrink-0 flex-col overflow-hidden border-r border-line">
+        <ColumnHead icon={<BranchIcon width={13} height={13} />}>
+          {branch ? <span className="font-mono normal-case tracking-normal text-fg">{branch}</span> : "提交历史"}
+        </ColumnHead>
+        {error && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{error}</p>}
+        <CommitList
+          commits={commits}
+          branch={branch}
+          selectedId={selected?.id ?? null}
+          onSelect={selectCommit}
+          onLoadMore={() => loadPage(commits.length)}
+          loading={loading}
+          hasMore={hasMore}
+        />
       </aside>
-      <div className="w-64 border-r border-[#21262d] overflow-hidden flex flex-col">
-        <div className="px-3 py-2 text-[11px] uppercase tracking-wide text-[#8b949e] border-b border-[#21262d]">改动文件</div>
+
+      {/* 改动文件 */}
+      <div className="flex w-64 shrink-0 flex-col overflow-hidden border-r border-line">
+        <ColumnHead icon={<FileDiffIcon width={13} height={13} />}>改动文件{selected && ` (${files.length})`}</ColumnHead>
         {selected
           ? <CommitFileList files={files} selected={selectedFile} onSelect={setSelectedFile} />
-          : <div className="p-3 text-xs text-[#6e7681]">选择一个提交</div>}
+          : <div className="p-3 text-xs text-fg-subtle">选择一个提交</div>}
       </div>
-      <main className="flex-1 overflow-auto p-4">
-        <div className="text-[11px] uppercase tracking-wide text-[#8b949e] mb-2">Diff</div>
-        <div className="text-sm text-[#6e7681]">
-          {selectedFile ? `${selectedFile} 的行级 diff 将在 1b-2 显示` : "选择一个文件查看 diff(1b-2)"}
+
+      {/* Diff */}
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <ColumnHead>Diff</ColumnHead>
+        <div className="flex flex-1 items-center justify-center p-4 text-center text-sm text-fg-subtle">
+          {selectedFile ? (
+            <span className="font-mono">{selectedFile} 的行级 diff 将在 1b-2 显示</span>
+          ) : (
+            <span>选择一个文件查看 diff(1b-2)</span>
+          )}
         </div>
       </main>
     </div>
