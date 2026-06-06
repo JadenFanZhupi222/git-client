@@ -10,6 +10,16 @@ pub struct BranchInfo {
     pub is_head: bool,
 }
 
+/// 当前分支相对其上游(upstream)的领先/落后提交数。
+/// 无上游时上层返回 None,不构造本结构。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AheadBehind {
+    /// 本地有、上游没有的提交数(需要 push)。
+    pub ahead: usize,
+    /// 上游有、本地没有的提交数(需要 pull)。
+    pub behind: usize,
+}
+
 /// 引用的种类,决定图谱里徽章的样式。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RefKind {

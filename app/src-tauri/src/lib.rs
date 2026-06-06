@@ -2,8 +2,8 @@ use app_service::RepoService;
 use app_service::watcher::{ChangeKind, RepoWatcher};
 use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组合
 use ipc_types::{
-    BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError,
-    PullResultDto, PushResultDto, StatusDto,
+    AheadBehindDto, BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto,
+    IpcError, PullResultDto, PushResultDto, StatusDto,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -195,6 +195,17 @@ async fn list_branches(repo_path: String) -> Result<Vec<BranchDto>, IpcError> {
 }
 
 #[tauri::command]
+async fn get_ahead_behind(repo_path: String) -> Result<Option<AheadBehindDto>, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.ahead_behind(&PathBuf::from(repo_path))
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
 async fn checkout_branch(repo_path: String, name: String) -> Result<(), IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
@@ -309,6 +320,7 @@ pub fn run() {
             get_commit_graph,
             get_current_branch,
             list_branches,
+            get_ahead_behind,
             checkout_branch,
             create_branch,
             delete_branch,

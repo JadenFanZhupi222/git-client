@@ -3,8 +3,8 @@
 //! 让前后端类型在编译期对齐。阶段 0 先保持简单。
 
 use git_core::model::{
-    BranchInfo, Commit, CommitRef, DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff,
-    FileEntry, FileState, Hunk, PullOutcome, PushOutcome, RefKind, WorkingTreeStatus,
+    AheadBehind, BranchInfo, Commit, CommitRef, DiffLine, DiffLineKind, FetchOutcome, FileChange,
+    FileDiff, FileEntry, FileState, Hunk, PullOutcome, PushOutcome, RefKind, WorkingTreeStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -104,6 +104,22 @@ impl From<FileChange> for FileChangeDto {
         FileChangeDto {
             path: c.path,
             status: status.to_string(),
+        }
+    }
+}
+
+/// 当前分支相对上游的领先/落后 DTO。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AheadBehindDto {
+    pub ahead: usize,
+    pub behind: usize,
+}
+
+impl From<AheadBehind> for AheadBehindDto {
+    fn from(a: AheadBehind) -> Self {
+        AheadBehindDto {
+            ahead: a.ahead,
+            behind: a.behind,
         }
     }
 }

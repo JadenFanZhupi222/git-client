@@ -1,6 +1,6 @@
 use git_core::model::{
-    BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff, FileEntry, PullOutcome,
-    PushOutcome, Signature, WorkingTreeStatus,
+    AheadBehind, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff, FileEntry,
+    PullOutcome, PushOutcome, Signature, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -21,6 +21,7 @@ pub struct FakeBackend {
     canned_file_diff: Mutex<FileDiff>,
     canned_branches: Mutex<Vec<BranchInfo>>,
     canned_refs: Mutex<Vec<CommitRef>>,
+    canned_ahead_behind: Mutex<Option<AheadBehind>>,
     checked_out: Mutex<Vec<String>>,
     created: Mutex<Vec<String>>,
     deleted: Mutex<Vec<String>>,
@@ -70,6 +71,10 @@ impl FakeBackend {
     }
     pub fn with_refs(self, refs: Vec<CommitRef>) -> Self {
         *self.canned_refs.lock().unwrap() = refs;
+        self
+    }
+    pub fn with_ahead_behind(self, ab: AheadBehind) -> Self {
+        *self.canned_ahead_behind.lock().unwrap() = Some(ab);
         self
     }
     /// 断言用:记录被 checkout 的分支名(按调用顺序)。
@@ -168,6 +173,9 @@ impl GitBackend for FakeBackend {
     }
     fn refs(&self, _path: &Path) -> Result<Vec<CommitRef>, GitError> {
         Ok(self.canned_refs.lock().unwrap().clone())
+    }
+    fn ahead_behind(&self, _path: &Path) -> Result<Option<AheadBehind>, GitError> {
+        Ok(*self.canned_ahead_behind.lock().unwrap())
     }
     fn checkout_branch(&self, _path: &Path, name: &str) -> Result<(), GitError> {
         self.checked_out.lock().unwrap().push(name.to_string());
