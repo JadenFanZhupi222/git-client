@@ -84,6 +84,12 @@ export const SpinnerIcon = ({ className = "", ...p }: SVGProps<SVGSVGElement>) =
   </svg>
 );
 
+export const PullIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M8 2v6.5M5.5 6 8 8.5 10.5 6M3.5 10.5v2a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-2" />
+  </svg>
+);
+
 export const AlertIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
     <path d="M8 2.5 1.5 13.5h13L8 2.5Z" />

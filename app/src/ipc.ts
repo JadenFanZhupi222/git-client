@@ -107,6 +107,15 @@ export async function fetchRemote(repoPath: string, remote?: string): Promise<Fe
   return await invoke<FetchResultDto>("fetch", { repoPath, remote: remote ?? null });
 }
 
+export interface PullResultDto {
+  summary: string;
+}
+
+/** pull(fetch + merge)。冲突抛 MERGE_CONFLICT、无上游抛 NO_UPSTREAM。 */
+export async function pullRemote(repoPath: string, remote?: string): Promise<PullResultDto> {
+  return await invoke<PullResultDto>("pull", { repoPath, remote: remote ?? null });
+}
+
 export interface DiffLineDto {
   kind: string; // "context" | "add" | "del"
   old_lineno: number | null;
