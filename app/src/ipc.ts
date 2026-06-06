@@ -13,6 +13,7 @@ export interface CommitDto {
   summary: string;
   author_name: string;
   timestamp: number;
+  parents: string[];
 }
 
 export interface IpcError {
@@ -93,6 +94,26 @@ export async function getCommitFileDiff(
   file: string,
 ): Promise<FileDiffDto> {
   return await invoke<FileDiffDto>("get_commit_file_diff", { repoPath, commitId, file });
+}
+
+// ── 提交图谱 ──
+export interface GraphSegDto {
+  from: number;
+  to: number;
+  color: number;
+}
+
+export interface GraphRowDto {
+  commit: CommitDto;
+  column: number;
+  color: number;
+  top: GraphSegDto[];
+  bottom: GraphSegDto[];
+}
+
+/** 从 HEAD 取 limit 条提交并算好 lane 布局。 */
+export async function getCommitGraph(repoPath: string, limit: number): Promise<GraphRowDto[]> {
+  return await invoke<GraphRowDto[]>("get_commit_graph", { repoPath, limit });
 }
 
 // ── 文件监听 ──

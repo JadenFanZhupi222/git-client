@@ -17,6 +17,7 @@ pub struct CommitDto {
     pub summary: String,
     pub author_name: String,
     pub timestamp: i64,
+    pub parents: Vec<String>,
 }
 
 impl From<Commit> for CommitDto {
@@ -27,6 +28,7 @@ impl From<Commit> for CommitDto {
             summary: c.summary,
             author_name: c.author.name,
             timestamp: c.timestamp,
+            parents: c.parents,
         }
     }
 }
@@ -99,6 +101,25 @@ impl From<FileChange> for FileChangeDto {
             status: status.to_string(),
         }
     }
+}
+
+/// 图谱中一段连线:在某行单元格内,从 `from` 列连到 `to` 列。
+/// 上半段语义为 顶边→节点(中点),下半段为 节点(中点)→底边。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphSegDto {
+    pub from: u32,
+    pub to: u32,
+    pub color: u32,
+}
+
+/// 图谱一行:嵌入提交信息 + 节点列/颜色 + 上下半段连线。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphRowDto {
+    pub commit: CommitDto,
+    pub column: u32,
+    pub color: u32,
+    pub top: Vec<GraphSegDto>,
+    pub bottom: Vec<GraphSegDto>,
 }
 
 /// 行级 diff 的一行 DTO。kind:context | add | del。

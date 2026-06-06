@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  getLog, getCommitFiles, getCurrentBranch, getCommitFileDiff, onRepoChanged,
-  type CommitDto, type FileChangeDto, type FileDiffDto, type IpcError,
+  getCommitGraph, getCommitFiles, getCurrentBranch, getCommitFileDiff, onRepoChanged,
+  type CommitDto, type GraphRowDto, type FileChangeDto, type FileDiffDto, type IpcError,
 } from "../ipc";
-import { CommitList } from "../components/CommitList";
+import { CommitGraph } from "../components/CommitGraph";
 import { CommitFileList } from "../components/CommitFileList";
 import { DiffView } from "../components/DiffView";
 import { BranchIcon, FileDiffIcon } from "../components/icons";
@@ -21,7 +21,8 @@ function ColumnHead({ icon, children }: { icon?: React.ReactNode; children: Reac
 }
 
 export function HistoryView({ repo }: { repo: string }) {
-  const [commits, setCommits] = useState<CommitDto[]>([]);
+  const [rows, setRows] = useState<GraphRowDto[]>([]);
+  const limitRef = useRef(PAGE);
   const [branch, setBranch] = useState<string | null>(null);
   const [selected, setSelected] = useState<CommitDto | null>(null);
   const [files, setFiles] = useState<FileChangeDto[]>([]);
@@ -32,30 +33,32 @@ export function HistoryView({ repo }: { repo: string }) {
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  async function loadPage(skip: number) {
+  // 图谱总是从 HEAD 整段计算(skip=0,limit 递增),保证泳道一致。
+  async function loadGraph(limit: number) {
+    limitRef.current = limit;
     setLoading(true); setError(null);
     try {
-      const page = await getLog(repo, PAGE, skip);
-      setCommits((prev) => (skip === 0 ? page : [...prev, ...page]));
-      setHasMore(page.length === PAGE); // 不足一页 = 历史到底
+      const g = await getCommitGraph(repo, limit);
+      setRows(g);
+      setHasMore(g.length === limit); // 不足 limit = 到底
     } catch (e) { setError((e as IpcError).message ?? String(e)); }
     finally { setLoading(false); }
   }
 
   useEffect(() => {
-    setCommits([]); setSelected(null); setFiles([]); setSelectedFile(null);
+    setRows([]); setSelected(null); setFiles([]); setSelectedFile(null); setDiff(null);
     setHasMore(true); setError(null);
-    loadPage(0);
+    loadGraph(PAGE);
     getCurrentBranch(repo).then(setBranch).catch(() => setBranch(null));
     // eslint-disable-next-line
   }, [repo]);
 
-  // 仅 "ref"(新提交/切分支)影响历史:重载首页 + 分支,不被工作区改动打断
+  // 仅 "ref"(新提交/切分支)影响历史:按当前 limit 重载 + 刷新分支
   useEffect(() => {
     let un: (() => void) | undefined;
     onRepoChanged((kind) => {
       if (kind !== "ref") return;
-      loadPage(0);
+      loadGraph(limitRef.current);
       getCurrentBranch(repo).then(setBranch).catch(() => setBranch(null));
     }).then((u) => { un = u; });
     return () => un?.();
@@ -78,18 +81,18 @@ export function HistoryView({ repo }: { repo: string }) {
 
   return (
     <div className="flex h-full">
-      {/* 提交列表 */}
+      {/* 提交图谱 */}
       <aside className="flex w-80 shrink-0 flex-col overflow-hidden border-r border-line">
         <ColumnHead icon={<BranchIcon width={13} height={13} />}>
           {branch ? <span className="font-mono normal-case tracking-normal text-fg">{branch}</span> : "提交历史"}
         </ColumnHead>
         {error && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{error}</p>}
-        <CommitList
-          commits={commits}
+        <CommitGraph
+          rows={rows}
           branch={branch}
           selectedId={selected?.id ?? null}
           onSelect={selectCommit}
-          onLoadMore={() => loadPage(commits.length)}
+          onLoadMore={() => loadGraph(limitRef.current + PAGE)}
           loading={loading}
           hasMore={hasMore}
         />
