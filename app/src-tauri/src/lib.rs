@@ -336,6 +336,83 @@ async fn push(repo_path: String, remote: Option<String>) -> Result<PushResultDto
 }
 
 #[tauri::command]
+async fn get_repo_state(repo_path: String) -> Result<String, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.repo_state(&PathBuf::from(repo_path))
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn resolve_ours(repo_path: String, file: String) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.resolve_ours(&PathBuf::from(repo_path), &file)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn resolve_theirs(repo_path: String, file: String) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.resolve_theirs(&PathBuf::from(repo_path), &file)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn continue_op(repo_path: String) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.continue_op(&PathBuf::from(repo_path))
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn abort_op(repo_path: String) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.abort_op(&PathBuf::from(repo_path))
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+/// 读工作区某文件原文(用于冲突文件只读展示)。不经 git,直接 fs;防目录穿越。
+#[tauri::command]
+async fn read_working_file(repo_path: String, file: String) -> Result<String, IpcError> {
+    tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let repo = PathBuf::from(&repo_path);
+        let target = repo.join(&file);
+        let repo_c = repo.canonicalize().map_err(|e| e.to_string())?;
+        let target_c = target.canonicalize().map_err(|e| e.to_string())?;
+        if !target_c.starts_with(&repo_c) {
+            return Err("路径越界".into());
+        }
+        std::fs::read_to_string(&target_c).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(|message| IpcError {
+        code: "READ_FILE".into(),
+        message,
+        recoverable: true,
+    })
+}
+
+#[tauri::command]
 async fn stash_list(repo_path: String) -> Result<Vec<StashDto>, IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
@@ -451,6 +528,12 @@ pub fn run() {
             fetch,
             pull,
             push,
+            get_repo_state,
+            resolve_ours,
+            resolve_theirs,
+            continue_op,
+            abort_op,
+            read_working_file,
             stash_list,
             stash_save,
             stash_apply,

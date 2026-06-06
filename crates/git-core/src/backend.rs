@@ -1,7 +1,7 @@
 use crate::error::GitError;
 use crate::model::{
     AheadBehind, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff, PullOutcome,
-    PushOutcome, StashEntry, WorkingTreeStatus,
+    PushOutcome, RepoState, StashEntry, WorkingTreeStatus,
 };
 use std::path::Path;
 
@@ -56,6 +56,29 @@ pub trait GitBackend: Send + Sync {
     /// 列出仓库引用(本地分支 / 远程跟踪分支 / HEAD),含各自指向的 commit SHA。
     /// 供图谱在对应提交上渲染分支/远程标签。
     fn refs(&self, repo: &Path) -> Result<Vec<CommitRef>, GitError>;
+
+    /// 仓库当前状态(干净 / 合并中 / 变基中 / cherry-pick / revert)。
+    fn repo_state(&self, repo: &Path) -> Result<RepoState, GitError>;
+
+    // ---- 冲突解决:整文件采用一边走 CLI;默认 Unsupported ----
+
+    /// 整文件采用「我方(ours)」并标记已解决(checkout --ours + add)。
+    fn resolve_ours(&self, _repo: &Path, _file: &str) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+    /// 整文件采用「对方(theirs)」并标记已解决(checkout --theirs + add)。
+    fn resolve_theirs(&self, _repo: &Path, _file: &str) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+    /// 继续进行中的操作(合并提交 / rebase --continue / cherry-pick --continue)。
+    /// 仍有未解决冲突 → MergeConflict。默认 Unsupported。
+    fn continue_op(&self, _repo: &Path) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+    /// 中止进行中的操作(merge/rebase/cherry-pick --abort)。默认 Unsupported。
+    fn abort_op(&self, _repo: &Path) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
 
     /// 当前分支相对上游的领先/落后数。无上游 / 分离头 / 空仓库 → None。
     fn ahead_behind(&self, repo: &Path) -> Result<Option<AheadBehind>, GitError>;

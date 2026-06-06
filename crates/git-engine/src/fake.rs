@@ -1,6 +1,6 @@
 use git_core::model::{
     AheadBehind, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff, FileEntry,
-    PullOutcome, PushOutcome, StashEntry, Signature, WorkingTreeStatus,
+    PullOutcome, PushOutcome, RepoState, StashEntry, Signature, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -37,6 +37,8 @@ pub struct FakeBackend {
     upstreams_set: Mutex<Vec<String>>,
     canned_stashes: Mutex<Vec<StashEntry>>,
     stash_ops: Mutex<Vec<String>>,
+    canned_repo_state: Mutex<Option<RepoState>>, // None → Clean
+    conflict_ops: Mutex<Vec<String>>,
 }
 
 impl FakeBackend {
@@ -134,6 +136,13 @@ impl FakeBackend {
     pub fn stash_ops(&self) -> Vec<String> {
         self.stash_ops.lock().unwrap().clone()
     }
+    pub fn with_repo_state(self, state: RepoState) -> Self {
+        *self.canned_repo_state.lock().unwrap() = Some(state);
+        self
+    }
+    pub fn conflict_ops(&self) -> Vec<String> {
+        self.conflict_ops.lock().unwrap().clone()
+    }
 }
 
 impl GitBackend for FakeBackend {
@@ -216,6 +225,25 @@ impl GitBackend for FakeBackend {
     }
     fn refs(&self, _path: &Path) -> Result<Vec<CommitRef>, GitError> {
         Ok(self.canned_refs.lock().unwrap().clone())
+    }
+    fn repo_state(&self, _path: &Path) -> Result<RepoState, GitError> {
+        Ok(self.canned_repo_state.lock().unwrap().unwrap_or(RepoState::Clean))
+    }
+    fn resolve_ours(&self, _path: &Path, file: &str) -> Result<(), GitError> {
+        self.conflict_ops.lock().unwrap().push(format!("ours:{file}"));
+        Ok(())
+    }
+    fn resolve_theirs(&self, _path: &Path, file: &str) -> Result<(), GitError> {
+        self.conflict_ops.lock().unwrap().push(format!("theirs:{file}"));
+        Ok(())
+    }
+    fn continue_op(&self, _path: &Path) -> Result<(), GitError> {
+        self.conflict_ops.lock().unwrap().push("continue".into());
+        Ok(())
+    }
+    fn abort_op(&self, _path: &Path) -> Result<(), GitError> {
+        self.conflict_ops.lock().unwrap().push("abort".into());
+        Ok(())
     }
     fn ahead_behind(&self, _path: &Path) -> Result<Option<AheadBehind>, GitError> {
         Ok(*self.canned_ahead_behind.lock().unwrap())

@@ -162,6 +162,33 @@ impl RepoService {
         self.backend.set_upstream(repo_path, upstream)
     }
 
+    // ---- 冲突 / 进行中操作 ----
+    /// 仓库状态字符串:clean | merging | rebasing | cherry-picking | reverting | other。
+    pub fn repo_state(&self, repo_path: &Path) -> Result<String, GitError> {
+        use git_core::model::RepoState::*;
+        Ok(match self.backend.repo_state(repo_path)? {
+            Clean => "clean",
+            Merging => "merging",
+            Rebasing => "rebasing",
+            CherryPicking => "cherry-picking",
+            Reverting => "reverting",
+            Other => "other",
+        }
+        .to_string())
+    }
+    pub fn resolve_ours(&self, repo_path: &Path, file: &str) -> Result<(), GitError> {
+        self.backend.resolve_ours(repo_path, file)
+    }
+    pub fn resolve_theirs(&self, repo_path: &Path, file: &str) -> Result<(), GitError> {
+        self.backend.resolve_theirs(repo_path, file)
+    }
+    pub fn continue_op(&self, repo_path: &Path) -> Result<(), GitError> {
+        self.backend.continue_op(repo_path)
+    }
+    pub fn abort_op(&self, repo_path: &Path) -> Result<(), GitError> {
+        self.backend.abort_op(repo_path)
+    }
+
     // ---- 贮藏 ----
     pub fn stash_list(&self, repo_path: &Path) -> Result<Vec<StashDto>, GitError> {
         Ok(self.backend.stash_list(repo_path)?.into_iter().map(StashDto::from).collect())
@@ -435,6 +462,25 @@ mod tests {
         let fb = FakeBackend::default().with_remotes(vec!["origin".into(), "upstream".into()]);
         let svc = RepoService::new(Arc::new(fb));
         assert_eq!(svc.remotes(Path::new("/r")).unwrap(), vec!["origin", "upstream"]);
+    }
+
+    #[test]
+    fn repo_state_maps_to_string() {
+        use git_core::model::RepoState;
+        let fb = FakeBackend::default().with_repo_state(RepoState::Merging);
+        let svc = RepoService::new(Arc::new(fb));
+        assert_eq!(svc.repo_state(Path::new("/r")).unwrap(), "merging");
+    }
+
+    #[test]
+    fn conflict_ops_forward_to_backend() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.resolve_ours(Path::new("/r"), "a.txt").unwrap();
+        svc.resolve_theirs(Path::new("/r"), "b.txt").unwrap();
+        svc.continue_op(Path::new("/r")).unwrap();
+        svc.abort_op(Path::new("/r")).unwrap();
+        assert_eq!(fb.conflict_ops(), vec!["ours:a.txt", "theirs:b.txt", "continue", "abort"]);
     }
 
     #[test]

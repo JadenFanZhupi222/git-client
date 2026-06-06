@@ -160,6 +160,39 @@ export async function pushRemote(repoPath: string, remote?: string): Promise<Pus
   return await invoke<PushResultDto>("push", { repoPath, remote: remote ?? null });
 }
 
+// ── 冲突 / 进行中操作 ──
+export type RepoStateStr = "clean" | "merging" | "rebasing" | "cherry-picking" | "reverting" | "other";
+
+/** 仓库状态:是否在合并/变基/cherry-pick 中。 */
+export async function getRepoState(repoPath: string): Promise<RepoStateStr> {
+  return await invoke<RepoStateStr>("get_repo_state", { repoPath });
+}
+
+/** 整文件采用我方并标记已解决。 */
+export async function resolveOurs(repoPath: string, file: string): Promise<void> {
+  await invoke("resolve_ours", { repoPath, file });
+}
+
+/** 整文件采用对方并标记已解决。 */
+export async function resolveTheirs(repoPath: string, file: string): Promise<void> {
+  await invoke("resolve_theirs", { repoPath, file });
+}
+
+/** 继续进行中的操作(合并提交 / rebase --continue 等);仍有冲突抛 MERGE_CONFLICT。 */
+export async function continueOp(repoPath: string): Promise<void> {
+  await invoke("continue_op", { repoPath });
+}
+
+/** 中止进行中的操作(merge/rebase/cherry-pick --abort)。 */
+export async function abortOp(repoPath: string): Promise<void> {
+  await invoke("abort_op", { repoPath });
+}
+
+/** 读工作区文件原文(冲突文件只读展示)。 */
+export async function readWorkingFile(repoPath: string, file: string): Promise<string> {
+  return await invoke<string>("read_working_file", { repoPath, file });
+}
+
 // ── 贮藏(stash) ──
 export interface StashDto {
   index: number;

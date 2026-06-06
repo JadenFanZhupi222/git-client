@@ -1,6 +1,6 @@
 use git_core::model::{
     AheadBehind, BranchInfo, Commit, CommitRef, DiffLine, DiffLineKind, FileChange, FileDiff,
-    FileEntry, FileState, Hunk, RefKind, Signature, WorkingTreeStatus,
+    FileEntry, FileState, Hunk, RefKind, RepoState, Signature, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -451,6 +451,20 @@ impl GitBackend for Git2Backend {
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
         let arr = repo.remotes().map_err(|e| GitError::Backend(e.to_string()))?;
         Ok(arr.iter().flatten().map(|s| s.to_string()).collect())
+    }
+
+    fn repo_state(&self, path: &Path) -> Result<RepoState, GitError> {
+        use git2::RepositoryState as S;
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        Ok(match repo.state() {
+            S::Clean => RepoState::Clean,
+            S::Merge => RepoState::Merging,
+            S::Rebase | S::RebaseInteractive | S::RebaseMerge => RepoState::Rebasing,
+            S::CherryPick | S::CherryPickSequence => RepoState::CherryPicking,
+            S::Revert | S::RevertSequence => RepoState::Reverting,
+            _ => RepoState::Other,
+        })
     }
 
     fn set_upstream(&self, path: &Path, upstream: &str) -> Result<(), GitError> {
@@ -1244,6 +1258,34 @@ mod tests {
         let ab = Git2Backend.ahead_behind(&repo).unwrap();
         assert!(ab.is_some(), "设上游后应能计算 ahead/behind");
         assert_eq!(ab.unwrap().ahead, 0);
+    }
+
+    #[test]
+    fn repo_state_clean_then_merging_on_conflict() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        assert_eq!(b.repo_state(&repo).unwrap(), RepoState::Clean);
+
+        // 用 CLI 造一个合并冲突
+        let g = |args: &[&str]| {
+            std::process::Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .output()
+                .unwrap();
+        };
+        write(&repo, "f.txt", "base\n");
+        g(&["add", "."]);
+        g(&["commit", "-m", "c1"]);
+        g(&["checkout", "-b", "other"]);
+        write(&repo, "f.txt", "other\n");
+        g(&["commit", "-am", "cO"]);
+        g(&["checkout", "-"]); // 回到初始分支
+        write(&repo, "f.txt", "main\n");
+        g(&["commit", "-am", "cM"]);
+        g(&["merge", "other"]); // 同一行分叉 → 冲突,进入合并中
+
+        assert_eq!(b.repo_state(&repo).unwrap(), RepoState::Merging);
     }
 
     #[test]

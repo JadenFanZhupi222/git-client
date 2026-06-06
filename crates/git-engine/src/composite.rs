@@ -2,7 +2,7 @@ use crate::cli_backend::CliBackend;
 use crate::git2_backend::Git2Backend;
 use git_core::model::{
     AheadBehind, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff, PullOutcome,
-    PushOutcome, StashEntry, WorkingTreeStatus,
+    PushOutcome, RepoState, StashEntry, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -59,6 +59,24 @@ impl GitBackend for CompositeBackend {
     }
     fn refs(&self, repo: &Path) -> Result<Vec<CommitRef>, GitError> {
         self.git2.refs(repo)
+    }
+    fn repo_state(&self, repo: &Path) -> Result<RepoState, GitError> {
+        self.git2.repo_state(repo)
+    }
+    fn resolve_ours(&self, repo: &Path, file: &str) -> Result<(), GitError> {
+        self.cli.resolve_ours(repo, file)
+    }
+    fn resolve_theirs(&self, repo: &Path, file: &str) -> Result<(), GitError> {
+        self.cli.resolve_theirs(repo, file)
+    }
+    fn continue_op(&self, repo: &Path) -> Result<(), GitError> {
+        // 读状态(git2)决定走哪条 continue,再交给 CLI 执行。
+        let state = self.git2.repo_state(repo)?;
+        self.cli.continue_op(repo, state)
+    }
+    fn abort_op(&self, repo: &Path) -> Result<(), GitError> {
+        let state = self.git2.repo_state(repo)?;
+        self.cli.abort_op(repo, state)
     }
     fn ahead_behind(&self, repo: &Path) -> Result<Option<AheadBehind>, GitError> {
         self.git2.ahead_behind(repo)
