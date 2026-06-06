@@ -3,23 +3,29 @@ import {
   getStatus, stageFile, unstageFile, stageHunk, unstageHunk, commit, getWorkingDiff, onRepoChanged,
   type StatusDto, type FileEntryDto, type FileDiffDto, type IpcError,
 } from "../ipc";
-import { RefreshIcon, CheckIcon, FileDiffIcon } from "../components/icons";
+import { RefreshIcon, CheckIcon, FileDiffIcon, PlusIcon, MinusIcon } from "../components/icons";
 import { DiffView } from "../components/DiffView";
 import { Resizer, useResizableWidth } from "../components/Resizer";
 import { useToast } from "../components/Toast";
 
-/** 工作区状态 → 颜色 + 单字母徽章 */
-const STATE_STYLE: Record<string, { letter: string; cls: string }> = {
-  new: { letter: "A", cls: "text-success" },
-  added: { letter: "A", cls: "text-success" },
-  modified: { letter: "M", cls: "text-accent" },
-  deleted: { letter: "D", cls: "text-danger" },
-  renamed: { letter: "R", cls: "text-warning" },
-  untracked: { letter: "U", cls: "text-success" },
-  conflicted: { letter: "!", cls: "text-danger" },
+/** 工作区状态 → 颜色 + 单字母徽章 + 中文名(tooltip) */
+const STATE_STYLE: Record<string, { letter: string; cls: string; label: string }> = {
+  new: { letter: "A", cls: "text-success", label: "新增" },
+  added: { letter: "A", cls: "text-success", label: "新增" },
+  modified: { letter: "M", cls: "text-accent", label: "修改" },
+  deleted: { letter: "D", cls: "text-danger", label: "删除" },
+  renamed: { letter: "R", cls: "text-warning", label: "重命名" },
+  untracked: { letter: "U", cls: "text-success", label: "未跟踪" },
+  conflicted: { letter: "!", cls: "text-danger", label: "冲突" },
 };
 function styleFor(state: string) {
-  return STATE_STYLE[state.toLowerCase()] ?? { letter: "?", cls: "text-fg-muted" };
+  return STATE_STYLE[state.toLowerCase()] ?? { letter: "?", cls: "text-fg-muted", label: state };
+}
+
+/** 文件路径拆成 目录(灰)+ 文件名(亮),便于扫读 */
+function splitPath(path: string) {
+  const i = path.lastIndexOf("/");
+  return { dir: i >= 0 ? path.slice(0, i + 1) : "", name: i >= 0 ? path.slice(i + 1) : path };
 }
 
 export function ChangesView({ repo }: { repo: string }) {
@@ -88,6 +94,14 @@ export function ChangesView({ repo }: { repo: string }) {
     finally { setBusy(false); }
   }
 
+  // 批量暂存 / 取消暂存(顺序执行,避免并发写 index 冲突)
+  async function stageAll(paths: string[]) {
+    await run(async () => { for (const p of paths) await stageFile(repo, p); });
+  }
+  async function unstageAll(paths: string[]) {
+    await run(async () => { for (const p of paths) await unstageFile(repo, p); });
+  }
+
   async function doCommit() {
     setBusy(true);
     try {
@@ -112,29 +126,48 @@ export function ChangesView({ repo }: { repo: string }) {
   const Row = ({ entry, isStaged }: { entry: FileEntryDto; isStaged: boolean }) => {
     const s = styleFor(entry.state);
     const on = sel?.path === entry.path && sel?.staged === isStaged;
+    const { dir, name } = splitPath(entry.path);
     return (
       <li
         onClick={() => selectFile(entry.path, isStaged)}
-        className={`group flex cursor-pointer items-center gap-2.5 px-3 py-1.5 ${on ? "bg-overlay" : "hover:bg-elevated"}`}
+        className={`group flex cursor-pointer items-center gap-2 py-1 pl-3 pr-1.5 ${on ? "bg-overlay" : "hover:bg-elevated"}`}
       >
-        <span className={`w-3.5 shrink-0 text-center font-mono text-xs font-semibold ${s.cls}`}>{s.letter}</span>
-        <span className="flex-1 truncate font-mono text-[13px] text-fg" title={entry.path}>{entry.path}</span>
+        <span className={`w-3.5 shrink-0 text-center font-mono text-xs font-semibold ${s.cls}`} title={s.label}>{s.letter}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-[13px]" title={entry.path}>
+          {dir && <span className="text-fg-subtle">{dir}</span>}
+          <span className="text-fg">{name}</span>
+        </span>
         <button
-          className="shrink-0 rounded px-2 py-0.5 text-xs text-accent opacity-0 transition-opacity hover:bg-overlay group-hover:opacity-100 disabled:opacity-40"
+          title={isStaged ? "取消暂存" : "暂存"}
           disabled={busy}
           onClick={(e) => { e.stopPropagation(); run(() => (isStaged ? unstageFile(repo, entry.path) : stageFile(repo, entry.path))); }}
+          className="grid h-5 w-5 shrink-0 place-items-center rounded text-fg-subtle opacity-0 transition-colors hover:bg-overlay hover:text-fg group-hover:opacity-100 disabled:opacity-40"
         >
-          {isStaged ? "取消暂存" : "暂存"}
+          {isStaged ? <MinusIcon width={13} height={13} /> : <PlusIcon width={13} height={13} />}
         </button>
       </li>
     );
   };
 
-  const Section = ({ title, count, accent, children }: { title: string; count: number; accent?: boolean; children: React.ReactNode }) => (
+  const Section = ({ title, count, accent, onBulk, bulkLabel, bulkIcon, children }: {
+    title: string; count: number; accent?: boolean;
+    onBulk?: () => void; bulkLabel?: string; bulkIcon?: React.ReactNode;
+    children: React.ReactNode;
+  }) => (
     <div>
-      <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-canvas px-3 py-1.5">
+      <div className="group sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-canvas px-3 py-1.5">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-fg-muted">{title}</span>
         <span className={`rounded-full px-1.5 text-[11px] tabular-nums ${accent ? "bg-done/20 text-success" : "bg-elevated text-fg-muted"}`}>{count}</span>
+        {count > 0 && onBulk && (
+          <button
+            onClick={onBulk}
+            disabled={busy}
+            title={bulkLabel}
+            className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-fg-subtle opacity-0 transition-colors hover:bg-overlay hover:text-fg group-hover:opacity-100 disabled:opacity-40"
+          >
+            {bulkIcon}{bulkLabel}
+          </button>
+        )}
       </div>
       {children}
     </div>
@@ -157,13 +190,23 @@ export function ChangesView({ repo }: { repo: string }) {
 
         {/* 文件区(滚动) */}
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <Section title="已暂存" count={staged.length} accent>
+          <Section
+            title="已暂存" count={staged.length} accent
+            onBulk={() => unstageAll(staged.map((e) => e.path))}
+            bulkLabel="全部取消暂存"
+            bulkIcon={<MinusIcon width={12} height={12} />}
+          >
             <ul>
               {staged.map((e) => <Row key={e.path} entry={e} isStaged />)}
               {staged.length === 0 && <li className="px-3 py-2 text-xs text-fg-subtle">暂无已暂存的改动</li>}
             </ul>
           </Section>
-          <Section title="未暂存" count={unstaged.length}>
+          <Section
+            title="未暂存" count={unstaged.length}
+            onBulk={() => stageAll(unstaged.map((e) => e.path))}
+            bulkLabel="全部暂存"
+            bulkIcon={<PlusIcon width={12} height={12} />}
+          >
             <ul>
               {unstaged.map((e) => <Row key={e.path} entry={e} isStaged={false} />)}
               {unstaged.length === 0 && <li className="px-3 py-2 text-xs text-fg-subtle">工作区干净</li>}
