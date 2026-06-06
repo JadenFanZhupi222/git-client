@@ -49,6 +49,12 @@ pub enum GitError {
     #[error("没有配置远程仓库")]
     NoRemote,
 
+    #[error("当前分支没有设置上游分支(upstream),无法 pull")]
+    NoUpstream,
+
+    #[error("合并冲突,涉及 {files} 个文件,请手动解决后提交")]
+    MergeConflict { files: usize },
+
     #[error("该后端不支持此操作")]
     Unsupported,
 

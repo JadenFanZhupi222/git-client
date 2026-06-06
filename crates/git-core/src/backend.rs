@@ -1,5 +1,7 @@
 use crate::error::GitError;
-use crate::model::{BranchInfo, Commit, FetchOutcome, FileChange, FileDiff, WorkingTreeStatus};
+use crate::model::{
+    BranchInfo, Commit, FetchOutcome, FileChange, FileDiff, PullOutcome, WorkingTreeStatus,
+};
 use std::path::Path;
 
 /// 端口(Port):所有 git 后端必须实现它。
@@ -60,6 +62,12 @@ pub trait GitBackend: Send + Sync {
     /// remote = None 时用 git 默认远程(通常当前分支的 upstream / origin)。
     /// 默认实现返回 Unsupported —— 不做网络的后端无需覆盖。
     fn fetch(&self, _repo: &Path, _remote: Option<&str>) -> Result<FetchOutcome, GitError> {
+        Err(GitError::Unsupported)
+    }
+
+    /// 从上游 pull(fetch + merge)。更新工作区与当前分支。
+    /// 冲突 → MergeConflict;无上游 → NoUpstream。默认实现返回 Unsupported。
+    fn pull(&self, _repo: &Path, _remote: Option<&str>) -> Result<PullOutcome, GitError> {
         Err(GitError::Unsupported)
     }
 }
