@@ -1,8 +1,9 @@
 use app_service::RepoService;
 use app_service::watcher::{ChangeKind, RepoWatcher};
-use git_engine::Git2Backend; // 真实后端
+use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组合
 use ipc_types::{
-    BranchDto, CommitDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError, StatusDto,
+    BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError,
+    StatusDto,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -28,6 +29,11 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         InvalidBranchName => ("INVALID_BRANCH_NAME", false),
         CannotDeleteCurrentBranch => ("CANNOT_DELETE_CURRENT", false),
         CheckoutConflict => ("CHECKOUT_CONFLICT", true),
+        GitCliNotFound => ("GIT_CLI_NOT_FOUND", false),
+        AuthFailed => ("AUTH_FAILED", true),
+        NetworkError => ("NETWORK_ERROR", true),
+        NoRemote => ("NO_REMOTE", false),
+        Unsupported => ("UNSUPPORTED", false),
         Backend(_) => ("BACKEND", true),
     };
     IpcError {
@@ -45,7 +51,7 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
 async fn get_head_commit(repo_path: String) -> Result<CommitDto, IpcError> {
     let result = tokio::task::spawn_blocking(move || {
         // 在阻塞线程里:注入真实后端,执行用例
-        let service = RepoService::new(Arc::new(Git2Backend));
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
         service.head_commit(&PathBuf::from(repo_path))
     })
     .await
@@ -71,7 +77,7 @@ fn join_panic(e: tokio::task::JoinError) -> IpcError {
 #[tauri::command]
 async fn get_status(repo_path: String) -> Result<StatusDto, IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend));
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
         service.status(&PathBuf::from(repo_path))
     })
     .await
@@ -82,7 +88,7 @@ async fn get_status(repo_path: String) -> Result<StatusDto, IpcError> {
 #[tauri::command]
 async fn stage_file(repo_path: String, file_path: String) -> Result<(), IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend));
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
         service.stage(&PathBuf::from(repo_path), &PathBuf::from(file_path))
     })
     .await
@@ -93,7 +99,7 @@ async fn stage_file(repo_path: String, file_path: String) -> Result<(), IpcError
 #[tauri::command]
 async fn unstage_file(repo_path: String, file_path: String) -> Result<(), IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend));
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
         service.unstage(&PathBuf::from(repo_path), &PathBuf::from(file_path))
     })
     .await
@@ -104,7 +110,7 @@ async fn unstage_file(repo_path: String, file_path: String) -> Result<(), IpcErr
 #[tauri::command]
 async fn commit(repo_path: String, message: String) -> Result<String, IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend));
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
         service.commit(&PathBuf::from(repo_path), &message)
     })
     .await
@@ -115,7 +121,7 @@ async fn commit(repo_path: String, message: String) -> Result<String, IpcError> 
 #[tauri::command]
 async fn get_log(repo_path: String, limit: usize, skip: usize) -> Result<Vec<CommitDto>, IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend));
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
         service.log(&PathBuf::from(repo_path), limit, skip)
     })
     .await
@@ -129,7 +135,7 @@ async fn get_commit_files(
     commit_id: String,
 ) -> Result<Vec<FileChangeDto>, IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend));
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
         service.commit_files(&PathBuf::from(repo_path), &commit_id)
     })
     .await
@@ -144,7 +150,7 @@ async fn get_commit_file_diff(
     file: String,
 ) -> Result<FileDiffDto, IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend));
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
         service.commit_file_diff(&PathBuf::from(repo_path), &commit_id, &file)
     })
     .await
@@ -155,7 +161,7 @@ async fn get_commit_file_diff(
 #[tauri::command]
 async fn get_commit_graph(repo_path: String, limit: usize) -> Result<Vec<GraphRowDto>, IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend));
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
         service.commit_graph(&PathBuf::from(repo_path), limit)
     })
     .await
@@ -166,7 +172,7 @@ async fn get_commit_graph(repo_path: String, limit: usize) -> Result<Vec<GraphRo
 #[tauri::command]
 async fn get_current_branch(repo_path: String) -> Result<Option<String>, IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend));
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
         service.current_branch(&PathBuf::from(repo_path))
     })
     .await
@@ -177,7 +183,7 @@ async fn get_current_branch(repo_path: String) -> Result<Option<String>, IpcErro
 #[tauri::command]
 async fn list_branches(repo_path: String) -> Result<Vec<BranchDto>, IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend));
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
         service.branches(&PathBuf::from(repo_path))
     })
     .await
@@ -188,7 +194,7 @@ async fn list_branches(repo_path: String) -> Result<Vec<BranchDto>, IpcError> {
 #[tauri::command]
 async fn checkout_branch(repo_path: String, name: String) -> Result<(), IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend));
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
         service.checkout_branch(&PathBuf::from(repo_path), &name)
     })
     .await
@@ -199,7 +205,7 @@ async fn checkout_branch(repo_path: String, name: String) -> Result<(), IpcError
 #[tauri::command]
 async fn create_branch(repo_path: String, name: String, checkout: bool) -> Result<(), IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend));
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
         service.create_branch(&PathBuf::from(repo_path), &name, checkout)
     })
     .await
@@ -210,8 +216,19 @@ async fn create_branch(repo_path: String, name: String, checkout: bool) -> Resul
 #[tauri::command]
 async fn delete_branch(repo_path: String, name: String) -> Result<(), IpcError> {
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(Git2Backend));
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
         service.delete_branch(&PathBuf::from(repo_path), &name)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn fetch(repo_path: String, remote: Option<String>) -> Result<FetchResultDto, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.fetch(&PathBuf::from(repo_path), remote.as_deref())
     })
     .await
     .map_err(join_panic)?
@@ -270,6 +287,7 @@ pub fn run() {
             checkout_branch,
             create_branch,
             delete_branch,
+            fetch,
             watch_repo
         ])
         .run(tauri::generate_context!())
