@@ -96,6 +96,17 @@ export async function deleteBranch(repoPath: string, name: string): Promise<void
   await invoke("delete_branch", { repoPath, name });
 }
 
+// ── 远程(阶段 2d-1) ──
+export interface FetchResultDto {
+  remote: string;
+  summary: string;
+}
+
+/** 从默认远程 fetch(remote 省略 = git 默认远程)。 */
+export async function fetchRemote(repoPath: string, remote?: string): Promise<FetchResultDto> {
+  return await invoke<FetchResultDto>("fetch", { repoPath, remote: remote ?? null });
+}
+
 export interface DiffLineDto {
   kind: string; // "context" | "add" | "del"
   old_lineno: number | null;

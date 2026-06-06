@@ -70,6 +70,12 @@ export const MoonIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+export const FetchIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M8 2v7M5 6.5 8 9.5l3-3M3 12.5h10" />
+  </svg>
+);
+
 export const PlusIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
     <path d="M8 3v10M3 8h10" />

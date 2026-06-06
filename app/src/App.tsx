@@ -3,8 +3,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
-import { getCurrentBranch, watchRepo, onRepoChanged } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon } from "./components/icons";
+import { getCurrentBranch, watchRepo, onRepoChanged, fetchRemote, type IpcError } from "./ipc";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
 
@@ -13,11 +13,31 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("changes");
   const [branch, setBranch] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(getStoredTheme);
+  const [fetching, setFetching] = useState(false);
+  const [fetchMsg, setFetchMsg] = useState<string | null>(null);
+  const [fetchErr, setFetchErr] = useState<string | null>(null);
 
   function toggleTheme() {
     const next: Theme = theme === "dark" ? "light" : "dark";
     applyTheme(next);
     setTheme(next);
+  }
+
+  async function doFetch() {
+    if (!repo) return;
+    setFetching(true);
+    setFetchMsg(null);
+    setFetchErr(null);
+    try {
+      const r = await fetchRemote(repo);
+      // refs 变化会触发文件监听 → 各视图自动重载;这里只反馈结果。
+      setFetchMsg(r.summary === "已是最新" ? "已是最新" : `已 fetch ${r.remote || "远程"}`);
+      setTimeout(() => setFetchMsg(null), 4000);
+    } catch (e) {
+      setFetchErr((e as IpcError).message ?? String(e));
+    } finally {
+      setFetching(false);
+    }
   }
 
   async function pickRepo() {
@@ -49,6 +69,26 @@ export default function App() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {repo && (
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={doFetch}
+                disabled={fetching}
+                title="Fetch(从远程拉取更新)"
+                className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50"
+              >
+                <FetchIcon width={13} height={13} className={fetching ? "animate-spin" : ""} />
+                {fetching ? "Fetch…" : "Fetch"}
+              </button>
+              {fetchErr ? (
+                <span className="max-w-[16rem] truncate text-xs text-danger" title={fetchErr}>
+                  {fetchErr}
+                </span>
+              ) : fetchMsg ? (
+                <span className="text-xs text-success">{fetchMsg}</span>
+              ) : null}
+            </div>
+          )}
           {repo && (
             <span
               title={repo}
