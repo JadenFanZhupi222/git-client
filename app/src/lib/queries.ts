@@ -6,7 +6,7 @@ import { useQuery, useQueryClient, keepPreviousData, type QueryClient } from "@t
 import { useEffect } from "react";
 import {
   getStatus, getWorkingDiff, getCommitGraph, getCommitFiles, getCommitFileDiff,
-  getCurrentBranch, getAheadBehind, getRemotes, listBranches,
+  getCurrentBranch, getAheadBehind, getRemotes, listBranches, stashList,
   watchRepo, onRepoChanged,
 } from "../ipc";
 
@@ -21,6 +21,7 @@ export const qk = {
   aheadBehind: (repo: string) => ["aheadBehind", repo] as const,
   remotes: (repo: string) => ["remotes", repo] as const,
   branches: (repo: string) => ["branches", repo] as const,
+  stashes: (repo: string) => ["stashes", repo] as const,
 };
 
 // ---- 读 hooks ----
@@ -74,6 +75,10 @@ export function useRemotes(repo: string) {
 
 export function useBranches(repo: string, enabled: boolean) {
   return useQuery({ queryKey: qk.branches(repo), queryFn: () => listBranches(repo), enabled });
+}
+
+export function useStashList(repo: string) {
+  return useQuery({ queryKey: qk.stashes(repo), queryFn: () => stashList(repo), enabled: !!repo });
 }
 
 // ---- 失效辅助 ----

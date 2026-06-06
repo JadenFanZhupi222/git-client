@@ -160,6 +160,36 @@ export async function pushRemote(repoPath: string, remote?: string): Promise<Pus
   return await invoke<PushResultDto>("push", { repoPath, remote: remote ?? null });
 }
 
+// ── 贮藏(stash) ──
+export interface StashDto {
+  index: number;
+  message: string;
+}
+
+export async function stashList(repoPath: string): Promise<StashDto[]> {
+  return await invoke<StashDto[]>("stash_list", { repoPath });
+}
+
+/** 贮藏当前工作区改动;无改动抛 NOTHING_TO_STASH。 */
+export async function stashSave(repoPath: string, message?: string): Promise<void> {
+  await invoke("stash_save", { repoPath, message: message ?? null });
+}
+
+/** 应用贮藏(不移除)。冲突抛 MERGE_CONFLICT。 */
+export async function stashApply(repoPath: string, index: number): Promise<void> {
+  await invoke("stash_apply", { repoPath, index });
+}
+
+/** 弹出贮藏(应用并移除)。冲突抛 MERGE_CONFLICT(此时不移除)。 */
+export async function stashPop(repoPath: string, index: number): Promise<void> {
+  await invoke("stash_pop", { repoPath, index });
+}
+
+/** 删除贮藏。 */
+export async function stashDrop(repoPath: string, index: number): Promise<void> {
+  await invoke("stash_drop", { repoPath, index });
+}
+
 export interface DiffLineDto {
   kind: string; // "context" | "add" | "del"
   old_lineno: number | null;

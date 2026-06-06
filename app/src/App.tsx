@@ -8,6 +8,7 @@ import { setUpstream, fetchRemote, pullRemote, pushRemote, type IpcError } from 
 import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
+import { StashMenu } from "./components/StashMenu";
 import { useToast } from "./components/Toast";
 import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, invalidateHistory, qk } from "./lib/queries";
 import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
@@ -257,6 +258,7 @@ export default function App() {
                   </span>
                 )}
               </button>
+              <StashMenu repo={repo} />
             </div>
           )}
           {repo && (
