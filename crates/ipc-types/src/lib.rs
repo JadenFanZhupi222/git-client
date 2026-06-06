@@ -4,7 +4,8 @@
 
 use git_core::model::{
     AheadBehind, BranchInfo, Commit, CommitRef, DiffLine, DiffLineKind, FetchOutcome, FileChange,
-    FileDiff, FileEntry, FileState, Hunk, PullOutcome, PushOutcome, RefKind, WorkingTreeStatus,
+    FileDiff, FileEntry, FileState, Hunk, PullOutcome, PushOutcome, RefKind, StashEntry,
+    WorkingTreeStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -125,6 +126,19 @@ impl From<AheadBehind> for AheadBehindDto {
             ahead: a.ahead,
             behind: a.behind,
         }
+    }
+}
+
+/// 一条贮藏 DTO。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StashDto {
+    pub index: usize,
+    pub message: String,
+}
+
+impl From<StashEntry> for StashDto {
+    fn from(s: StashEntry) -> Self {
+        StashDto { index: s.index, message: s.message }
     }
 }
 
