@@ -3,11 +3,13 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
-import { getCurrentBranch, getAheadBehind, getRemotes, setUpstream, watchRepo, onRepoChanged, fetchRemote, pullRemote, pushRemote, type AheadBehindDto, type IpcError } from "./ipc";
+import { useQueryClient } from "@tanstack/react-query";
+import { setUpstream, fetchRemote, pullRemote, pushRemote, type IpcError } from "./ipc";
 import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
 import { useToast } from "./components/Toast";
+import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, invalidateHistory, qk } from "./lib/queries";
 import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
 
 /** 把 git fetch 的原始摘要提炼成简洁细节:优先取 "->" 更新行。 */
@@ -21,19 +23,24 @@ function fetchDetail(summary: string): string | undefined {
 export default function App() {
   const [repo, setRepo] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("changes");
-  const [branch, setBranch] = useState<string | null>(null);
-  const [sync, setSync] = useState<AheadBehindDto | null>(null);
   const [theme, setTheme] = useState<Theme>(getStoredTheme);
   const [fetching, setFetching] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [pullRebase, setPullRebase] = useState(() => localStorage.getItem("pull.rebase") === "1");
   const [pullMenu, setPullMenu] = useState(false);
-  const [remotes, setRemotes] = useState<string[]>([]);
   const [selectedRemote, setSelectedRemote] = useState<string | null>(null);
   const [remoteMenu, setRemoteMenu] = useState(false);
   const [upMenu, setUpMenu] = useState(false);
   const toast = useToast();
+  const qc = useQueryClient();
+
+  // 顶层读统一走 query;一处监听文件变化 → 失效(各 view 据此自动重取)
+  useRepoWatch(repo);
+  const branch = useCurrentBranch(repo ?? "").data ?? null;
+  const sync = useAheadBehind(repo ?? "").data ?? null;
+  const remotes = useRemotes(repo ?? "").data ?? [];
+
   const busy = fetching || pulling || pushing;
   // 同步提示:落后 → 建议 Pull;领先 → 建议 Push(无上游时 sync 为 null,不提示)
   const canPull = !!sync && sync.behind > 0;
@@ -60,7 +67,7 @@ export default function App() {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
       setFetching(false);
-      getAheadBehind(repo).then(setSync).catch(() => {}); // 兜底:packed-refs 时 watcher 可能不触发
+      invalidateHistory(qc, repo); // 兜底:packed-refs 时 watcher 可能不触发
     }
   }
 
@@ -83,7 +90,7 @@ export default function App() {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
       setPulling(false);
-      getAheadBehind(repo).then(setSync).catch(() => {});
+      invalidateHistory(qc, repo);
     }
   }
 
@@ -103,7 +110,7 @@ export default function App() {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
       setPushing(false);
-      getAheadBehind(repo).then(setSync).catch(() => {});
+      invalidateHistory(qc, repo);
     }
   }
 
@@ -113,7 +120,7 @@ export default function App() {
     try {
       await setUpstream(repo, upstream);
       toast({ kind: "success", title: `已设置上游 ${upstream}` });
-      getAheadBehind(repo).then(setSync).catch(() => {});
+      qc.invalidateQueries({ queryKey: qk.aheadBehind(repo) });
     } catch (e) {
       // 远程跟踪分支不存在时会失败——提示用户先 Fetch/Push。
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
@@ -125,22 +132,8 @@ export default function App() {
     if (typeof dir === "string") setRepo(dir);
   }
 
-  // 仓库变化时:刷新底栏分支名 + ahead/behind、启动文件监听、订阅变化事件
-  useEffect(() => {
-    if (!repo) { setBranch(null); setSync(null); setRemotes([]); setSelectedRemote(null); return; }
-    const loadInfo = () => {
-      getCurrentBranch(repo).then(setBranch).catch(() => setBranch(null));
-      getAheadBehind(repo).then(setSync).catch(() => setSync(null));
-    };
-    loadInfo();
-    getRemotes(repo).then(setRemotes).catch(() => setRemotes([]));
-    setSelectedRemote(null);
-    watchRepo(repo).catch(() => {});
-    let un: (() => void) | undefined;
-    // ref 变化(提交/切分支/fetch/pull/push 后远程跟踪变动)→ 重算分支与同步状态
-    onRepoChanged((kind) => { if (kind === "ref") loadInfo(); }).then((u) => { un = u; });
-    return () => un?.();
-  }, [repo]);
+  // 切仓库时重置远程选择(回到默认)
+  useEffect(() => { setSelectedRemote(null); }, [repo]);
 
   // 仓库路径只显示尾部目录名,完整路径放 title 悬浮
   const repoName = repo?.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? null;
@@ -306,7 +299,7 @@ export default function App() {
       {/* 底部状态栏:分支 + 仓库路径,IDE 风格 */}
       {repo && (
         <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-elevated px-3 text-[11px] text-fg-muted">
-          <BranchSwitcher repo={repo} branch={branch} onSwitched={setBranch} />
+          <BranchSwitcher repo={repo} branch={branch} />
           <SyncBadge sync={sync} />
           {!sync && branch && remotes.length > 0 && (
             <div className="relative">

@@ -1,31 +1,31 @@
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
-  listBranches,
   checkoutBranch,
   createBranch,
   deleteBranch,
-  type BranchDto,
   type IpcError,
 } from "../ipc";
+import { useBranches, invalidateHistory } from "../lib/queries";
 import { BranchIcon, CheckIcon, PlusIcon, TrashIcon } from "./icons";
 
 /**
  * 底栏分支切换器(VSCode 状态栏式):点当前分支名 → 向上弹出本地分支列表。
  * 支持:点选 checkout、新建分支(建完即切)、删除分支(行内二次确认)。
- * 错误就地提示;切换/新建成功即时回调 onSwitched,文件监听会让各视图自动重载。
+ * 分支列表走 useBranches(打开时拉);切换/新建/删除后失效查询,各视图自动重载。
  */
 export function BranchSwitcher({
   repo,
   branch,
-  onSwitched,
 }: {
   repo: string;
   branch: string | null;
-  onSwitched: (name: string) => void;
 }) {
+  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
-  const [branches, setBranches] = useState<BranchDto[]>([]);
-  const [loading, setLoading] = useState(false);
+  const branchesQ = useBranches(repo, open);
+  const branches = branchesQ.data ?? [];
+  const loading = branchesQ.isLoading;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // 正在操作的分支名
   const [filter, setFilter] = useState("");
@@ -34,20 +34,11 @@ export function BranchSwitcher({
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const newInputRef = useRef<HTMLInputElement>(null);
 
-  function refresh() {
-    setLoading(true);
-    setError(null);
-    return listBranches(repo)
-      .then(setBranches)
-      .catch((e) => setError((e as IpcError).message ?? String(e)))
-      .finally(() => setLoading(false));
-  }
-
-  // 打开时拉取分支列表
-  useEffect(() => {
-    if (open) refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, repo]);
+  // checkout/create/delete 后失效:分支列表 + 历史/当前分支/同步状态。
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["branches", repo] });
+    invalidateHistory(qc, repo);
+  };
 
   // Esc 关闭
   useEffect(() => {
@@ -81,7 +72,7 @@ export function BranchSwitcher({
     setError(null);
     try {
       await checkoutBranch(repo, name);
-      onSwitched(name);
+      invalidate();
       close();
     } catch (e) {
       setError((e as IpcError).message ?? String(e));
@@ -98,13 +89,13 @@ export function BranchSwitcher({
     setError(null);
     try {
       await createBranch(repo, name, true); // 建完即切
-      onSwitched(name);
+      invalidate();
       close();
     } catch (e) {
       // create+checkout 非原子:可能「已建未切」(如脏工作区切换失败)。
-      // 刷新列表让已创建的分支显形,配合错误信息,用户能看清真实状态。
+      // 失效让已创建的分支显形,配合错误信息,用户能看清真实状态。
       setError((e as IpcError).message ?? String(e));
-      await refresh();
+      invalidate();
     } finally {
       setBusy(null);
     }
@@ -116,7 +107,7 @@ export function BranchSwitcher({
     try {
       await deleteBranch(repo, name);
       setConfirmDelete(null);
-      await refresh();
+      invalidate();
     } catch (e) {
       setError((e as IpcError).message ?? String(e));
     } finally {
@@ -134,7 +125,7 @@ export function BranchSwitcher({
         className="flex items-center gap-1 rounded px-1 text-accent transition-colors hover:bg-overlay"
       >
         <BranchIcon width={12} height={12} />
-        <span className="max-w-[12rem] truncate">{branch ?? "—"}</span>
+        <span className="max-w-48 truncate">{branch ?? "—"}</span>
         <Caret open={open} />
       </button>
 

@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
-  getStatus, stageFile, unstageFile, stageHunk, unstageHunk, commit, getWorkingDiff, onRepoChanged,
-  type StatusDto, type FileEntryDto, type FileDiffDto, type IpcError,
+  stageFile, unstageFile, stageHunk, unstageHunk, commit,
+  type FileEntryDto, type IpcError,
 } from "../ipc";
+import { useStatus, useWorkingDiff, invalidateWorktree, invalidateHistory, qk } from "../lib/queries";
 import { RefreshIcon, CheckIcon, FileDiffIcon, PlusIcon, MinusIcon } from "../components/icons";
 import { DiffView } from "../components/DiffView";
 import { Resizer, useResizableWidth } from "../components/Resizer";
@@ -29,78 +31,48 @@ function splitPath(path: string) {
 }
 
 export function ChangesView({ repo }: { repo: string }) {
-  const [status, setStatus] = useState<StatusDto | null>(null);
+  const qc = useQueryClient();
+  const statusQ = useStatus(repo);
+  const status = statusQ.data;
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [sel, setSel] = useState<{ path: string; staged: boolean } | null>(null);
-  const [diff, setDiff] = useState<FileDiffDto | null>(null);
-  const [diffLoading, setDiffLoading] = useState(false);
   const listCol = useResizableWidth("changes.listW", 340, 220, 680);
   const toast = useToast();
 
-  async function refresh() {
-    try { setStatus(await getStatus(repo)); }
-    catch (e) { toast({ kind: "error", title: (e as IpcError).message ?? String(e) }); }
-  }
-  useEffect(() => { setSel(null); setDiff(null); refresh(); /* eslint-disable-next-line */ }, [repo]);
+  // 选中文件的工作区 diff(随 sel 与失效自动重取)
+  const diffQ = useWorkingDiff(repo, sel?.path ?? null, sel?.staged ?? false);
 
-  // 文件/暂存/提交任何变化都自动刷新 status
-  useEffect(() => {
-    let un: (() => void) | undefined;
-    onRepoChanged(() => refresh()).then((u) => { un = u; });
-    return () => un?.();
-    // eslint-disable-next-line
-  }, [repo]);
+  const staged = status?.entries.filter((e) => e.staged) ?? [];
+  const unstaged = status?.entries.filter((e) => !e.staged) ?? [];
+  const canCommit = !busy && staged.length > 0 && message.trim() !== "";
 
-  async function loadDiff(path: string, staged: boolean) {
-    setDiffLoading(true); setDiff(null);
-    try { setDiff(await getWorkingDiff(repo, path, staged)); }
-    catch (e) { toast({ kind: "error", title: (e as IpcError).message ?? String(e) }); }
-    finally { setDiffLoading(false); }
-  }
+  // 切仓库清空选择
+  useEffect(() => { setSel(null); }, [repo]);
 
-  function selectFile(path: string, staged: boolean) {
-    setSel({ path, staged });
-    loadDiff(path, staged);
-  }
-
-  // status 变化后核对选中项(按 路径+暂存侧 匹配,因同一文件可同时在两侧):
-  // 当前侧还在 → 不动(diff 由具体动作负责重载);本侧没了 → 跟随另一侧或清空。
+  // status 变化后核对选中项(按 路径+暂存侧 匹配,同一文件可同时在两侧):
+  // 当前侧还在 → 不动;本侧没了 → 跟随另一侧或清空。diff 由 query 自动重取。
   useEffect(() => {
     if (!sel || !status) return;
     const sameSide = status.entries.some((e) => e.path === sel.path && e.staged === sel.staged);
     if (sameSide) return;
     const other = status.entries.find((e) => e.path === sel.path);
-    if (other) { setSel({ path: sel.path, staged: other.staged }); loadDiff(sel.path, other.staged); }
-    else { setSel(null); setDiff(null); }
+    setSel(other ? { path: sel.path, staged: other.staged } : null);
     // eslint-disable-next-line
   }, [status]);
 
-  async function doHunk(path: string, staged: boolean, hunkIndex: number) {
-    setBusy(true);
-    try {
-      if (staged) await unstageHunk(repo, path, hunkIndex);
-      else await stageHunk(repo, path, hunkIndex);
-      await refresh();
-      await loadDiff(path, staged); // 同侧若有剩余 hunk 则刷新显示
-    } catch (e) { toast({ kind: "error", title: (e as IpcError).message ?? String(e) }); }
-    finally { setBusy(false); }
-  }
-
   async function run(action: () => Promise<void>) {
     setBusy(true);
-    try { await action(); await refresh(); }
+    try { await action(); invalidateWorktree(qc, repo); }
     catch (e) { toast({ kind: "error", title: (e as IpcError).message ?? String(e) }); }
     finally { setBusy(false); }
   }
 
   // 批量暂存 / 取消暂存(顺序执行,避免并发写 index 冲突)
-  async function stageAll(paths: string[]) {
-    await run(async () => { for (const p of paths) await stageFile(repo, p); });
-  }
-  async function unstageAll(paths: string[]) {
-    await run(async () => { for (const p of paths) await unstageFile(repo, p); });
-  }
+  const stageAll = (paths: string[]) => run(async () => { for (const p of paths) await stageFile(repo, p); });
+  const unstageAll = (paths: string[]) => run(async () => { for (const p of paths) await unstageFile(repo, p); });
+  const doHunk = (path: string, isStaged: boolean, hunkIndex: number) =>
+    run(() => (isStaged ? unstageHunk(repo, path, hunkIndex) : stageHunk(repo, path, hunkIndex)));
 
   async function doCommit() {
     setBusy(true);
@@ -108,14 +80,11 @@ export function ChangesView({ repo }: { repo: string }) {
       const sha = await commit(repo, message);
       setMessage("");
       toast({ kind: "success", title: `已提交 ${sha.slice(0, 7)}` });
-      await refresh();
+      invalidateWorktree(qc, repo);
+      invalidateHistory(qc, repo);
     } catch (e) { toast({ kind: "error", title: (e as IpcError).message ?? String(e) }); }
     finally { setBusy(false); }
   }
-
-  const staged = status?.entries.filter((e) => e.staged) ?? [];
-  const unstaged = status?.entries.filter((e) => !e.staged) ?? [];
-  const canCommit = !busy && staged.length > 0 && message.trim() !== "";
 
   // 选中文件可做 hunk 级操作吗?未跟踪文件无 git diff hunk,排除。
   const selEntry = sel && status ? status.entries.find((e) => e.path === sel.path && e.staged === sel.staged) : undefined;
@@ -129,7 +98,7 @@ export function ChangesView({ repo }: { repo: string }) {
     const { dir, name } = splitPath(entry.path);
     return (
       <li
-        onClick={() => selectFile(entry.path, isStaged)}
+        onClick={() => setSel({ path: entry.path, staged: isStaged })}
         className={`group flex cursor-pointer items-center gap-2 py-1 pl-3 pr-1.5 ${on ? "bg-overlay" : "hover:bg-elevated"}`}
       >
         <span className={`w-3.5 shrink-0 text-center font-mono text-xs font-semibold ${s.cls}`} title={s.label}>{s.letter}</span>
@@ -180,11 +149,11 @@ export function ChangesView({ repo }: { repo: string }) {
         {/* 工具栏 */}
         <div className="flex shrink-0 items-center gap-3 border-b border-line px-3 py-1.5">
           <button
-            onClick={refresh}
-            disabled={busy}
+            onClick={() => qc.invalidateQueries({ queryKey: qk.status(repo) })}
+            disabled={busy || statusQ.isFetching}
             className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-elevated hover:text-fg disabled:opacity-40"
           >
-            <RefreshIcon width={13} height={13} className={busy ? "animate-spin" : ""} /> 刷新
+            <RefreshIcon width={13} height={13} className={busy || statusQ.isFetching ? "animate-spin" : ""} /> 刷新
           </button>
         </div>
 
@@ -257,7 +226,7 @@ export function ChangesView({ repo }: { repo: string }) {
             </span>
           ) : "Diff"}
         </div>
-        <DiffView diff={diff} loading={diffLoading} hasFile={!!sel} hunkAction={hunkAction} />
+        <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!sel} hunkAction={hunkAction} />
       </main>
     </div>
   );
