@@ -1,6 +1,7 @@
 use crate::error::GitError;
 use crate::model::{
-    BranchInfo, Commit, FetchOutcome, FileChange, FileDiff, PullOutcome, WorkingTreeStatus,
+    BranchInfo, Commit, FetchOutcome, FileChange, FileDiff, PullOutcome, PushOutcome,
+    WorkingTreeStatus,
 };
 use std::path::Path;
 
@@ -68,6 +69,13 @@ pub trait GitBackend: Send + Sync {
     /// 从上游 pull(fetch + merge)。更新工作区与当前分支。
     /// 冲突 → MergeConflict;无上游 → NoUpstream。默认实现返回 Unsupported。
     fn pull(&self, _repo: &Path, _remote: Option<&str>) -> Result<PullOutcome, GitError> {
+        Err(GitError::Unsupported)
+    }
+
+    /// 把当前分支推到远程。remote = None 用默认远程(通常 origin)。
+    /// 当前分支无上游时自动 `-u` 建立跟踪;被拒(non-fast-forward)→ PushRejected。
+    /// 默认实现返回 Unsupported —— 不做网络的后端无需覆盖。
+    fn push(&self, _repo: &Path, _remote: Option<&str>) -> Result<PushOutcome, GitError> {
         Err(GitError::Unsupported)
     }
 }

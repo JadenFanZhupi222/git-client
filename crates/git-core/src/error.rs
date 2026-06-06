@@ -52,6 +52,9 @@ pub enum GitError {
     #[error("当前分支没有设置上游分支(upstream),无法 pull")]
     NoUpstream,
 
+    #[error("push 被拒绝:远程有你本地没有的提交,请先 Pull 再推")]
+    PushRejected,
+
     #[error("合并冲突,涉及 {files} 个文件,请手动解决后提交")]
     MergeConflict { files: usize },
 
