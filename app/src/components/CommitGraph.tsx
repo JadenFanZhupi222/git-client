@@ -122,7 +122,7 @@ export function CommitGraph({
             <div className="flex min-w-0 flex-1 flex-col justify-center pr-3">
               <div className="flex items-center gap-1 overflow-hidden">
                 <RefBadges refs={r.refs} />
-                <span className="truncate text-[13px] text-fg">{r.commit.summary}</span>
+                <span className="truncate text-[13px] text-fg" title={r.commit.summary}>{r.commit.summary}</span>
               </div>
               <div className="truncate font-mono text-[11px] text-fg-muted">
                 {r.commit.short_id} · {r.commit.author_name} · {formatRelative(r.commit.timestamp)}

@@ -5,8 +5,10 @@ import {
 } from "../ipc";
 import { CommitGraph } from "../components/CommitGraph";
 import { CommitFileList } from "../components/CommitFileList";
+import { CommitDetail } from "../components/CommitDetail";
 import { DiffView } from "../components/DiffView";
-import { BranchIcon, FileDiffIcon } from "../components/icons";
+import { Resizer, useResizableWidth } from "../components/Resizer";
+import { BranchIcon, CommitIcon, FileDiffIcon } from "../components/icons";
 
 const PAGE = 50;
 
@@ -32,6 +34,10 @@ export function HistoryView({ repo }: { repo: string }) {
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // 可拖拽列宽(持久化)。图谱列、中间(详情+文件)列可调,diff 占剩余。
+  const graphCol = useResizableWidth("history.graphW", 320, 220, 640);
+  const midCol = useResizableWidth("history.midW", 288, 200, 640);
 
   // 图谱总是从 HEAD 整段计算(skip=0,limit 递增),保证泳道一致。
   async function loadGraph(limit: number) {
@@ -82,7 +88,7 @@ export function HistoryView({ repo }: { repo: string }) {
   return (
     <div className="flex h-full">
       {/* 提交图谱 */}
-      <aside className="flex w-80 shrink-0 flex-col overflow-hidden border-r border-line">
+      <aside className="flex shrink-0 flex-col overflow-hidden" style={{ width: graphCol.w }}>
         <ColumnHead icon={<BranchIcon width={13} height={13} />}>
           {branch ? <span className="font-mono normal-case tracking-normal text-fg">{branch}</span> : "提交历史"}
         </ColumnHead>
@@ -97,13 +103,23 @@ export function HistoryView({ repo }: { repo: string }) {
         />
       </aside>
 
-      {/* 改动文件 */}
-      <div className="flex w-64 shrink-0 flex-col overflow-hidden border-r border-line">
+      <Resizer onDown={graphCol.onDown} />
+
+      {/* 中间列:提交详情(上)+ 改动文件(下) */}
+      <div className="flex shrink-0 flex-col overflow-hidden" style={{ width: midCol.w }}>
+        <ColumnHead icon={<CommitIcon width={13} height={13} />}>提交详情</ColumnHead>
+        <div className="max-h-[45%] shrink-0 overflow-hidden border-b border-line">
+          <CommitDetail commit={selected} />
+        </div>
         <ColumnHead icon={<FileDiffIcon width={13} height={13} />}>改动文件{selected && ` (${files.length})`}</ColumnHead>
-        {selected
-          ? <CommitFileList files={files} selected={selectedFile} onSelect={selectFile} />
-          : <div className="p-3 text-xs text-fg-subtle">选择一个提交</div>}
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {selected
+            ? <CommitFileList files={files} selected={selectedFile} onSelect={selectFile} />
+            : <div className="p-3 text-xs text-fg-subtle">选择一个提交</div>}
+        </div>
       </div>
+
+      <Resizer onDown={midCol.onDown} />
 
       {/* Diff */}
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">

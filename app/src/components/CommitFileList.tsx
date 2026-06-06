@@ -13,7 +13,7 @@ export function CommitFileList({
 }: { files: FileChangeDto[]; selected: string | null; onSelect: (path: string) => void }) {
   if (files.length === 0) return <div className="p-3 text-xs text-fg-subtle">无改动文件</div>;
   return (
-    <div className="overflow-y-auto">
+    <div className="h-full overflow-y-auto">
       {files.map((f) => {
         const s = STYLE[f.status] ?? { letter: "?", cls: "text-fg-muted" };
         const on = selected === f.path;

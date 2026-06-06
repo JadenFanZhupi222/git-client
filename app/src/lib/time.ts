@@ -1,3 +1,8 @@
+/** Unix 秒 → 本地化的完整日期时间(提交详情用)。 */
+export function formatAbsolute(unixSeconds: number): string {
+  return new Date(unixSeconds * 1000).toLocaleString();
+}
+
 /** Unix 秒 → 中文相对时间。 */
 export function formatRelative(unixSeconds: number): string {
   const diff = Date.now() / 1000 - unixSeconds;
