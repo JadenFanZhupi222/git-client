@@ -6,7 +6,16 @@ import { HistoryView } from "./views/HistoryView";
 import { getCurrentBranch, watchRepo, onRepoChanged, fetchRemote, type IpcError } from "./ipc";
 import { FolderIcon, SunIcon, MoonIcon, FetchIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
+import { useToast } from "./components/Toast";
 import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
+
+/** 把 git fetch 的原始摘要提炼成简洁细节:优先取 "->" 更新行。 */
+function fetchDetail(summary: string): string | undefined {
+  if (summary === "已是最新") return undefined;
+  const lines = summary.split("\n").map((l) => l.trim()).filter(Boolean);
+  const updates = lines.filter((l) => l.includes("->"));
+  return (updates.length ? updates : lines.slice(0, 1)).join("\n") || undefined;
+}
 
 export default function App() {
   const [repo, setRepo] = useState<string | null>(null);
@@ -14,8 +23,7 @@ export default function App() {
   const [branch, setBranch] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(getStoredTheme);
   const [fetching, setFetching] = useState(false);
-  const [fetchMsg, setFetchMsg] = useState<string | null>(null);
-  const [fetchErr, setFetchErr] = useState<string | null>(null);
+  const toast = useToast();
 
   function toggleTheme() {
     const next: Theme = theme === "dark" ? "light" : "dark";
@@ -26,15 +34,16 @@ export default function App() {
   async function doFetch() {
     if (!repo) return;
     setFetching(true);
-    setFetchMsg(null);
-    setFetchErr(null);
     try {
       const r = await fetchRemote(repo);
-      // refs 变化会触发文件监听 → 各视图自动重载;这里只反馈结果。
-      setFetchMsg(r.summary === "已是最新" ? "已是最新" : `已 fetch ${r.remote || "远程"}`);
-      setTimeout(() => setFetchMsg(null), 4000);
+      // refs 变化会触发文件监听 → 各视图自动重载;这里只用 toast 反馈结果。
+      toast({
+        kind: "success",
+        title: r.summary === "已是最新" ? "已是最新" : "已拉取更新",
+        detail: fetchDetail(r.summary),
+      });
     } catch (e) {
-      setFetchErr((e as IpcError).message ?? String(e));
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
       setFetching(false);
     }
@@ -70,24 +79,15 @@ export default function App() {
 
         <div className="ml-auto flex items-center gap-2">
           {repo && (
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={doFetch}
-                disabled={fetching}
-                title="Fetch(从远程拉取更新)"
-                className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50"
-              >
-                <FetchIcon width={13} height={13} className={fetching ? "animate-spin" : ""} />
-                {fetching ? "Fetch…" : "Fetch"}
-              </button>
-              {fetchErr ? (
-                <span className="max-w-[16rem] truncate text-xs text-danger" title={fetchErr}>
-                  {fetchErr}
-                </span>
-              ) : fetchMsg ? (
-                <span className="text-xs text-success">{fetchMsg}</span>
-              ) : null}
-            </div>
+            <button
+              onClick={doFetch}
+              disabled={fetching}
+              title="Fetch(从远程拉取更新)"
+              className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50"
+            >
+              <FetchIcon width={13} height={13} className={fetching ? "animate-spin" : ""} />
+              {fetching ? "Fetch…" : "Fetch"}
+            </button>
           )}
           {repo && (
             <span

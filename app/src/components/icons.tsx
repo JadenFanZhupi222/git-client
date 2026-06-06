@@ -76,6 +76,19 @@ export const FetchIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+export const AlertIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M8 2.5 1.5 13.5h13L8 2.5Z" />
+    <path d="M8 6.5v3.5M8 12h.01" />
+  </svg>
+);
+
+export const CloseIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M4 4l8 8M12 4l-8 8" />
+  </svg>
+);
+
 export const PlusIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
     <path d="M8 3v10M3 8h10" />
