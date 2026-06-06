@@ -243,6 +243,28 @@ async fn get_ahead_behind(repo_path: String) -> Result<Option<AheadBehindDto>, I
 }
 
 #[tauri::command]
+async fn get_remotes(repo_path: String) -> Result<Vec<String>, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.remotes(&PathBuf::from(repo_path))
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn set_upstream(repo_path: String, upstream: String) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.set_upstream(&PathBuf::from(repo_path), &upstream)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
 async fn checkout_branch(repo_path: String, name: String) -> Result<(), IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
@@ -287,10 +309,14 @@ async fn fetch(repo_path: String, remote: Option<String>) -> Result<FetchResultD
 }
 
 #[tauri::command]
-async fn pull(repo_path: String, remote: Option<String>) -> Result<PullResultDto, IpcError> {
+async fn pull(
+    repo_path: String,
+    remote: Option<String>,
+    rebase: bool,
+) -> Result<PullResultDto, IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.pull(&PathBuf::from(repo_path), remote.as_deref())
+        service.pull(&PathBuf::from(repo_path), remote.as_deref(), rebase)
     })
     .await
     .map_err(join_panic)?
@@ -361,6 +387,8 @@ pub fn run() {
             get_current_branch,
             list_branches,
             get_ahead_behind,
+            get_remotes,
+            set_upstream,
             checkout_branch,
             create_branch,
             delete_branch,

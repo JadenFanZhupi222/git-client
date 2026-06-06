@@ -149,6 +149,19 @@ impl RepoService {
         Ok(self.backend.ahead_behind(repo_path)?.map(AheadBehindDto::from))
     }
 
+    /// 用例:列出远程名。
+    pub fn remotes(&self, repo_path: &Path) -> Result<Vec<String>, GitError> {
+        self.backend.remotes(repo_path)
+    }
+
+    /// 用例:把当前分支上游设为 upstream(形如 "origin/main")。
+    pub fn set_upstream(&self, repo_path: &Path, upstream: &str) -> Result<(), GitError> {
+        if upstream.trim().is_empty() {
+            return Err(GitError::InvalidBranchName);
+        }
+        self.backend.set_upstream(repo_path, upstream)
+    }
+
     /// 用例:切换分支。空名在本层拦截。
     pub fn checkout_branch(&self, repo_path: &Path, name: &str) -> Result<(), GitError> {
         if name.trim().is_empty() {
@@ -193,9 +206,14 @@ impl RepoService {
         Ok(FetchResultDto::from(outcome))
     }
 
-    /// 用例:pull(fetch + merge)。remote=None 用上游。
-    pub fn pull(&self, repo_path: &Path, remote: Option<&str>) -> Result<PullResultDto, GitError> {
-        let outcome = self.backend.pull(repo_path, remote)?;
+    /// 用例:pull。remote=None 用上游;rebase=true 走 fetch+rebase。
+    pub fn pull(
+        &self,
+        repo_path: &Path,
+        remote: Option<&str>,
+        rebase: bool,
+    ) -> Result<PullResultDto, GitError> {
+        let outcome = self.backend.pull(repo_path, remote, rebase)?;
         Ok(PullResultDto::from(outcome))
     }
 
@@ -394,6 +412,25 @@ mod tests {
     }
 
     #[test]
+    fn remotes_forwards() {
+        let fb = FakeBackend::default().with_remotes(vec!["origin".into(), "upstream".into()]);
+        let svc = RepoService::new(Arc::new(fb));
+        assert_eq!(svc.remotes(Path::new("/r")).unwrap(), vec!["origin", "upstream"]);
+    }
+
+    #[test]
+    fn set_upstream_forwards_and_rejects_empty() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.set_upstream(Path::new("/r"), "origin/main").unwrap();
+        assert_eq!(fb.upstreams_set(), vec!["origin/main".to_string()]);
+        assert!(matches!(
+            svc.set_upstream(Path::new("/r"), "  ").unwrap_err(),
+            GitError::InvalidBranchName
+        ));
+    }
+
+    #[test]
     fn checkout_forwards_to_backend() {
         let fb = Arc::new(FakeBackend::default());
         let svc = RepoService::new(fb.clone());
@@ -464,7 +501,7 @@ mod tests {
             summary: "Fast-forward".into(),
         });
         let svc = RepoService::new(Arc::new(fb));
-        let dto = svc.pull(Path::new("/r"), None).unwrap();
+        let dto = svc.pull(Path::new("/r"), None, false).unwrap();
         assert_eq!(dto.summary, "Fast-forward");
     }
 
@@ -472,7 +509,7 @@ mod tests {
     fn pull_counts_backend_call() {
         let fb = Arc::new(FakeBackend::default());
         let svc = RepoService::new(fb.clone());
-        svc.pull(Path::new("/r"), None).unwrap();
+        svc.pull(Path::new("/r"), None, false).unwrap();
         assert_eq!(fb.pull_call_count(), 1);
     }
 

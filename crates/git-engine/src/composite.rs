@@ -63,6 +63,12 @@ impl GitBackend for CompositeBackend {
     fn ahead_behind(&self, repo: &Path) -> Result<Option<AheadBehind>, GitError> {
         self.git2.ahead_behind(repo)
     }
+    fn remotes(&self, repo: &Path) -> Result<Vec<String>, GitError> {
+        self.git2.remotes(repo)
+    }
+    fn set_upstream(&self, repo: &Path, upstream: &str) -> Result<(), GitError> {
+        self.git2.set_upstream(repo, upstream)
+    }
     fn checkout_branch(&self, repo: &Path, name: &str) -> Result<(), GitError> {
         self.git2.checkout_branch(repo, name)
     }
@@ -77,8 +83,13 @@ impl GitBackend for CompositeBackend {
     fn fetch(&self, repo: &Path, remote: Option<&str>) -> Result<FetchOutcome, GitError> {
         self.cli.fetch(repo, remote)
     }
-    fn pull(&self, repo: &Path, remote: Option<&str>) -> Result<PullOutcome, GitError> {
-        self.cli.pull(repo, remote)
+    fn pull(
+        &self,
+        repo: &Path,
+        remote: Option<&str>,
+        rebase: bool,
+    ) -> Result<PullOutcome, GitError> {
+        self.cli.pull(repo, remote, rebase)
     }
     fn push(&self, repo: &Path, remote: Option<&str>) -> Result<PushOutcome, GitError> {
         self.cli.push(repo, remote)

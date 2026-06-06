@@ -22,6 +22,7 @@ pub struct FakeBackend {
     canned_branches: Mutex<Vec<BranchInfo>>,
     canned_refs: Mutex<Vec<CommitRef>>,
     canned_ahead_behind: Mutex<Option<AheadBehind>>,
+    canned_remotes: Mutex<Vec<String>>,
     checked_out: Mutex<Vec<String>>,
     created: Mutex<Vec<String>>,
     deleted: Mutex<Vec<String>>,
@@ -33,6 +34,7 @@ pub struct FakeBackend {
     push_calls: Mutex<u32>,
     staged_hunks: Mutex<Vec<(String, usize)>>,
     unstaged_hunks: Mutex<Vec<(String, usize)>>,
+    upstreams_set: Mutex<Vec<String>>,
 }
 
 impl FakeBackend {
@@ -79,6 +81,10 @@ impl FakeBackend {
         *self.canned_ahead_behind.lock().unwrap() = Some(ab);
         self
     }
+    pub fn with_remotes(self, remotes: Vec<String>) -> Self {
+        *self.canned_remotes.lock().unwrap() = remotes;
+        self
+    }
     /// 断言用:记录被 checkout 的分支名(按调用顺序)。
     pub fn checked_out_branches(&self) -> Vec<String> {
         self.checked_out.lock().unwrap().clone()
@@ -115,6 +121,9 @@ impl FakeBackend {
     }
     pub fn unstaged_hunks(&self) -> Vec<(String, usize)> {
         self.unstaged_hunks.lock().unwrap().clone()
+    }
+    pub fn upstreams_set(&self) -> Vec<String> {
+        self.upstreams_set.lock().unwrap().clone()
     }
 }
 
@@ -202,6 +211,13 @@ impl GitBackend for FakeBackend {
     fn ahead_behind(&self, _path: &Path) -> Result<Option<AheadBehind>, GitError> {
         Ok(*self.canned_ahead_behind.lock().unwrap())
     }
+    fn remotes(&self, _path: &Path) -> Result<Vec<String>, GitError> {
+        Ok(self.canned_remotes.lock().unwrap().clone())
+    }
+    fn set_upstream(&self, _path: &Path, upstream: &str) -> Result<(), GitError> {
+        self.upstreams_set.lock().unwrap().push(upstream.to_string());
+        Ok(())
+    }
     fn checkout_branch(&self, _path: &Path, name: &str) -> Result<(), GitError> {
         self.checked_out.lock().unwrap().push(name.to_string());
         Ok(())
@@ -226,7 +242,12 @@ impl GitBackend for FakeBackend {
                 summary: "已是最新".to_string(),
             }))
     }
-    fn pull(&self, _path: &Path, _remote: Option<&str>) -> Result<PullOutcome, GitError> {
+    fn pull(
+        &self,
+        _path: &Path,
+        _remote: Option<&str>,
+        _rebase: bool,
+    ) -> Result<PullOutcome, GitError> {
         *self.pull_calls.lock().unwrap() += 1;
         Ok(self
             .canned_pull

@@ -103,6 +103,16 @@ export async function getAheadBehind(repoPath: string): Promise<AheadBehindDto |
   return await invoke<AheadBehindDto | null>("get_ahead_behind", { repoPath });
 }
 
+/** 列出远程名(["origin", ...])。 */
+export async function getRemotes(repoPath: string): Promise<string[]> {
+  return await invoke<string[]>("get_remotes", { repoPath });
+}
+
+/** 把当前分支上游设为 upstream(形如 "origin/main")。 */
+export async function setUpstream(repoPath: string, upstream: string): Promise<void> {
+  await invoke("set_upstream", { repoPath, upstream });
+}
+
 /** 切换到已有本地分支。脏工作区冲突会抛 IpcError(code: CHECKOUT_CONFLICT)。 */
 export async function checkoutBranch(repoPath: string, name: string): Promise<void> {
   await invoke("checkout_branch", { repoPath, name });
@@ -133,9 +143,9 @@ export interface PullResultDto {
   summary: string;
 }
 
-/** pull(fetch + merge)。冲突抛 MERGE_CONFLICT、无上游抛 NO_UPSTREAM。 */
-export async function pullRemote(repoPath: string, remote?: string): Promise<PullResultDto> {
-  return await invoke<PullResultDto>("pull", { repoPath, remote: remote ?? null });
+/** pull。rebase=true 走 fetch+rebase。冲突抛 MERGE_CONFLICT、无上游抛 NO_UPSTREAM。 */
+export async function pullRemote(repoPath: string, rebase = false, remote?: string): Promise<PullResultDto> {
+  return await invoke<PullResultDto>("pull", { repoPath, remote: remote ?? null, rebase });
 }
 
 export interface PushResultDto {

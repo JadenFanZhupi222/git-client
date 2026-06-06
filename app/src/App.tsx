@@ -3,8 +3,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
-import { getCurrentBranch, getAheadBehind, watchRepo, onRepoChanged, fetchRemote, pullRemote, pushRemote, type AheadBehindDto, type IpcError } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon } from "./components/icons";
+import { getCurrentBranch, getAheadBehind, getRemotes, setUpstream, watchRepo, onRepoChanged, fetchRemote, pullRemote, pushRemote, type AheadBehindDto, type IpcError } from "./ipc";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
 import { useToast } from "./components/Toast";
@@ -27,6 +27,12 @@ export default function App() {
   const [fetching, setFetching] = useState(false);
   const [pulling, setPulling] = useState(false);
   const [pushing, setPushing] = useState(false);
+  const [pullRebase, setPullRebase] = useState(() => localStorage.getItem("pull.rebase") === "1");
+  const [pullMenu, setPullMenu] = useState(false);
+  const [remotes, setRemotes] = useState<string[]>([]);
+  const [selectedRemote, setSelectedRemote] = useState<string | null>(null);
+  const [remoteMenu, setRemoteMenu] = useState(false);
+  const [upMenu, setUpMenu] = useState(false);
   const toast = useToast();
   const busy = fetching || pulling || pushing;
   // 同步提示:落后 → 建议 Pull;领先 → 建议 Push(无上游时 sync 为 null,不提示)
@@ -43,7 +49,7 @@ export default function App() {
     if (!repo) return;
     setFetching(true);
     try {
-      const r = await fetchRemote(repo);
+      const r = await fetchRemote(repo, selectedRemote ?? undefined);
       // refs 变化会触发文件监听 → 各视图自动重载;这里只用 toast 反馈结果。
       toast({
         kind: "success",
@@ -58,16 +64,22 @@ export default function App() {
     }
   }
 
-  async function doPull() {
+  function setPullMode(rebase: boolean) {
+    setPullRebase(rebase);
+    localStorage.setItem("pull.rebase", rebase ? "1" : "0");
+  }
+
+  async function doPull(rebase: boolean) {
     if (!repo) return;
+    setPullMenu(false);
     setPulling(true);
     try {
-      const r = await pullRemote(repo);
+      const r = await pullRemote(repo, rebase, selectedRemote ?? undefined);
       // 成功后工作区/HEAD 变化触发文件监听 → 图谱自动前进。
       const upToDate = /up to date|已是最新/i.test(r.summary);
-      toast({ kind: "success", title: upToDate ? "已是最新" : "已拉取并合并" });
+      toast({ kind: "success", title: upToDate ? "已是最新" : rebase ? "已拉取并变基" : "已拉取并合并" });
     } catch (e) {
-      // 冲突时工作区已留下冲突标记,可到「更改」页查看冲突文件。
+      // 冲突时工作区已留下冲突标记(rebase 会停在中途),可到「更改」页查看。
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
       setPulling(false);
@@ -79,7 +91,7 @@ export default function App() {
     if (!repo) return;
     setPushing(true);
     try {
-      const r = await pushRemote(repo);
+      const r = await pushRemote(repo, selectedRemote ?? undefined);
       // push 成功后远程跟踪分支前进 → watcher(ref)刷新底栏/角标。
       const upToDate = /up-to-date|up to date|已是最新/i.test(r.summary);
       toast({
@@ -95,6 +107,19 @@ export default function App() {
     }
   }
 
+  async function doSetUpstream(upstream: string) {
+    if (!repo) return;
+    setUpMenu(false);
+    try {
+      await setUpstream(repo, upstream);
+      toast({ kind: "success", title: `已设置上游 ${upstream}` });
+      getAheadBehind(repo).then(setSync).catch(() => {});
+    } catch (e) {
+      // 远程跟踪分支不存在时会失败——提示用户先 Fetch/Push。
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+    }
+  }
+
   async function pickRepo() {
     const dir = await open({ directory: true, title: "选择一个 git 仓库" });
     if (typeof dir === "string") setRepo(dir);
@@ -102,12 +127,14 @@ export default function App() {
 
   // 仓库变化时:刷新底栏分支名 + ahead/behind、启动文件监听、订阅变化事件
   useEffect(() => {
-    if (!repo) { setBranch(null); setSync(null); return; }
+    if (!repo) { setBranch(null); setSync(null); setRemotes([]); setSelectedRemote(null); return; }
     const loadInfo = () => {
       getCurrentBranch(repo).then(setBranch).catch(() => setBranch(null));
       getAheadBehind(repo).then(setSync).catch(() => setSync(null));
     };
     loadInfo();
+    getRemotes(repo).then(setRemotes).catch(() => setRemotes([]));
+    setSelectedRemote(null);
     watchRepo(repo).catch(() => {});
     let un: (() => void) | undefined;
     // ref 变化(提交/切分支/fetch/pull/push 后远程跟踪变动)→ 重算分支与同步状态
@@ -131,6 +158,38 @@ export default function App() {
         <div className="ml-auto flex items-center gap-2">
           {repo && (
             <div className="flex items-center gap-1.5">
+              {remotes.length > 1 && (
+                <div className="relative">
+                  <button
+                    onClick={() => setRemoteMenu((o) => !o)}
+                    disabled={busy}
+                    title="选择远程仓库"
+                    className="flex items-center gap-1 rounded-md border border-line-strong bg-elevated px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
+                  >
+                    <span className="max-w-[8rem] truncate font-mono">{selectedRemote ?? remotes[0]}</span>
+                    <ChevronDownIcon width={11} height={11} />
+                  </button>
+                  {remoteMenu && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setRemoteMenu(false)} />
+                      <div className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs shadow-lg">
+                        {remotes.map((r) => (
+                          <button
+                            key={r}
+                            onClick={() => { setSelectedRemote(r); setRemoteMenu(false); }}
+                            className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
+                          >
+                            <span className="grid w-3.5 shrink-0 place-items-center text-accent">
+                              {(selectedRemote ?? remotes[0]) === r ? <CheckIcon width={12} height={12} /> : null}
+                            </span>
+                            <span className="truncate font-mono">{r}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
               <button
                 onClick={doFetch}
                 disabled={busy}
@@ -144,26 +203,47 @@ export default function App() {
                 )}
                 {fetching ? "Fetch…" : "Fetch"}
               </button>
-              <button
-                onClick={doPull}
-                disabled={busy}
-                title={canPull ? `落后上游 ${sync!.behind} 个提交,建议 Pull` : "Pull(拉取并合并到当前分支)"}
-                className={`flex items-center gap-1.5 rounded-md border bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50 ${
-                  canPull ? "border-accent/60 ring-1 ring-accent/40" : "border-line-strong"
-                }`}
-              >
-                {pulling ? (
-                  <SpinnerIcon width={13} height={13} />
-                ) : (
-                  <PullIcon width={13} height={13} />
+              <div className="relative flex items-stretch">
+                <button
+                  onClick={() => doPull(pullRebase)}
+                  disabled={busy}
+                  title={canPull ? `落后上游 ${sync!.behind} 个提交,建议 Pull` : `Pull(${pullRebase ? "变基" : "合并"}到当前分支)`}
+                  className={`flex items-center gap-1.5 rounded-l-md border bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50 ${
+                    canPull ? "border-accent/60" : "border-line-strong"
+                  }`}
+                >
+                  {pulling ? <SpinnerIcon width={13} height={13} /> : <PullIcon width={13} height={13} />}
+                  {pulling ? "Pull…" : pullRebase ? "Pull · 变基" : "Pull"}
+                  {canPull && !pulling && (
+                    <span className="rounded-full bg-accent/15 px-1 font-mono text-[10px] font-semibold text-accent">
+                      ↓{sync!.behind}
+                    </span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setPullMenu((o) => !o)}
+                  disabled={busy}
+                  title="选择拉取方式"
+                  className={`grid place-items-center rounded-r-md border border-l-0 bg-elevated px-1 text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50 ${
+                    canPull ? "border-accent/60" : "border-line-strong"
+                  }`}
+                >
+                  <ChevronDownIcon width={11} height={11} />
+                </button>
+                {pullMenu && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setPullMenu(false)} />
+                    <div className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs shadow-lg">
+                      <PullModeItem active={!pullRebase} onClick={() => { setPullMode(false); doPull(false); }}>
+                        合并(merge)
+                      </PullModeItem>
+                      <PullModeItem active={pullRebase} onClick={() => { setPullMode(true); doPull(true); }}>
+                        变基(rebase)
+                      </PullModeItem>
+                    </div>
+                  </>
                 )}
-                {pulling ? "Pull…" : "Pull"}
-                {canPull && !pulling && (
-                  <span className="rounded-full bg-accent/15 px-1 font-mono text-[10px] font-semibold text-accent">
-                    ↓{sync!.behind}
-                  </span>
-                )}
-              </button>
+              </div>
               <button
                 onClick={doPush}
                 disabled={busy}
@@ -228,12 +308,55 @@ export default function App() {
         <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-elevated px-3 text-[11px] text-fg-muted">
           <BranchSwitcher repo={repo} branch={branch} onSwitched={setBranch} />
           <SyncBadge sync={sync} />
+          {!sync && branch && remotes.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => setUpMenu((o) => !o)}
+                title="为当前分支设置上游分支"
+                className="rounded px-1 text-fg-subtle transition-colors hover:bg-overlay hover:text-fg"
+              >
+                设置上游
+              </button>
+              {upMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setUpMenu(false)} />
+                  <div className="absolute bottom-full left-0 z-50 mb-1 w-48 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs shadow-lg">
+                    <div className="border-b border-line px-2.5 py-1 text-[10px] uppercase tracking-wide text-fg-subtle">设为上游</div>
+                    {remotes.map((r) => (
+                      <button
+                        key={r}
+                        onClick={() => doSetUpstream(`${r}/${branch}`)}
+                        className="block w-full truncate px-2.5 py-1.5 text-left font-mono text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
+                      >
+                        {r}/{branch}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <span className="ml-auto truncate font-mono text-fg-subtle" title={repo}>
             {repo}
           </span>
         </footer>
       )}
     </div>
+  );
+}
+
+/** Pull 方式菜单项:左侧打勾表示当前模式 */
+function PullModeItem({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
+    >
+      <span className="grid w-3.5 shrink-0 place-items-center text-accent">
+        {active ? <CheckIcon width={12} height={12} /> : null}
+      </span>
+      {children}
+    </button>
   );
 }
 
