@@ -358,6 +358,8 @@ mod tests {
         let fb = FakeBackend::default().with_commit_files(vec![FileChange {
             path: "a".into(),
             status: FileState::Modified,
+            additions: 3,
+            deletions: 1,
         }]);
         let svc = RepoService::new(Arc::new(fb));
         let dtos = svc.commit_files(Path::new("/r"), "x").unwrap();

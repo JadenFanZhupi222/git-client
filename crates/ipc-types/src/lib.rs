@@ -89,6 +89,8 @@ impl From<WorkingTreeStatus> for StatusDto {
 pub struct FileChangeDto {
     pub path: String,
     pub status: String, // added | modified | deleted | renamed | untracked | conflicted
+    pub additions: usize,
+    pub deletions: usize,
 }
 
 impl From<FileChange> for FileChangeDto {
@@ -104,6 +106,8 @@ impl From<FileChange> for FileChangeDto {
         FileChangeDto {
             path: c.path,
             status: status.to_string(),
+            additions: c.additions,
+            deletions: c.deletions,
         }
     }
 }
@@ -295,9 +299,13 @@ mod tests {
         let dto = FileChangeDto::from(FileChange {
             path: "a.rs".into(),
             status: FileState::Deleted,
+            additions: 0,
+            deletions: 5,
         });
         assert_eq!(dto.path, "a.rs");
         assert_eq!(dto.status, "deleted");
+        assert_eq!(dto.additions, 0);
+        assert_eq!(dto.deletions, 5);
     }
 
     #[test]

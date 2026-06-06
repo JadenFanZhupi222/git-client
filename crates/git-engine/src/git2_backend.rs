@@ -275,7 +275,7 @@ impl GitBackend for Git2Backend {
             .diff_tree_to_tree(parent_tree.as_ref(), Some(&new_tree), None)
             .map_err(|e| GitError::Backend(e.to_string()))?;
         let mut out = Vec::new();
-        for delta in diff.deltas() {
+        for (idx, delta) in diff.deltas().enumerate() {
             let status = match delta.status() {
                 git2::Delta::Added | git2::Delta::Copied => FileState::Added,
                 git2::Delta::Deleted => FileState::Deleted,
@@ -290,7 +290,22 @@ impl GitBackend for Git2Backend {
                 .or_else(|| delta.old_file().path())
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            out.push(FileChange { path: p, status });
+            // 本文件增删行数(diff --stat)。二进制 delta → Patch 为 None → 0/0。
+            let (additions, deletions) = match git2::Patch::from_diff(&diff, idx)
+                .map_err(|e| GitError::Backend(e.to_string()))?
+            {
+                Some(patch) => {
+                    let (_ctx, adds, dels) = patch.line_stats().map_err(|e| GitError::Backend(e.to_string()))?;
+                    (adds, dels)
+                }
+                None => (0, 0),
+            };
+            out.push(FileChange {
+                path: p,
+                status,
+                additions,
+                deletions,
+            });
         }
         Ok(out)
     }
@@ -842,12 +857,31 @@ mod tests {
     fn commit_files_initial_lists_added() {
         let (_tmp, repo) = init_repo();
         let b = Git2Backend;
-        stage(&repo, "a.txt", "hi");
+        stage(&repo, "a.txt", "l1\nl2\nl3\n");
         let sha = commit_index(&repo, "c1", 1000);
         let files = b.commit_files(&repo, &sha).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "a.txt");
         assert_eq!(files[0].status, FileState::Added);
+        // 首提交三行全是新增,无删除
+        assert_eq!(files[0].additions, 3);
+        assert_eq!(files[0].deletions, 0);
+    }
+
+    #[test]
+    fn commit_files_reports_add_and_delete_counts() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "a\nb\nc\n");
+        commit_index(&repo, "c1", 1000);
+        // 删掉 b、新增 d:1 删 1 增(c 行未变)
+        stage(&repo, "a.txt", "a\nc\nd\n");
+        let sha = commit_index(&repo, "c2", 2000);
+        let files = b.commit_files(&repo, &sha).unwrap();
+        let f = files.iter().find(|f| f.path == "a.txt").unwrap();
+        assert_eq!(f.status, FileState::Modified);
+        assert_eq!(f.additions, 1, "新增 d");
+        assert_eq!(f.deletions, 1, "删除 b");
     }
 
     #[test]
