@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  stageFile, unstageFile, stageHunk, unstageHunk, commit, resolveOurs, resolveTheirs,
+  stageFile, unstageFile, stageHunk, unstageHunk, stageLines, commit, resolveOurs, resolveTheirs,
   type FileEntryDto, type IpcError,
 } from "../ipc";
 import { useStatus, useWorkingDiff, useRepoState, invalidateWorktree, invalidateHistory, qk } from "../lib/queries";
@@ -100,6 +100,10 @@ export function ChangesView({ repo }: { repo: string }) {
   const isConflict = selEntry?.state.toLowerCase() === "conflicted";
   const hunkAction = sel && selEntry && !isConflict && selEntry.state.toLowerCase() !== "untracked"
     ? { label: sel.staged ? "取消暂存此块" : "暂存此块", disabled: busy, onAct: (hi: number) => doHunk(sel.path, sel.staged, hi) }
+    : undefined;
+  // 行级暂存仅未暂存侧、可 diff 的跟踪文件
+  const lineStage = sel && !sel.staged && selEntry && !isConflict && selEntry.state.toLowerCase() !== "untracked"
+    ? { disabled: busy, onStage: (hi: number, lines: number[]) => run(() => stageLines(repo, sel.path, hi, lines)) }
     : undefined;
 
   const Row = ({ entry, isStaged }: { entry: FileEntryDto; isStaged: boolean }) => {
@@ -277,7 +281,7 @@ export function ChangesView({ repo }: { repo: string }) {
         {isConflict && sel ? (
           <ConflictEditor repo={repo} file={sel.path} />
         ) : (
-          <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!sel} hunkAction={hunkAction} />
+          <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!sel} hunkAction={hunkAction} lineStage={lineStage} />
         )}
       </main>
       </div>
