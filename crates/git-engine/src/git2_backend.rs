@@ -1,6 +1,6 @@
 use git_core::model::{
-    BranchInfo, Commit, DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry, FileState, Hunk,
-    Signature, WorkingTreeStatus,
+    BranchInfo, Commit, CommitRef, DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry,
+    FileState, Hunk, RefKind, Signature, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -253,6 +253,71 @@ impl GitBackend for Git2Backend {
         }
         // 名字升序,UI 列表稳定。
         out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
+    }
+
+    fn refs(&self, path: &Path) -> Result<Vec<CommitRef>, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let mut out = Vec::new();
+
+        // 本地分支 refs/heads/*
+        let locals = repo
+            .branches(Some(git2::BranchType::Local))
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        for item in locals {
+            let (branch, _) = item.map_err(|e| GitError::Backend(e.to_string()))?;
+            let target = branch.get().target();
+            if let (Some(name), Some(oid)) = (
+                branch.name().map_err(|e| GitError::Backend(e.to_string()))?,
+                target,
+            ) {
+                out.push(CommitRef {
+                    name: name.to_string(),
+                    kind: RefKind::LocalBranch,
+                    target: oid.to_string(),
+                });
+            }
+        }
+
+        // 远程跟踪分支 refs/remotes/*(跳过 origin/HEAD 这类符号引用,target() 为 None 时自然跳过)
+        let remotes = repo
+            .branches(Some(git2::BranchType::Remote))
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        for item in remotes {
+            let (branch, _) = item.map_err(|e| GitError::Backend(e.to_string()))?;
+            let target = branch.get().target();
+            if let (Some(name), Some(oid)) = (
+                branch.name().map_err(|e| GitError::Backend(e.to_string()))?,
+                target,
+            ) {
+                // origin/HEAD 是符号引用,但保险起见也按名字过滤掉。
+                if name.ends_with("/HEAD") {
+                    continue;
+                }
+                out.push(CommitRef {
+                    name: name.to_string(),
+                    kind: RefKind::RemoteBranch,
+                    target: oid.to_string(),
+                });
+            }
+        }
+
+        // HEAD:用当前分支短名;分离头则名为 "HEAD"。空仓库(未出生)跳过。
+        match repo.head() {
+            Ok(head) => {
+                if let Some(oid) = head.target() {
+                    out.push(CommitRef {
+                        name: head.shorthand().unwrap_or("HEAD").to_string(),
+                        kind: RefKind::Head,
+                        target: oid.to_string(),
+                    });
+                }
+            }
+            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => {}
+            Err(e) => return Err(GitError::Backend(e.to_string())),
+        }
+
         Ok(out)
     }
 
@@ -843,6 +908,44 @@ mod tests {
         assert_eq!(names, sorted);
         // 恰好一个当前分支
         assert_eq!(list.iter().filter(|x| x.is_head).count(), 1);
+    }
+
+    #[test]
+    fn refs_reports_local_remote_and_head() {
+        let (_tmp, repo) = init_repo();
+        stage(&repo, "a.txt", "1");
+        let sha = commit_index(&repo, "c1", 1000);
+
+        let g = git2::Repository::open(&repo).unwrap();
+        let commit = g.find_commit(git2::Oid::from_str(&sha).unwrap()).unwrap();
+        // 本地分支 dev 指向同一提交
+        g.branch("dev", &commit, false).unwrap();
+        // 手动建一个远程跟踪 ref origin/main 指向同一提交
+        g.reference("refs/remotes/origin/main", commit.id(), true, "arrange")
+            .unwrap();
+
+        let refs = Git2Backend.refs(&repo).unwrap();
+        assert!(
+            refs.iter().any(|r| r.kind == RefKind::Head),
+            "应含 HEAD 引用"
+        );
+        assert!(
+            refs.iter()
+                .any(|r| r.kind == RefKind::LocalBranch && r.name == "dev"),
+            "应含本地分支 dev"
+        );
+        assert!(
+            refs.iter()
+                .any(|r| r.kind == RefKind::RemoteBranch && r.name == "origin/main"),
+            "应含远程跟踪 origin/main"
+        );
+        // origin/HEAD 这类符号引用不应出现
+        assert!(
+            !refs.iter().any(|r| r.name.ends_with("/HEAD")),
+            "不应包含 origin/HEAD 符号引用"
+        );
+        // 本测试所有引用都指向同一提交
+        assert!(refs.iter().all(|r| r.target == sha), "所有引用应指向 c1");
     }
 
     #[test]
