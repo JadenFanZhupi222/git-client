@@ -28,6 +28,9 @@ pub enum GitError {
     #[error("分支已存在: {0}")]
     BranchAlreadyExists(String),
 
+    #[error("分支名无效")]
+    InvalidBranchName,
+
     #[error("不能删除当前所在的分支,请先切到别的分支")]
     CannotDeleteCurrentBranch,
 

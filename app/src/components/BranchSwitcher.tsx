@@ -74,8 +74,9 @@ export function BranchSwitcher({
     setConfirmDelete(null);
   }
 
-  async function select(name: string) {
-    if (name === branch) return close();
+  async function select(name: string, isCurrent: boolean) {
+    // 已是当前分支(branch prop 可能短暂滞后,故一并看 is_head)→ 不重复 checkout
+    if (isCurrent) return close();
     setBusy(name);
     setError(null);
     try {
@@ -100,7 +101,10 @@ export function BranchSwitcher({
       onSwitched(name);
       close();
     } catch (e) {
+      // create+checkout 非原子:可能「已建未切」(如脏工作区切换失败)。
+      // 刷新列表让已创建的分支显形,配合错误信息,用户能看清真实状态。
       setError((e as IpcError).message ?? String(e));
+      await refresh();
     } finally {
       setBusy(null);
     }
@@ -166,7 +170,7 @@ export function BranchSwitcher({
                   return (
                     <li key={b.name} className="group flex items-center pr-1.5">
                       <button
-                        onClick={() => select(b.name)}
+                        onClick={() => select(b.name, current)}
                         disabled={busy !== null}
                         className={`flex min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-overlay disabled:opacity-50 ${
                           current ? "text-fg" : "text-fg-muted"

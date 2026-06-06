@@ -103,7 +103,7 @@ impl RepoService {
     /// 用例:切换分支。空名在本层拦截。
     pub fn checkout_branch(&self, repo_path: &Path, name: &str) -> Result<(), GitError> {
         if name.trim().is_empty() {
-            return Err(GitError::BranchNotFound(name.to_string()));
+            return Err(GitError::InvalidBranchName);
         }
         self.backend.checkout_branch(repo_path, name)
     }
@@ -117,7 +117,7 @@ impl RepoService {
         checkout: bool,
     ) -> Result<(), GitError> {
         if name.trim().is_empty() {
-            return Err(GitError::BranchAlreadyExists(name.to_string()));
+            return Err(GitError::InvalidBranchName);
         }
         self.backend.create_branch(repo_path, name)?;
         if checkout {
@@ -129,7 +129,7 @@ impl RepoService {
     /// 用例:删除本地分支。
     pub fn delete_branch(&self, repo_path: &Path, name: &str) -> Result<(), GitError> {
         if name.trim().is_empty() {
-            return Err(GitError::BranchNotFound(name.to_string()));
+            return Err(GitError::InvalidBranchName);
         }
         self.backend.delete_branch(repo_path, name)
     }
@@ -277,7 +277,7 @@ mod tests {
         let fb = Arc::new(FakeBackend::default());
         let svc = RepoService::new(fb.clone());
         let err = svc.checkout_branch(Path::new("/r"), "  ").unwrap_err();
-        assert!(matches!(err, GitError::BranchNotFound(_)));
+        assert!(matches!(err, GitError::InvalidBranchName));
         assert!(fb.checked_out_branches().is_empty(), "空名不应下探后端");
     }
 
@@ -312,7 +312,7 @@ mod tests {
         let fb = Arc::new(FakeBackend::default());
         let svc = RepoService::new(fb.clone());
         let err = svc.create_branch(Path::new("/r"), " ", true).unwrap_err();
-        assert!(matches!(err, GitError::BranchAlreadyExists(_)));
+        assert!(matches!(err, GitError::InvalidBranchName));
         assert!(fb.created_branches().is_empty());
     }
 

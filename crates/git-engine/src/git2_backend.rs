@@ -271,7 +271,10 @@ impl GitBackend for Git2Backend {
         let mut co = git2::build::CheckoutBuilder::new();
         co.safe();
         repo.checkout_tree(&obj, Some(&mut co)).map_err(|e| {
-            if e.code() == git2::ErrorCode::Conflict || e.class() == git2::ErrorClass::Checkout {
+            // 只认 Conflict code(safe checkout 遇到会丢失本地改动时正是返回它);
+            // 不要用 ErrorClass::Checkout 兜底 —— 那会把 IO/损坏等无关错误也误判成
+            // 「工作区有改动」,给用户不可恢复却提示去暂存的误导。
+            if e.code() == git2::ErrorCode::Conflict {
                 GitError::CheckoutConflict
             } else {
                 GitError::Backend(e.to_string())

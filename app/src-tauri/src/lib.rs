@@ -25,6 +25,7 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         EmptySignature => ("EMPTY_SIGNATURE", false),
         BranchNotFound(_) => ("BRANCH_NOT_FOUND", false),
         BranchAlreadyExists(_) => ("BRANCH_EXISTS", false),
+        InvalidBranchName => ("INVALID_BRANCH_NAME", false),
         CannotDeleteCurrentBranch => ("CANNOT_DELETE_CURRENT", false),
         CheckoutConflict => ("CHECKOUT_CONFLICT", true),
         Backend(_) => ("BACKEND", true),
