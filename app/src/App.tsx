@@ -1,18 +1,26 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
-import { FolderIcon } from "./components/icons";
+import { getCurrentBranch } from "./ipc";
+import { FolderIcon, BranchIcon } from "./components/icons";
 
 export default function App() {
   const [repo, setRepo] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("changes");
+  const [branch, setBranch] = useState<string | null>(null);
 
   async function pickRepo() {
     const dir = await open({ directory: true, title: "选择一个 git 仓库" });
     if (typeof dir === "string") setRepo(dir);
   }
+
+  // 仓库变化时刷新底栏分支名
+  useEffect(() => {
+    if (!repo) { setBranch(null); return; }
+    getCurrentBranch(repo).then(setBranch).catch(() => setBranch(null));
+  }, [repo]);
 
   // 仓库路径只显示尾部目录名,完整路径放 title 悬浮
   const repoName = repo?.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? null;
@@ -54,6 +62,19 @@ export default function App() {
         </div>
       ) : (
         <EmptyState onPick={pickRepo} />
+      )}
+
+      {/* 底部状态栏:分支 + 仓库路径,IDE 风格 */}
+      {repo && (
+        <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-elevated px-3 text-[11px] text-fg-muted">
+          <span className="flex items-center gap-1 text-accent">
+            <BranchIcon width={12} height={12} />
+            {branch ?? "—"}
+          </span>
+          <span className="ml-auto truncate font-mono text-fg-subtle" title={repo}>
+            {repo}
+          </span>
+        </footer>
       )}
     </div>
   );
