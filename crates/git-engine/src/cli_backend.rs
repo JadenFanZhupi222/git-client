@@ -1,7 +1,39 @@
 use git_core::GitError;
 use git_core::model::{FetchOutcome, PullOutcome, PushOutcome};
+use std::io::Write;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+
+/// 从完整 unified diff 文本里抽出第 `index` 个 hunk,拼上文件头形成可单独 apply 的 patch。
+/// 文件头 = 第一个 `@@` 之前的所有行(diff --git / index / --- / +++)。
+fn extract_hunk_patch(diff: &str, index: usize) -> Option<String> {
+    let mut header = String::new();
+    let mut hunks: Vec<String> = Vec::new();
+    let mut cur: Option<String> = None;
+    let mut in_hunks = false;
+    for line in diff.lines() {
+        if line.starts_with("@@") {
+            in_hunks = true;
+            if let Some(c) = cur.take() {
+                hunks.push(c);
+            }
+            cur = Some(format!("{line}\n"));
+        } else if in_hunks {
+            if let Some(c) = cur.as_mut() {
+                c.push_str(line);
+                c.push('\n');
+            }
+        } else {
+            header.push_str(line);
+            header.push('\n');
+        }
+    }
+    if let Some(c) = cur.take() {
+        hunks.push(c);
+    }
+    let hunk = hunks.get(index)?;
+    Some(format!("{header}{hunk}"))
+}
 
 /// 把 spawn 子进程的 io 错误映射成领域错误:git 不在 PATH → GitCliNotFound。
 fn spawn_err(e: std::io::Error) -> GitError {
@@ -250,6 +282,73 @@ impl CliBackend {
         let combined = format!("{stdout}\n{stderr}").to_lowercase();
         Err(classify_push_error(&combined, &stderr))
     }
+
+    /// 暂存某文件第 `hunk_index` 个未暂存 hunk:取 `git diff` 抽出该块,`git apply --cached`。
+    pub fn stage_hunk(&self, repo: &Path, file: &str, hunk_index: usize) -> Result<(), GitError> {
+        let diff = self.diff_text(repo, file, false)?;
+        let patch = extract_hunk_patch(&diff, hunk_index)
+            .ok_or_else(|| GitError::Backend(format!("找不到第 {hunk_index} 个改动块")))?;
+        apply_cached(repo, &patch, false)
+    }
+
+    /// 取消暂存某文件第 `hunk_index` 个已暂存 hunk:取 `git diff --cached` 抽出该块,反向 apply。
+    pub fn unstage_hunk(&self, repo: &Path, file: &str, hunk_index: usize) -> Result<(), GitError> {
+        let diff = self.diff_text(repo, file, true)?;
+        let patch = extract_hunk_patch(&diff, hunk_index)
+            .ok_or_else(|| GitError::Backend(format!("找不到第 {hunk_index} 个改动块")))?;
+        apply_cached(repo, &patch, true)
+    }
+
+    /// `git -C repo diff [--cached] -- file` 的文本输出。
+    fn diff_text(&self, repo: &Path, file: &str, staged: bool) -> Result<String, GitError> {
+        let mut cmd = Command::new("git");
+        cmd.arg("-C").arg(repo).arg("diff");
+        if staged {
+            cmd.arg("--cached");
+        }
+        cmd.arg("--").arg(file);
+        let out = cmd.output().map_err(spawn_err)?;
+        if !out.status.success() {
+            return Err(GitError::Backend(
+                String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    }
+}
+
+/// 把一段 patch 通过 stdin 喂给 `git apply --cached`(reverse 时加 --reverse)。
+fn apply_cached(repo: &Path, patch: &str, reverse: bool) -> Result<(), GitError> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(repo).arg("apply").arg("--cached");
+    if reverse {
+        cmd.arg("--reverse");
+    }
+    cmd.arg("-") // 从 stdin 读 patch
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().map_err(spawn_err)?;
+    {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| GitError::Backend("无法写入 git apply stdin".into()))?;
+        stdin
+            .write_all(patch.as_bytes())
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+    } // stdin 在此 drop → 关闭,git 收到 EOF
+    let out = child
+        .wait_with_output()
+        .map_err(|e| GitError::Backend(e.to_string()))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(GitError::Backend(
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -494,6 +593,74 @@ mod tests {
         assert!(
             matches!(err, GitError::PushRejected),
             "落后远程的 push 应报 PushRejected,实际: {err:?}"
+        );
+    }
+
+    /// 跑 git diff [--cached] 取文本(断言用)。
+    fn run_diff(repo: &Path, cached: bool) -> String {
+        let mut args = vec!["diff"];
+        if cached {
+            args.push("--cached");
+        }
+        let out = Command::new("git")
+            .current_dir(repo)
+            .args(&args)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).to_string()
+    }
+
+    /// 建一个 10 行文件并提交,再改首尾两行 → 形成两个分离 hunk。返回仓库 tempdir。
+    fn repo_with_two_hunks() -> tempfile::TempDir {
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-b", "main", "."]);
+        git(repo.path(), &["config", "user.email", "t@e"]);
+        git(repo.path(), &["config", "user.name", "t"]);
+        let base: String = (1..=10).map(|i| format!("line{i}\n")).collect();
+        std::fs::write(repo.path().join("f.txt"), &base).unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+        // FIRST/LAST 互不为子串,避免断言时 "+LINE1" 误命中 "+LINE10"。
+        let modified = base.replace("line1\n", "FIRST\n").replace("line10\n", "LAST\n");
+        std::fs::write(repo.path().join("f.txt"), &modified).unwrap();
+        repo
+    }
+
+    #[test]
+    fn stage_hunk_stages_only_that_block() {
+        let repo = repo_with_two_hunks();
+        // 暂存第 0 个 hunk(首行改动)
+        CliBackend.stage_hunk(repo.path(), "f.txt", 0).unwrap();
+
+        let staged = run_diff(repo.path(), true);
+        let unstaged = run_diff(repo.path(), false);
+        assert!(
+            staged.contains("FIRST") && !staged.contains("LAST"),
+            "已暂存应只含第一个块,实际:\n{staged}"
+        );
+        assert!(
+            unstaged.contains("LAST") && !unstaged.contains("FIRST"),
+            "未暂存应只剩第二个块,实际:\n{unstaged}"
+        );
+    }
+
+    #[test]
+    fn unstage_hunk_reverts_only_that_block() {
+        let repo = repo_with_two_hunks();
+        // 先把两处都暂存
+        git(repo.path(), &["add", "f.txt"]);
+        // 取消暂存第 0 个 hunk(首行改动)
+        CliBackend.unstage_hunk(repo.path(), "f.txt", 0).unwrap();
+
+        let staged = run_diff(repo.path(), true);
+        let unstaged = run_diff(repo.path(), false);
+        assert!(
+            staged.contains("LAST") && !staged.contains("FIRST"),
+            "已暂存应只剩第二个块,实际:\n{staged}"
+        );
+        assert!(
+            unstaged.contains("FIRST"),
+            "撤回的第一个块应回到未暂存,实际:\n{unstaged}"
         );
     }
 }

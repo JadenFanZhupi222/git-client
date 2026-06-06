@@ -129,26 +129,43 @@ impl GitBackend for Git2Backend {
         let mut entries = Vec::new();
         for entry in statuses.iter() {
             let s = entry.status();
-            let (state, staged) = if s.is_index_new() {
-                (FileState::Added, true)
-            } else if s.is_index_modified() {
-                (FileState::Modified, true)
-            } else if s.is_wt_new() {
-                (FileState::Untracked, false)
-            } else if s.is_wt_modified() {
-                (FileState::Modified, false)
-            } else if s.is_wt_deleted() || s.is_index_deleted() {
-                (FileState::Deleted, s.is_index_deleted())
-            } else if s.is_conflicted() {
-                (FileState::Conflicted, false)
-            } else {
-                continue;
+            let path = entry.path().unwrap_or("").to_string();
+            let mut push = |state, staged| {
+                entries.push(FileEntry {
+                    path: path.clone(),
+                    state,
+                    staged,
+                });
             };
-            entries.push(FileEntry {
-                path: entry.path().unwrap_or("").to_string(),
-                state,
-                staged,
-            });
+
+            // 冲突单独成一项(不拆暂存/未暂存)。
+            if s.is_conflicted() {
+                push(FileState::Conflicted, false);
+                continue;
+            }
+
+            // 暂存侧:index 相对 HEAD 的改动。
+            if s.is_index_new() {
+                push(FileState::Added, true);
+            } else if s.is_index_modified() {
+                push(FileState::Modified, true);
+            } else if s.is_index_deleted() {
+                push(FileState::Deleted, true);
+            } else if s.is_index_renamed() {
+                push(FileState::Renamed, true);
+            }
+
+            // 未暂存侧:工作区相对 index 的改动。一个文件可同时出现在两侧
+            // (部分暂存:暂存了一部分 hunk,工作区还有剩余改动)。
+            if s.is_wt_new() {
+                push(FileState::Untracked, false);
+            } else if s.is_wt_modified() {
+                push(FileState::Modified, false);
+            } else if s.is_wt_deleted() {
+                push(FileState::Deleted, false);
+            } else if s.is_wt_renamed() {
+                push(FileState::Renamed, false);
+            }
         }
         Ok(WorkingTreeStatus { entries })
     }
@@ -1013,6 +1030,23 @@ mod tests {
         );
         // 本测试所有引用都指向同一提交
         assert!(refs.iter().all(|r| r.target == sha), "所有引用应指向 c1");
+    }
+
+    #[test]
+    fn status_splits_staged_and_unstaged_for_same_file() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "v1\n");
+        commit_index(&repo, "c1", 1000);
+        // 暂存 v2,再把工作区改成 v3(未暂存)→ 同一文件两侧都有改动
+        stage(&repo, "a.txt", "v2\n");
+        write(&repo, "a.txt", "v3\n");
+
+        let st = b.status(&repo).unwrap();
+        let mine: Vec<_> = st.entries.iter().filter(|e| e.path == "a.txt").collect();
+        assert_eq!(mine.len(), 2, "部分暂存的文件应同时出现在暂存与未暂存两侧");
+        assert!(mine.iter().any(|e| e.staged), "应有暂存侧条目");
+        assert!(mine.iter().any(|e| !e.staged), "应有未暂存侧条目");
     }
 
     #[test]
