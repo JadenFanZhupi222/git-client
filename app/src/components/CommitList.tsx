@@ -7,8 +7,25 @@ export function CommitList({
   commits: CommitDto[]; branch: string | null; selectedId: string | null;
   onSelect: (c: CommitDto) => void; onLoadMore: () => void; loading: boolean; hasMore: boolean;
 }) {
+  // 首屏加载(还没有任何数据)显示骨架屏,避免空白闪烁
+  if (loading && commits.length === 0) {
+    return (
+      <div className="overflow-hidden">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div key={i} className="flex gap-2.5 px-3 py-2.5" style={{ opacity: 1 - i * 0.1 }}>
+            <div className="skeleton mt-1 h-2.5 w-2.5 shrink-0 rounded-full" />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div className="skeleton h-3" style={{ width: `${70 - (i % 3) * 15}%` }} />
+              <div className="skeleton h-2.5 w-2/5" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   return (
-    <div className="overflow-y-auto">
+    <div className="fade-in overflow-y-auto">
       {commits.map((c, i) => {
         const on = selectedId === c.id;
         const head = i === 0;

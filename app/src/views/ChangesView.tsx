@@ -48,6 +48,7 @@ export function ChangesView({ repo }: { repo: string }) {
 
   const staged = status?.entries.filter((e) => e.staged) ?? [];
   const unstaged = status?.entries.filter((e) => !e.staged) ?? [];
+  const canCommit = !busy && staged.length > 0 && message.trim() !== "";
 
   const Row = ({ entry, isStaged }: { entry: FileEntryDto; isStaged: boolean }) => {
     const s = styleFor(entry.state);
@@ -112,9 +113,15 @@ export function ChangesView({ repo }: { repo: string }) {
         <textarea
           className="w-full resize-none rounded-md border border-line bg-canvas p-2.5 text-sm text-fg placeholder:text-fg-subtle focus:border-accent focus:outline-none"
           rows={3}
-          placeholder="提交信息…"
+          placeholder="提交信息…  (⌘/Ctrl+Enter 提交)"
           value={message}
           onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={(e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canCommit) {
+              e.preventDefault();
+              doCommit();
+            }
+          }}
         />
         <div className="mt-2 flex items-center justify-between">
           <span className="text-xs text-fg-subtle">
@@ -122,7 +129,7 @@ export function ChangesView({ repo }: { repo: string }) {
           </span>
           <button
             className="flex items-center gap-1.5 rounded-md bg-done px-3.5 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-            disabled={busy || staged.length === 0 || message.trim() === ""}
+            disabled={!canCommit}
             onClick={doCommit}
           >
             <CheckIcon width={14} height={14} /> 提交
