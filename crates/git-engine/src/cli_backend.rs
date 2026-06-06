@@ -1,8 +1,15 @@
 use git_core::GitError;
-use git_core::model::{FetchOutcome, PullOutcome, PushOutcome};
+use git_core::model::{FetchOutcome, PullOutcome, PushOutcome, StashEntry};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
+
+/// 解析一行 `git stash list` 输出,如 "stash@{0}: WIP on main: ...."。
+fn parse_stash_line(line: &str) -> Option<StashEntry> {
+    let (refpart, msg) = line.split_once(": ")?; // 只切第一个 ": ",message 保留其余冒号
+    let index = refpart.split_once('{')?.1.trim_end_matches('}').parse().ok()?;
+    Some(StashEntry { index, message: msg.to_string() })
+}
 
 /// 从完整 unified diff 文本里抽出第 `index` 个 hunk,拼上文件头形成可单独 apply 的 patch。
 /// 文件头 = 第一个 `@@` 之前的所有行(diff --git / index / --- / +++)。
@@ -322,6 +329,83 @@ impl CliBackend {
             ));
         }
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    }
+
+    /// `git stash list` → StashEntry 列表(stash@{0} 在前)。
+    pub fn stash_list(&self, repo: &Path) -> Result<Vec<StashEntry>, GitError> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["stash", "list"])
+            .output()
+            .map_err(spawn_err)?;
+        if !out.status.success() {
+            return Err(GitError::Backend(
+                String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(parse_stash_line)
+            .collect())
+    }
+
+    /// `git stash push [-m msg]`。无改动时 git 不报错、只打印提示 → 转 NothingToStash。
+    pub fn stash_save(&self, repo: &Path, message: Option<&str>) -> Result<(), GitError> {
+        let mut cmd = Command::new("git");
+        cmd.arg("-C").arg(repo).args(["stash", "push"]);
+        if let Some(m) = message {
+            if !m.trim().is_empty() {
+                cmd.arg("-m").arg(m);
+            }
+        }
+        let out = cmd.output().map_err(spawn_err)?;
+        if !out.status.success() {
+            return Err(GitError::Backend(
+                String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            ));
+        }
+        if String::from_utf8_lossy(&out.stdout).contains("No local changes to save") {
+            return Err(GitError::NothingToStash);
+        }
+        Ok(())
+    }
+
+    pub fn stash_apply(&self, repo: &Path, index: usize) -> Result<(), GitError> {
+        self.run_stash_mutation(repo, "apply", index)
+    }
+    pub fn stash_pop(&self, repo: &Path, index: usize) -> Result<(), GitError> {
+        self.run_stash_mutation(repo, "pop", index)
+    }
+    pub fn stash_drop(&self, repo: &Path, index: usize) -> Result<(), GitError> {
+        self.run_stash_mutation(repo, "drop", index)
+    }
+
+    /// apply/pop/drop 共用:`git stash <sub> stash@{index}`;apply/pop 冲突 → MergeConflict。
+    fn run_stash_mutation(&self, repo: &Path, sub: &str, index: usize) -> Result<(), GitError> {
+        let spec = format!("stash@{{{index}}}");
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .arg("stash")
+            .arg(sub)
+            .arg(&spec)
+            .output()
+            .map_err(spawn_err)?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let combined = format!("{stdout}\n{stderr}").to_lowercase();
+        if combined.contains("conflict") {
+            let files = stdout
+                .lines()
+                .filter(|l| l.trim_start().starts_with("CONFLICT"))
+                .count();
+            return Err(GitError::MergeConflict { files });
+        }
+        Err(GitError::Backend(stderr.trim().to_string()))
     }
 }
 
@@ -693,6 +777,59 @@ mod tests {
             unstaged.contains("LAST") && !unstaged.contains("FIRST"),
             "未暂存应只剩第二个块,实际:\n{unstaged}"
         );
+    }
+
+    /// 建一个有一次提交、且工作区有改动的仓库。
+    fn repo_with_dirty_worktree() -> tempfile::TempDir {
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-b", "main", "."]);
+        git(repo.path(), &["config", "user.email", "t@e"]);
+        git(repo.path(), &["config", "user.name", "t"]);
+        std::fs::write(repo.path().join("f.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+        std::fs::write(repo.path().join("f.txt"), "changed\n").unwrap();
+        repo
+    }
+
+    #[test]
+    fn stash_save_list_pop_roundtrip() {
+        let repo = repo_with_dirty_worktree();
+        // 贮藏 → 工作区恢复干净,列表有一条
+        CliBackend.stash_save(repo.path(), Some("wip")).unwrap();
+        assert_eq!(std::fs::read_to_string(repo.path().join("f.txt")).unwrap().trim_end(), "base");
+        let list = CliBackend.stash_list(repo.path()).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].index, 0);
+        assert!(list[0].message.contains("wip"), "应含自定义信息,实际: {}", list[0].message);
+
+        // 弹出 → 改动回来,列表清空
+        CliBackend.stash_pop(repo.path(), 0).unwrap();
+        assert_eq!(std::fs::read_to_string(repo.path().join("f.txt")).unwrap().trim_end(), "changed");
+        assert!(CliBackend.stash_list(repo.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn stash_save_without_changes_errors() {
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-b", "main", "."]);
+        git(repo.path(), &["config", "user.email", "t@e"]);
+        git(repo.path(), &["config", "user.name", "t"]);
+        std::fs::write(repo.path().join("f.txt"), "x\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+        // 工作区干净
+        let err = CliBackend.stash_save(repo.path(), None).unwrap_err();
+        assert!(matches!(err, GitError::NothingToStash), "实际: {err:?}");
+    }
+
+    #[test]
+    fn stash_drop_removes_entry() {
+        let repo = repo_with_dirty_worktree();
+        CliBackend.stash_save(repo.path(), None).unwrap();
+        assert_eq!(CliBackend.stash_list(repo.path()).unwrap().len(), 1);
+        CliBackend.stash_drop(repo.path(), 0).unwrap();
+        assert!(CliBackend.stash_list(repo.path()).unwrap().is_empty());
     }
 
     #[test]
