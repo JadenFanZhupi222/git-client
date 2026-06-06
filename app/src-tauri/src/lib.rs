@@ -1,8 +1,15 @@
 use app_service::RepoService;
+use app_service::watcher::{ChangeKind, RepoWatcher};
 use git_engine::Git2Backend; // 真实后端
 use ipc_types::{CommitDto, FileChangeDto, FileDiffDto, IpcError, StatusDto};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tauri::Emitter;
+
+/// 持有当前仓库的文件监听器。切仓库时替换 → 旧 watcher 被 drop → 自动停止监听。
+#[derive(Default)]
+struct WatcherState(Mutex<Option<RepoWatcher>>);
 
 // 把领域错误翻译成给前端的结构化错误(带 code,前端可据此做分支)
 fn to_ipc(e: git_core::GitError) -> IpcError {
@@ -149,11 +156,43 @@ async fn get_current_branch(repo_path: String) -> Result<Option<String>, IpcErro
     .map_err(to_ipc)
 }
 
+/// 开始监听某仓库的文件变化。变化经 debounce + 分类后,
+/// 通过 `repo-changed` 事件通知前端(payload: "worktree" | "index" | "ref")。
+/// 这个命令很快(只注册 OS 监听),无需 spawn_blocking。
+#[tauri::command]
+fn watch_repo(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, WatcherState>,
+    repo_path: String,
+) -> Result<(), IpcError> {
+    let watcher = RepoWatcher::new(
+        PathBuf::from(&repo_path),
+        Duration::from_millis(200),
+        move |kind| {
+            let label = match kind {
+                ChangeKind::WorkingTree => "worktree",
+                ChangeKind::Index => "index",
+                ChangeKind::GitRef => "ref",
+            };
+            let _ = app.emit("repo-changed", label);
+        },
+    )
+    .map_err(|e| IpcError {
+        code: "WATCH_FAILED".into(),
+        message: format!("启动文件监听失败: {e}"),
+        recoverable: true,
+    })?;
+    // 替换旧 watcher(若有):旧的在这里被 drop,停止其监听与后台线程。
+    *state.0.lock().unwrap() = Some(watcher);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init()) // 选目录对话框用
+        .manage(WatcherState::default())
         .invoke_handler(tauri::generate_handler![
             get_head_commit,
             get_status,
@@ -163,7 +202,8 @@ pub fn run() {
             get_log,
             get_commit_files,
             get_commit_file_diff,
-            get_current_branch
+            get_current_branch,
+            watch_repo
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

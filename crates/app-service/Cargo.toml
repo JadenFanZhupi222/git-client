@@ -8,6 +8,8 @@ git-core = { path = "../git-core" }
 git-engine = { path = "../git-engine", default-features = false }
 ipc-types = { path = "../ipc-types" }
 tracing.workspace = true
+notify = "8"
+ignore = "0.4"
 
 [features]
 default = ["git2-backend"]

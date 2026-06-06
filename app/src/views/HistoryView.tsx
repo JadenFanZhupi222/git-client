@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  getLog, getCommitFiles, getCurrentBranch, getCommitFileDiff,
+  getLog, getCommitFiles, getCurrentBranch, getCommitFileDiff, onRepoChanged,
   type CommitDto, type FileChangeDto, type FileDiffDto, type IpcError,
 } from "../ipc";
 import { CommitList } from "../components/CommitList";
@@ -47,6 +47,18 @@ export function HistoryView({ repo }: { repo: string }) {
     setHasMore(true); setError(null);
     loadPage(0);
     getCurrentBranch(repo).then(setBranch).catch(() => setBranch(null));
+    // eslint-disable-next-line
+  }, [repo]);
+
+  // 仅 "ref"(新提交/切分支)影响历史:重载首页 + 分支,不被工作区改动打断
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    onRepoChanged((kind) => {
+      if (kind !== "ref") return;
+      loadPage(0);
+      getCurrentBranch(repo).then(setBranch).catch(() => setBranch(null));
+    }).then((u) => { un = u; });
+    return () => un?.();
     // eslint-disable-next-line
   }, [repo]);
 

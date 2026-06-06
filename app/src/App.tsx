@@ -3,7 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
-import { getCurrentBranch } from "./ipc";
+import { getCurrentBranch, watchRepo, onRepoChanged } from "./ipc";
 import { FolderIcon, BranchIcon } from "./components/icons";
 
 export default function App() {
@@ -16,10 +16,15 @@ export default function App() {
     if (typeof dir === "string") setRepo(dir);
   }
 
-  // 仓库变化时刷新底栏分支名
+  // 仓库变化时:刷新底栏分支名、启动文件监听、订阅变化事件
   useEffect(() => {
     if (!repo) { setBranch(null); return; }
-    getCurrentBranch(repo).then(setBranch).catch(() => setBranch(null));
+    const loadBranch = () => getCurrentBranch(repo).then(setBranch).catch(() => setBranch(null));
+    loadBranch();
+    watchRepo(repo).catch(() => {});
+    let un: (() => void) | undefined;
+    onRepoChanged((kind) => { if (kind === "ref") loadBranch(); }).then((u) => { un = u; });
+    return () => un?.();
   }, [repo]);
 
   // 仓库路径只显示尾部目录名,完整路径放 title 悬浮
