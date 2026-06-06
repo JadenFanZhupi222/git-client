@@ -4,10 +4,9 @@ import { writeResolved, type IpcError } from "../ipc";
 import { useFileText, invalidateWorktree, qk } from "../lib/queries";
 import { useToast } from "./Toast";
 
-type Choice = "ours" | "theirs" | "both-ot" | "both-to" | "edit";
 type Seg =
   | { kind: "text"; lines: string[] }
-  | { kind: "conflict"; ours: string[]; theirs: string[]; base?: string[]; choice?: Choice; edited?: string };
+  | { kind: "conflict"; ours: string[]; theirs: string[]; base?: string[]; sel?: string[]; touched?: boolean };
 
 /** 把含冲突标记的文本解析成 普通段 + 冲突段(ours/theirs/可选 base)。 */
 function parseConflicts(text: string): Seg[] {
@@ -39,20 +38,22 @@ function parseConflicts(text: string): Seg[] {
   return segs;
 }
 
+/** 组装结果:冲突段输出勾选的行(我方选中在前、对方选中在后)。 */
 function assemble(segs: Seg[]): string {
   const out: string[] = [];
   for (const s of segs) {
-    if (s.kind === "text") out.push(...s.lines);
-    else if (s.choice === "ours") out.push(...s.ours);
-    else if (s.choice === "theirs") out.push(...s.theirs);
-    else if (s.choice === "both-ot") out.push(...s.ours, ...s.theirs);
-    else if (s.choice === "both-to") out.push(...s.theirs, ...s.ours);
-    else if (s.choice === "edit") out.push(...(s.edited ?? "").split("\n"));
+    if (s.kind === "text") { out.push(...s.lines); continue; }
+    const sel = new Set(s.sel ?? []);
+    s.ours.forEach((l, i) => { if (sel.has(`o${i}`)) out.push(l); });
+    s.theirs.forEach((l, i) => { if (sel.has(`t${i}`)) out.push(l); });
   }
   return out.join("\n");
 }
 
-/** 交互式冲突编辑器:逐冲突块选 我方/对方/两者,组装后写回并标记已解决。 */
+const oursKeys = (s: Extract<Seg, { kind: "conflict" }>) => s.ours.map((_, i) => `o${i}`);
+const theirsKeys = (s: Extract<Seg, { kind: "conflict" }>) => s.theirs.map((_, i) => `t${i}`);
+
+/** 交互式冲突编辑器:逐行勾选我方/对方(可各取各舍),组装写回并标记已解决。 */
 export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -60,7 +61,6 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
   const [segs, setSegs] = useState<Seg[]>([]);
   const [busy, setBusy] = useState(false);
 
-  // 文件内容到手(或切文件)时解析
   useEffect(() => { if (q.data != null) setSegs(parseConflicts(q.data)); }, [q.data]);
 
   if (q.isLoading) return <Center>加载中…</Center>;
@@ -68,18 +68,18 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
 
   const conflictSegs = segs.filter((s) => s.kind === "conflict") as Extract<Seg, { kind: "conflict" }>[];
   const total = conflictSegs.length;
-  const chosen = conflictSegs.filter((s) => s.choice).length;
+  const chosen = conflictSegs.filter((s) => s.touched).length;
   const allChosen = total > 0 && chosen === total;
 
-  const setChoice = (idx: number, choice: Choice) =>
-    setSegs((prev) => prev.map((s, i) => {
-      if (i !== idx || s.kind !== "conflict") return s;
-      // 进入「编辑」时,文本框预填 我方+对方 全部内容,供手动取舍
-      if (choice === "edit") return { ...s, choice, edited: s.edited ?? [...s.ours, ...s.theirs].join("\n") };
-      return { ...s, choice };
-    }));
-  const setEdited = (idx: number, text: string) =>
-    setSegs((prev) => prev.map((s, i) => (i === idx && s.kind === "conflict" ? { ...s, edited: text } : s)));
+  const update = (idx: number, fn: (s: Extract<Seg, { kind: "conflict" }>) => Seg) =>
+    setSegs((prev) => prev.map((s, i) => (i === idx && s.kind === "conflict" ? fn(s) : s)));
+  const setSel = (idx: number, keys: string[]) => update(idx, (s) => ({ ...s, sel: keys, touched: true }));
+  const toggle = (idx: number, key: string) =>
+    update(idx, (s) => {
+      const set = new Set(s.sel ?? []);
+      set.has(key) ? set.delete(key) : set.add(key);
+      return { ...s, sel: [...set], touched: true };
+    });
 
   async function apply() {
     setBusy(true);
@@ -97,28 +97,32 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 操作条 */}
       <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-1.5 text-xs">
-        <span className="text-fg-muted">已选 {chosen}/{total} 块</span>
+        <span className="text-fg-muted">已处理 {chosen}/{total} 块 · 勾选要保留的行(两边可各取各舍)</span>
         <button
           onClick={apply}
           disabled={busy || !allChosen}
-          title={allChosen ? "把所选结果写回并标记已解决" : "请先为每个冲突块选择一边"}
+          title={allChosen ? "把勾选结果写回并标记已解决" : "请处理每个冲突块"}
           className="ml-auto rounded-md bg-done px-3 py-1 font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
         >
           应用解决
         </button>
       </div>
 
-      {/* 正文 */}
       <div className="fade-in flex-1 overflow-auto font-mono text-[12px] leading-5">
         {segs.map((s, idx) =>
           s.kind === "text" ? (
-            s.lines.map((l, j) => (
-              <div key={`t${idx}-${j}`} className="whitespace-pre px-3 text-fg">{l || " "}</div>
-            ))
+            s.lines.map((l, j) => <div key={`t${idx}-${j}`} className="whitespace-pre px-3 text-fg-muted">{l || " "}</div>)
           ) : (
-            <ConflictBlock key={`c${idx}`} seg={s} onChoose={(c) => setChoice(idx, c)} onEdit={(t) => setEdited(idx, t)} />
+            <ConflictBlock
+              key={`c${idx}`}
+              seg={s}
+              onToggle={(k) => toggle(idx, k)}
+              onAllOurs={() => setSel(idx, oursKeys(s))}
+              onAllTheirs={() => setSel(idx, theirsKeys(s))}
+              onBoth={() => setSel(idx, [...oursKeys(s), ...theirsKeys(s)])}
+              onNone={() => setSel(idx, [])}
+            />
           )
         )}
       </div>
@@ -126,43 +130,49 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
   );
 }
 
-function ConflictBlock({ seg, onChoose, onEdit }: { seg: Extract<Seg, { kind: "conflict" }>; onChoose: (c: Choice) => void; onEdit: (text: string) => void }) {
-  const Side = ({ title, lines, active, tint, onClick }: { title: string; lines: string[]; active: boolean; tint: string; onClick: () => void }) => (
-    <div className={`min-w-0 flex-1 border ${active ? "border-accent" : "border-line"} rounded-md overflow-hidden`}>
-      <button onClick={onClick} className={`flex w-full items-center justify-between px-2 py-0.5 text-[11px] ${active ? "bg-accent/15 text-accent" : "bg-overlay text-fg-muted hover:text-fg"}`}>
-        <span>{title}</span>
-        <span>{active ? "✓ 采用" : "采用"}</span>
-      </button>
-      <div className={tint}>
-        {lines.length === 0 ? <div className="px-2 text-fg-subtle">(空)</div> : lines.map((l, i) => (
-          <div key={i} className="whitespace-pre px-2 text-fg">{l || " "}</div>
-        ))}
-      </div>
+function ConflictBlock({ seg, onToggle, onAllOurs, onAllTheirs, onBoth, onNone }: {
+  seg: Extract<Seg, { kind: "conflict" }>;
+  onToggle: (key: string) => void;
+  onAllOurs: () => void;
+  onAllTheirs: () => void;
+  onBoth: () => void;
+  onNone: () => void;
+}) {
+  const sel = new Set(seg.sel ?? []);
+  const Col = ({ title, lines, prefix, tint }: { title: string; lines: string[]; prefix: "o" | "t"; tint: string }) => (
+    <div className="min-w-0 flex-1 overflow-hidden rounded-md border border-line">
+      <div className="bg-overlay px-2 py-0.5 text-[11px] text-fg-muted">{title}</div>
+      {lines.length === 0 ? (
+        <div className="px-2 py-0.5 text-fg-subtle">(空)</div>
+      ) : lines.map((l, i) => {
+        const key = `${prefix}${i}`;
+        const on = sel.has(key);
+        return (
+          <div
+            key={i}
+            onClick={() => onToggle(key)}
+            className={`flex cursor-pointer items-start gap-1 px-1 ${on ? tint : "opacity-50 hover:opacity-100"}`}
+          >
+            <span className="w-3 shrink-0 select-none text-center text-[10px] text-accent">{on ? "✓" : "·"}</span>
+            <span className="whitespace-pre text-fg">{l || " "}</span>
+          </div>
+        );
+      })}
     </div>
   );
-  const editing = seg.choice === "edit";
   return (
     <div className="my-1 border-y border-warning/30 bg-warning/5 p-2">
+      <div className="mb-1 flex items-center gap-1.5 text-[11px]">
+        <span className="text-fg-subtle">{seg.touched ? "✓ 已处理" : "选择保留的行:"}</span>
+        <button onClick={onAllOurs} className="rounded px-1.5 py-0.5 text-fg-muted hover:bg-overlay hover:text-fg">全选我方</button>
+        <button onClick={onAllTheirs} className="rounded px-1.5 py-0.5 text-fg-muted hover:bg-overlay hover:text-fg">全选对方</button>
+        <button onClick={onBoth} className="rounded px-1.5 py-0.5 text-fg-muted hover:bg-overlay hover:text-fg">两者</button>
+        <button onClick={onNone} className="rounded px-1.5 py-0.5 text-fg-muted hover:bg-overlay hover:text-fg">都不要</button>
+      </div>
       <div className="flex gap-2">
-        <Side title="我方 (ours)" lines={seg.ours} active={seg.choice === "ours"} tint="bg-success/10" onClick={() => onChoose("ours")} />
-        <Side title="对方 (theirs)" lines={seg.theirs} active={seg.choice === "theirs"} tint="bg-accent/10" onClick={() => onChoose("theirs")} />
+        <Col title="我方 (ours)" lines={seg.ours} prefix="o" tint="bg-success/15" />
+        <Col title="对方 (theirs)" lines={seg.theirs} prefix="t" tint="bg-accent/15" />
       </div>
-      <div className="mt-1 flex items-center gap-1.5 text-[11px]">
-        <span className="text-fg-subtle">两者:</span>
-        <button onClick={() => onChoose("both-ot")} className={`rounded px-1.5 py-0.5 ${seg.choice === "both-ot" ? "bg-accent/15 text-accent" : "text-fg-muted hover:bg-overlay hover:text-fg"}`}>我方+对方</button>
-        <button onClick={() => onChoose("both-to")} className={`rounded px-1.5 py-0.5 ${seg.choice === "both-to" ? "bg-accent/15 text-accent" : "text-fg-muted hover:bg-overlay hover:text-fg"}`}>对方+我方</button>
-        <span className="mx-1 text-line-strong">|</span>
-        <button onClick={() => onChoose("edit")} className={`rounded px-1.5 py-0.5 ${editing ? "bg-accent/15 text-accent" : "text-fg-muted hover:bg-overlay hover:text-fg"}`} title="手动编辑这一块(各取/各删一点)">手动编辑</button>
-      </div>
-      {editing && (
-        <textarea
-          value={seg.edited ?? ""}
-          onChange={(e) => onEdit(e.target.value)}
-          spellCheck={false}
-          rows={Math.min(12, Math.max(3, (seg.edited ?? "").split("\n").length))}
-          className="mt-1 w-full resize-y rounded border border-accent/50 bg-canvas p-2 font-mono text-[12px] leading-5 text-fg focus:border-accent focus:outline-none"
-        />
-      )}
     </div>
   );
 }
