@@ -43,6 +43,20 @@ export function CommitGraph({
   }
   const gutterW = (maxCol + 1) * LANE_W;
   const cx = (c: number) => c * LANE_W + LANE_W / 2;
+  const MID = ROW_H / 2;
+  // 上半段:顶边 → 中点。直列时是竖线;换列时用三次 bezier,两端切线竖直 →
+  // lane 在自己列里走直线,只在拐点柔和地弯,消除生硬的对角线/锯齿。
+  const topPath = (from: number, to: number) => {
+    const x1 = cx(from), x2 = cx(to);
+    if (x1 === x2) return `M${x1},0 L${x1},${MID}`;
+    return `M${x1},0 C${x1},${MID / 2} ${x2},${MID / 2} ${x2},${MID}`;
+  };
+  // 下半段:中点 → 底边。
+  const botPath = (from: number, to: number) => {
+    const x1 = cx(from), x2 = cx(to);
+    if (x1 === x2) return `M${x1},${MID} L${x1},${ROW_H}`;
+    return `M${x1},${MID} C${x1},${MID + MID / 2} ${x2},${MID + MID / 2} ${x2},${ROW_H}`;
+  };
 
   return (
     <div className="fade-in overflow-y-auto">
@@ -61,12 +75,12 @@ export function CommitGraph({
             {/* 图谱泳道 */}
             <svg width={gutterW} height={ROW_H} className="shrink-0" style={{ minWidth: gutterW }}>
               {r.top.map((s, j) => (
-                <line key={`t${j}`} x1={cx(s.from)} y1={0} x2={cx(s.to)} y2={ROW_H / 2}
-                  stroke={laneColor(s.color)} strokeWidth={2} />
+                <path key={`t${j}`} d={topPath(s.from, s.to)} fill="none"
+                  stroke={laneColor(s.color)} strokeWidth={2} strokeLinecap="round" />
               ))}
               {r.bottom.map((s, j) => (
-                <line key={`b${j}`} x1={cx(s.from)} y1={ROW_H / 2} x2={cx(s.to)} y2={ROW_H}
-                  stroke={laneColor(s.color)} strokeWidth={2} />
+                <path key={`b${j}`} d={botPath(s.from, s.to)} fill="none"
+                  stroke={laneColor(s.color)} strokeWidth={2} strokeLinecap="round" />
               ))}
               <circle cx={cx(r.column)} cy={ROW_H / 2} r={4.5}
                 fill={laneColor(r.color)}
