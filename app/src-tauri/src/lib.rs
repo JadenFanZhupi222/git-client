@@ -3,7 +3,7 @@ use app_service::watcher::{ChangeKind, RepoWatcher};
 use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组合
 use ipc_types::{
     BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError,
-    StatusDto,
+    PullResultDto, StatusDto,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -33,6 +33,8 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         AuthFailed => ("AUTH_FAILED", true),
         NetworkError => ("NETWORK_ERROR", true),
         NoRemote => ("NO_REMOTE", false),
+        NoUpstream => ("NO_UPSTREAM", false),
+        MergeConflict { .. } => ("MERGE_CONFLICT", true),
         Unsupported => ("UNSUPPORTED", false),
         Backend(_) => ("BACKEND", true),
     };
@@ -235,6 +237,17 @@ async fn fetch(repo_path: String, remote: Option<String>) -> Result<FetchResultD
     .map_err(to_ipc)
 }
 
+#[tauri::command]
+async fn pull(repo_path: String, remote: Option<String>) -> Result<PullResultDto, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.pull(&PathBuf::from(repo_path), remote.as_deref())
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
 /// 开始监听某仓库的文件变化。变化经 debounce + 分类后,
 /// 通过 `repo-changed` 事件通知前端(payload: "worktree" | "index" | "ref")。
 /// 这个命令很快(只注册 OS 监听),无需 spawn_blocking。
@@ -288,6 +301,7 @@ pub fn run() {
             create_branch,
             delete_branch,
             fetch,
+            pull,
             watch_repo
         ])
         .run(tauri::generate_context!())
