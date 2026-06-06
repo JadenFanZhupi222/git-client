@@ -3,7 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
-import { getCurrentBranch, getAheadBehind, getRemotes, watchRepo, onRepoChanged, fetchRemote, pullRemote, pushRemote, type AheadBehindDto, type IpcError } from "./ipc";
+import { getCurrentBranch, getAheadBehind, getRemotes, setUpstream, watchRepo, onRepoChanged, fetchRemote, pullRemote, pushRemote, type AheadBehindDto, type IpcError } from "./ipc";
 import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
@@ -32,6 +32,7 @@ export default function App() {
   const [remotes, setRemotes] = useState<string[]>([]);
   const [selectedRemote, setSelectedRemote] = useState<string | null>(null);
   const [remoteMenu, setRemoteMenu] = useState(false);
+  const [upMenu, setUpMenu] = useState(false);
   const toast = useToast();
   const busy = fetching || pulling || pushing;
   // 同步提示:落后 → 建议 Pull;领先 → 建议 Push(无上游时 sync 为 null,不提示)
@@ -103,6 +104,19 @@ export default function App() {
     } finally {
       setPushing(false);
       getAheadBehind(repo).then(setSync).catch(() => {});
+    }
+  }
+
+  async function doSetUpstream(upstream: string) {
+    if (!repo) return;
+    setUpMenu(false);
+    try {
+      await setUpstream(repo, upstream);
+      toast({ kind: "success", title: `已设置上游 ${upstream}` });
+      getAheadBehind(repo).then(setSync).catch(() => {});
+    } catch (e) {
+      // 远程跟踪分支不存在时会失败——提示用户先 Fetch/Push。
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     }
   }
 
@@ -294,6 +308,34 @@ export default function App() {
         <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-elevated px-3 text-[11px] text-fg-muted">
           <BranchSwitcher repo={repo} branch={branch} onSwitched={setBranch} />
           <SyncBadge sync={sync} />
+          {!sync && branch && remotes.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => setUpMenu((o) => !o)}
+                title="为当前分支设置上游分支"
+                className="rounded px-1 text-fg-subtle transition-colors hover:bg-overlay hover:text-fg"
+              >
+                设置上游
+              </button>
+              {upMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setUpMenu(false)} />
+                  <div className="absolute bottom-full left-0 z-50 mb-1 w-48 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs shadow-lg">
+                    <div className="border-b border-line px-2.5 py-1 text-[10px] uppercase tracking-wide text-fg-subtle">设为上游</div>
+                    {remotes.map((r) => (
+                      <button
+                        key={r}
+                        onClick={() => doSetUpstream(`${r}/${branch}`)}
+                        className="block w-full truncate px-2.5 py-1.5 text-left font-mono text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
+                      >
+                        {r}/{branch}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <span className="ml-auto truncate font-mono text-fg-subtle" title={repo}>
             {repo}
           </span>

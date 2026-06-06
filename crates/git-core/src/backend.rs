@@ -63,6 +63,9 @@ pub trait GitBackend: Send + Sync {
     /// 列出远程名(如 ["origin", "upstream"]),按 git 返回顺序。
     fn remotes(&self, repo: &Path) -> Result<Vec<String>, GitError>;
 
+    /// 把当前分支的上游设为 `upstream`(形如 "origin/main");该远程跟踪分支须已存在。
+    fn set_upstream(&self, repo: &Path, upstream: &str) -> Result<(), GitError>;
+
     /// 切换到已有的本地分支(更新工作区 + 移动 HEAD)。
     /// 工作区有冲突改动时应失败而非覆盖(安全 checkout)。
     fn checkout_branch(&self, repo: &Path, name: &str) -> Result<(), GitError>;

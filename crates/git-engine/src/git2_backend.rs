@@ -438,6 +438,27 @@ impl GitBackend for Git2Backend {
         Ok(arr.iter().flatten().map(|s| s.to_string()).collect())
     }
 
+    fn set_upstream(&self, path: &Path, upstream: &str) -> Result<(), GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let head = repo.head().map_err(|_| GitError::NoHead)?;
+        if !head.is_branch() {
+            return Err(GitError::Backend("当前为分离头,无法设置上游".into()));
+        }
+        let name = head
+            .shorthand()
+            .ok_or(GitError::NoHead)?
+            .to_string();
+        let mut branch = repo
+            .find_branch(&name, git2::BranchType::Local)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        // upstream 形如 "origin/main";远程跟踪分支不存在时 git2 报错。
+        branch
+            .set_upstream(Some(upstream))
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        Ok(())
+    }
+
     fn checkout_branch(&self, path: &Path, name: &str) -> Result<(), GitError> {
         let repo =
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
@@ -1163,6 +1184,32 @@ mod tests {
         let ab = b.ahead_behind(&repo).unwrap().expect("配了上游应有结果");
         assert_eq!(ab.ahead, 1, "本地领先上游 1 个提交");
         assert_eq!(ab.behind, 0, "不落后");
+    }
+
+    #[test]
+    fn set_upstream_then_ahead_behind_works() {
+        let (_tmp, repo) = init_repo();
+        stage(&repo, "a.txt", "1");
+        let c1 = commit_index(&repo, "c1", 1000);
+        let g = git2::Repository::open(&repo).unwrap();
+        g.remote("origin", "https://example.invalid/r.git").unwrap();
+        let head_name = g.head().unwrap().shorthand().unwrap().to_string();
+        g.reference(
+            &format!("refs/remotes/origin/{head_name}"),
+            git2::Oid::from_str(&c1).unwrap(),
+            true,
+            "arrange",
+        )
+        .unwrap();
+
+        Git2Backend
+            .set_upstream(&repo, &format!("origin/{head_name}"))
+            .unwrap();
+
+        // 设上游后应能算出 ahead/behind(此处都在 c1 → 0/0)
+        let ab = Git2Backend.ahead_behind(&repo).unwrap();
+        assert!(ab.is_some(), "设上游后应能计算 ahead/behind");
+        assert_eq!(ab.unwrap().ahead, 0);
     }
 
     #[test]

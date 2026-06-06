@@ -34,6 +34,7 @@ pub struct FakeBackend {
     push_calls: Mutex<u32>,
     staged_hunks: Mutex<Vec<(String, usize)>>,
     unstaged_hunks: Mutex<Vec<(String, usize)>>,
+    upstreams_set: Mutex<Vec<String>>,
 }
 
 impl FakeBackend {
@@ -120,6 +121,9 @@ impl FakeBackend {
     }
     pub fn unstaged_hunks(&self) -> Vec<(String, usize)> {
         self.unstaged_hunks.lock().unwrap().clone()
+    }
+    pub fn upstreams_set(&self) -> Vec<String> {
+        self.upstreams_set.lock().unwrap().clone()
     }
 }
 
@@ -209,6 +213,10 @@ impl GitBackend for FakeBackend {
     }
     fn remotes(&self, _path: &Path) -> Result<Vec<String>, GitError> {
         Ok(self.canned_remotes.lock().unwrap().clone())
+    }
+    fn set_upstream(&self, _path: &Path, upstream: &str) -> Result<(), GitError> {
+        self.upstreams_set.lock().unwrap().push(upstream.to_string());
+        Ok(())
     }
     fn checkout_branch(&self, _path: &Path, name: &str) -> Result<(), GitError> {
         self.checked_out.lock().unwrap().push(name.to_string());

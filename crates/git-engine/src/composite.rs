@@ -66,6 +66,9 @@ impl GitBackend for CompositeBackend {
     fn remotes(&self, repo: &Path) -> Result<Vec<String>, GitError> {
         self.git2.remotes(repo)
     }
+    fn set_upstream(&self, repo: &Path, upstream: &str) -> Result<(), GitError> {
+        self.git2.set_upstream(repo, upstream)
+    }
     fn checkout_branch(&self, repo: &Path, name: &str) -> Result<(), GitError> {
         self.git2.checkout_branch(repo, name)
     }

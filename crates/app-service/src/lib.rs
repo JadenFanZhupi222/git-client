@@ -154,6 +154,14 @@ impl RepoService {
         self.backend.remotes(repo_path)
     }
 
+    /// 用例:把当前分支上游设为 upstream(形如 "origin/main")。
+    pub fn set_upstream(&self, repo_path: &Path, upstream: &str) -> Result<(), GitError> {
+        if upstream.trim().is_empty() {
+            return Err(GitError::InvalidBranchName);
+        }
+        self.backend.set_upstream(repo_path, upstream)
+    }
+
     /// 用例:切换分支。空名在本层拦截。
     pub fn checkout_branch(&self, repo_path: &Path, name: &str) -> Result<(), GitError> {
         if name.trim().is_empty() {
@@ -408,6 +416,18 @@ mod tests {
         let fb = FakeBackend::default().with_remotes(vec!["origin".into(), "upstream".into()]);
         let svc = RepoService::new(Arc::new(fb));
         assert_eq!(svc.remotes(Path::new("/r")).unwrap(), vec!["origin", "upstream"]);
+    }
+
+    #[test]
+    fn set_upstream_forwards_and_rejects_empty() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.set_upstream(Path::new("/r"), "origin/main").unwrap();
+        assert_eq!(fb.upstreams_set(), vec!["origin/main".to_string()]);
+        assert!(matches!(
+            svc.set_upstream(Path::new("/r"), "  ").unwrap_err(),
+            GitError::InvalidBranchName
+        ));
     }
 
     #[test]

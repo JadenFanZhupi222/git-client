@@ -254,6 +254,17 @@ async fn get_remotes(repo_path: String) -> Result<Vec<String>, IpcError> {
 }
 
 #[tauri::command]
+async fn set_upstream(repo_path: String, upstream: String) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.set_upstream(&PathBuf::from(repo_path), &upstream)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
 async fn checkout_branch(repo_path: String, name: String) -> Result<(), IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
@@ -377,6 +388,7 @@ pub fn run() {
             list_branches,
             get_ahead_behind,
             get_remotes,
+            set_upstream,
             checkout_branch,
             create_branch,
             delete_branch,
