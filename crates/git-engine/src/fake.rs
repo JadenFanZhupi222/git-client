@@ -1,6 +1,6 @@
 use git_core::model::{
     AheadBehind, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff, FileEntry,
-    PullOutcome, PushOutcome, Signature, WorkingTreeStatus,
+    PullOutcome, PushOutcome, StashEntry, Signature, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -35,6 +35,8 @@ pub struct FakeBackend {
     staged_hunks: Mutex<Vec<(String, usize)>>,
     unstaged_hunks: Mutex<Vec<(String, usize)>>,
     upstreams_set: Mutex<Vec<String>>,
+    canned_stashes: Mutex<Vec<StashEntry>>,
+    stash_ops: Mutex<Vec<String>>,
 }
 
 impl FakeBackend {
@@ -124,6 +126,13 @@ impl FakeBackend {
     }
     pub fn upstreams_set(&self) -> Vec<String> {
         self.upstreams_set.lock().unwrap().clone()
+    }
+    pub fn with_stashes(self, stashes: Vec<StashEntry>) -> Self {
+        *self.canned_stashes.lock().unwrap() = stashes;
+        self
+    }
+    pub fn stash_ops(&self) -> Vec<String> {
+        self.stash_ops.lock().unwrap().clone()
     }
 }
 
@@ -216,6 +225,25 @@ impl GitBackend for FakeBackend {
     }
     fn set_upstream(&self, _path: &Path, upstream: &str) -> Result<(), GitError> {
         self.upstreams_set.lock().unwrap().push(upstream.to_string());
+        Ok(())
+    }
+    fn stash_list(&self, _path: &Path) -> Result<Vec<StashEntry>, GitError> {
+        Ok(self.canned_stashes.lock().unwrap().clone())
+    }
+    fn stash_save(&self, _path: &Path, message: Option<&str>) -> Result<(), GitError> {
+        self.stash_ops.lock().unwrap().push(format!("save:{}", message.unwrap_or("")));
+        Ok(())
+    }
+    fn stash_apply(&self, _path: &Path, index: usize) -> Result<(), GitError> {
+        self.stash_ops.lock().unwrap().push(format!("apply:{index}"));
+        Ok(())
+    }
+    fn stash_pop(&self, _path: &Path, index: usize) -> Result<(), GitError> {
+        self.stash_ops.lock().unwrap().push(format!("pop:{index}"));
+        Ok(())
+    }
+    fn stash_drop(&self, _path: &Path, index: usize) -> Result<(), GitError> {
+        self.stash_ops.lock().unwrap().push(format!("drop:{index}"));
         Ok(())
     }
     fn checkout_branch(&self, _path: &Path, name: &str) -> Result<(), GitError> {

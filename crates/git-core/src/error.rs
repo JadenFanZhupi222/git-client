@@ -16,6 +16,9 @@ pub enum GitError {
     #[error("没有已暂存的改动可提交")]
     NothingToCommit,
 
+    #[error("没有可贮藏的改动")]
+    NothingToStash,
+
     #[error("提交信息不能为空")]
     EmptyCommitMessage,
 

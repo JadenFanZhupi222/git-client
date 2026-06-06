@@ -5,7 +5,7 @@
 use git_core::{GitBackend, GitError};
 use ipc_types::{
     AheadBehindDto, BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto,
-    PullResultDto, PushResultDto, RefDto, StatusDto,
+    PullResultDto, PushResultDto, RefDto, StashDto, StatusDto,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -160,6 +160,23 @@ impl RepoService {
             return Err(GitError::InvalidBranchName);
         }
         self.backend.set_upstream(repo_path, upstream)
+    }
+
+    // ---- 贮藏 ----
+    pub fn stash_list(&self, repo_path: &Path) -> Result<Vec<StashDto>, GitError> {
+        Ok(self.backend.stash_list(repo_path)?.into_iter().map(StashDto::from).collect())
+    }
+    pub fn stash_save(&self, repo_path: &Path, message: Option<&str>) -> Result<(), GitError> {
+        self.backend.stash_save(repo_path, message)
+    }
+    pub fn stash_apply(&self, repo_path: &Path, index: usize) -> Result<(), GitError> {
+        self.backend.stash_apply(repo_path, index)
+    }
+    pub fn stash_pop(&self, repo_path: &Path, index: usize) -> Result<(), GitError> {
+        self.backend.stash_pop(repo_path, index)
+    }
+    pub fn stash_drop(&self, repo_path: &Path, index: usize) -> Result<(), GitError> {
+        self.backend.stash_drop(repo_path, index)
     }
 
     /// 用例:切换分支。空名在本层拦截。
@@ -418,6 +435,28 @@ mod tests {
         let fb = FakeBackend::default().with_remotes(vec!["origin".into(), "upstream".into()]);
         let svc = RepoService::new(Arc::new(fb));
         assert_eq!(svc.remotes(Path::new("/r")).unwrap(), vec!["origin", "upstream"]);
+    }
+
+    #[test]
+    fn stash_list_maps_dto() {
+        use git_core::model::StashEntry;
+        let fb = FakeBackend::default().with_stashes(vec![StashEntry { index: 0, message: "wip".into() }]);
+        let svc = RepoService::new(Arc::new(fb));
+        let list = svc.stash_list(Path::new("/r")).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].index, 0);
+        assert_eq!(list[0].message, "wip");
+    }
+
+    #[test]
+    fn stash_ops_forward_to_backend() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.stash_save(Path::new("/r"), Some("m")).unwrap();
+        svc.stash_apply(Path::new("/r"), 1).unwrap();
+        svc.stash_pop(Path::new("/r"), 2).unwrap();
+        svc.stash_drop(Path::new("/r"), 3).unwrap();
+        assert_eq!(fb.stash_ops(), vec!["save:m", "apply:1", "pop:2", "drop:3"]);
     }
 
     #[test]

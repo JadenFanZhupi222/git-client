@@ -1,7 +1,7 @@
 use crate::error::GitError;
 use crate::model::{
     AheadBehind, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff, PullOutcome,
-    PushOutcome, WorkingTreeStatus,
+    PushOutcome, StashEntry, WorkingTreeStatus,
 };
 use std::path::Path;
 
@@ -65,6 +65,29 @@ pub trait GitBackend: Send + Sync {
 
     /// 把当前分支的上游设为 `upstream`(形如 "origin/main");该远程跟踪分支须已存在。
     fn set_upstream(&self, repo: &Path, upstream: &str) -> Result<(), GitError>;
+
+    // ---- 贮藏(stash):有状态的复杂流程,走 CLI 后端;默认 Unsupported ----
+
+    /// 列出贮藏(stash@{0} 在前)。
+    fn stash_list(&self, _repo: &Path) -> Result<Vec<StashEntry>, GitError> {
+        Err(GitError::Unsupported)
+    }
+    /// 贮藏当前工作区改动(含已暂存)。无改动 → NothingToStash。
+    fn stash_save(&self, _repo: &Path, _message: Option<&str>) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+    /// 应用第 index 条贮藏(不从列表移除)。冲突 → MergeConflict。
+    fn stash_apply(&self, _repo: &Path, _index: usize) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+    /// 弹出第 index 条贮藏(应用并移除)。冲突 → MergeConflict。
+    fn stash_pop(&self, _repo: &Path, _index: usize) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+    /// 删除第 index 条贮藏。
+    fn stash_drop(&self, _repo: &Path, _index: usize) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
 
     /// 切换到已有的本地分支(更新工作区 + 移动 HEAD)。
     /// 工作区有冲突改动时应失败而非覆盖(安全 checkout)。

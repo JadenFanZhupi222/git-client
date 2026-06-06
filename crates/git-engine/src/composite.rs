@@ -2,7 +2,7 @@ use crate::cli_backend::CliBackend;
 use crate::git2_backend::Git2Backend;
 use git_core::model::{
     AheadBehind, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff, PullOutcome,
-    PushOutcome, WorkingTreeStatus,
+    PushOutcome, StashEntry, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -99,6 +99,23 @@ impl GitBackend for CompositeBackend {
     }
     fn unstage_hunk(&self, repo: &Path, file: &str, hunk_index: usize) -> Result<(), GitError> {
         self.cli.unstage_hunk(repo, file, hunk_index)
+    }
+
+    // 贮藏走 CLI 后端。
+    fn stash_list(&self, repo: &Path) -> Result<Vec<StashEntry>, GitError> {
+        self.cli.stash_list(repo)
+    }
+    fn stash_save(&self, repo: &Path, message: Option<&str>) -> Result<(), GitError> {
+        self.cli.stash_save(repo, message)
+    }
+    fn stash_apply(&self, repo: &Path, index: usize) -> Result<(), GitError> {
+        self.cli.stash_apply(repo, index)
+    }
+    fn stash_pop(&self, repo: &Path, index: usize) -> Result<(), GitError> {
+        self.cli.stash_pop(repo, index)
+    }
+    fn stash_drop(&self, repo: &Path, index: usize) -> Result<(), GitError> {
+        self.cli.stash_drop(repo, index)
     }
 }
 

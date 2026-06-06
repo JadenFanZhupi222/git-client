@@ -96,6 +96,13 @@ export const PushIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+export const StashIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M8 2 1.5 5.5 8 9l6.5-3.5L8 2Z" />
+    <path d="M1.5 9 8 12.5 14.5 9" />
+  </svg>
+);
+
 export const ChevronDownIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
     <path d="M4 6l4 4 4-4" />

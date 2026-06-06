@@ -3,7 +3,7 @@ use app_service::watcher::{ChangeKind, RepoWatcher};
 use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组合
 use ipc_types::{
     AheadBehindDto, BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto,
-    IpcError, PullResultDto, PushResultDto, StatusDto,
+    IpcError, PullResultDto, PushResultDto, StashDto, StatusDto,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -22,6 +22,7 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         NoHead => ("NO_HEAD", false),
         Cancelled => ("CANCELLED", true),
         NothingToCommit => ("NOTHING_TO_COMMIT", false),
+        NothingToStash => ("NOTHING_TO_STASH", false),
         EmptyCommitMessage => ("EMPTY_COMMIT_MESSAGE", false),
         EmptySignature => ("EMPTY_SIGNATURE", false),
         BranchNotFound(_) => ("BRANCH_NOT_FOUND", false),
@@ -334,6 +335,61 @@ async fn push(repo_path: String, remote: Option<String>) -> Result<PushResultDto
     .map_err(to_ipc)
 }
 
+#[tauri::command]
+async fn stash_list(repo_path: String) -> Result<Vec<StashDto>, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.stash_list(&PathBuf::from(repo_path))
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn stash_save(repo_path: String, message: Option<String>) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.stash_save(&PathBuf::from(repo_path), message.as_deref())
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn stash_apply(repo_path: String, index: usize) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.stash_apply(&PathBuf::from(repo_path), index)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn stash_pop(repo_path: String, index: usize) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.stash_pop(&PathBuf::from(repo_path), index)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn stash_drop(repo_path: String, index: usize) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.stash_drop(&PathBuf::from(repo_path), index)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
 /// 开始监听某仓库的文件变化。变化经 debounce + 分类后,
 /// 通过 `repo-changed` 事件通知前端(payload: "worktree" | "index" | "ref")。
 /// 这个命令很快(只注册 OS 监听),无需 spawn_blocking。
@@ -395,6 +451,11 @@ pub fn run() {
             fetch,
             pull,
             push,
+            stash_list,
+            stash_save,
+            stash_apply,
+            stash_pop,
+            stash_drop,
             watch_repo
         ])
         .run(tauri::generate_context!())
