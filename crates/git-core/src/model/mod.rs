@@ -1,3 +1,4 @@
+mod blame;
 mod branch;
 mod commit;
 mod diff;
@@ -6,6 +7,7 @@ mod repo_state;
 mod stash;
 mod status;
 
+pub use blame::BlameLine;
 pub use branch::{AheadBehind, BranchInfo, CommitRef, RefKind};
 pub use commit::{Commit, Signature};
 pub use diff::{DiffLine, DiffLineKind, FileChange, FileDiff, Hunk};

@@ -1,8 +1,9 @@
-export type Tab = "changes" | "history";
+export type Tab = "changes" | "history" | "blame";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "changes", label: "更改" },
   { id: "history", label: "历史" },
+  { id: "blame", label: "追溯" },
 ];
 
 export function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void }) {

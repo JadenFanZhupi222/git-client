@@ -4,8 +4,8 @@
 
 use git_core::{GitBackend, GitError};
 use ipc_types::{
-    AheadBehindDto, BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto,
-    PullResultDto, PushResultDto, RefDto, StashDto, StatusDto,
+    AheadBehindDto, BlameLineDto, BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto,
+    GraphRowDto, PullResultDto, PushResultDto, RefDto, StashDto, StatusDto,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -175,6 +175,10 @@ impl RepoService {
             Other => "other",
         }
         .to_string())
+    }
+    /// 用例:逐行 blame。
+    pub fn blame(&self, repo_path: &Path, file: &str) -> Result<Vec<BlameLineDto>, GitError> {
+        Ok(self.backend.blame(repo_path, file)?.into_iter().map(BlameLineDto::from).collect())
     }
     pub fn resolve_ours(&self, repo_path: &Path, file: &str) -> Result<(), GitError> {
         self.backend.resolve_ours(repo_path, file)

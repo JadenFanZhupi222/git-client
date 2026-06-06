@@ -2,8 +2,8 @@ use app_service::RepoService;
 use app_service::watcher::{ChangeKind, RepoWatcher};
 use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组合
 use ipc_types::{
-    AheadBehindDto, BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto,
-    IpcError, PullResultDto, PushResultDto, StashDto, StatusDto,
+    AheadBehindDto, BlameLineDto, BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto,
+    GraphRowDto, IpcError, PullResultDto, PushResultDto, StashDto, StatusDto,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -391,6 +391,17 @@ async fn abort_op(repo_path: String) -> Result<(), IpcError> {
 }
 
 #[tauri::command]
+async fn blame(repo_path: String, file: String) -> Result<Vec<BlameLineDto>, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.blame(&PathBuf::from(repo_path), &file)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
 async fn cherry_pick(repo_path: String, commit_id: String) -> Result<(), IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
@@ -545,6 +556,7 @@ pub fn run() {
             continue_op,
             abort_op,
             cherry_pick,
+            blame,
             read_working_file,
             stash_list,
             stash_save,
