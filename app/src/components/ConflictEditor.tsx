@@ -4,10 +4,10 @@ import { writeResolved, type IpcError } from "../ipc";
 import { useFileText, invalidateWorktree, qk } from "../lib/queries";
 import { useToast } from "./Toast";
 
-type Choice = "ours" | "theirs" | "both-ot" | "both-to";
+type Choice = "ours" | "theirs" | "both-ot" | "both-to" | "edit";
 type Seg =
   | { kind: "text"; lines: string[] }
-  | { kind: "conflict"; ours: string[]; theirs: string[]; base?: string[]; choice?: Choice };
+  | { kind: "conflict"; ours: string[]; theirs: string[]; base?: string[]; choice?: Choice; edited?: string };
 
 /** 把含冲突标记的文本解析成 普通段 + 冲突段(ours/theirs/可选 base)。 */
 function parseConflicts(text: string): Seg[] {
@@ -47,6 +47,7 @@ function assemble(segs: Seg[]): string {
     else if (s.choice === "theirs") out.push(...s.theirs);
     else if (s.choice === "both-ot") out.push(...s.ours, ...s.theirs);
     else if (s.choice === "both-to") out.push(...s.theirs, ...s.ours);
+    else if (s.choice === "edit") out.push(...(s.edited ?? "").split("\n"));
   }
   return out.join("\n");
 }
@@ -71,7 +72,14 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
   const allChosen = total > 0 && chosen === total;
 
   const setChoice = (idx: number, choice: Choice) =>
-    setSegs((prev) => prev.map((s, i) => (i === idx && s.kind === "conflict" ? { ...s, choice } : s)));
+    setSegs((prev) => prev.map((s, i) => {
+      if (i !== idx || s.kind !== "conflict") return s;
+      // 进入「编辑」时,文本框预填 我方+对方 全部内容,供手动取舍
+      if (choice === "edit") return { ...s, choice, edited: s.edited ?? [...s.ours, ...s.theirs].join("\n") };
+      return { ...s, choice };
+    }));
+  const setEdited = (idx: number, text: string) =>
+    setSegs((prev) => prev.map((s, i) => (i === idx && s.kind === "conflict" ? { ...s, edited: text } : s)));
 
   async function apply() {
     setBusy(true);
@@ -110,7 +118,7 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
               <div key={`t${idx}-${j}`} className="whitespace-pre px-3 text-fg">{l || " "}</div>
             ))
           ) : (
-            <ConflictBlock key={`c${idx}`} seg={s} onChoose={(c) => setChoice(idx, c)} />
+            <ConflictBlock key={`c${idx}`} seg={s} onChoose={(c) => setChoice(idx, c)} onEdit={(t) => setEdited(idx, t)} />
           )
         )}
       </div>
@@ -118,7 +126,7 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
   );
 }
 
-function ConflictBlock({ seg, onChoose }: { seg: Extract<Seg, { kind: "conflict" }>; onChoose: (c: Choice) => void }) {
+function ConflictBlock({ seg, onChoose, onEdit }: { seg: Extract<Seg, { kind: "conflict" }>; onChoose: (c: Choice) => void; onEdit: (text: string) => void }) {
   const Side = ({ title, lines, active, tint, onClick }: { title: string; lines: string[]; active: boolean; tint: string; onClick: () => void }) => (
     <div className={`min-w-0 flex-1 border ${active ? "border-accent" : "border-line"} rounded-md overflow-hidden`}>
       <button onClick={onClick} className={`flex w-full items-center justify-between px-2 py-0.5 text-[11px] ${active ? "bg-accent/15 text-accent" : "bg-overlay text-fg-muted hover:text-fg"}`}>
@@ -132,6 +140,7 @@ function ConflictBlock({ seg, onChoose }: { seg: Extract<Seg, { kind: "conflict"
       </div>
     </div>
   );
+  const editing = seg.choice === "edit";
   return (
     <div className="my-1 border-y border-warning/30 bg-warning/5 p-2">
       <div className="flex gap-2">
@@ -142,7 +151,18 @@ function ConflictBlock({ seg, onChoose }: { seg: Extract<Seg, { kind: "conflict"
         <span className="text-fg-subtle">两者:</span>
         <button onClick={() => onChoose("both-ot")} className={`rounded px-1.5 py-0.5 ${seg.choice === "both-ot" ? "bg-accent/15 text-accent" : "text-fg-muted hover:bg-overlay hover:text-fg"}`}>我方+对方</button>
         <button onClick={() => onChoose("both-to")} className={`rounded px-1.5 py-0.5 ${seg.choice === "both-to" ? "bg-accent/15 text-accent" : "text-fg-muted hover:bg-overlay hover:text-fg"}`}>对方+我方</button>
+        <span className="mx-1 text-line-strong">|</span>
+        <button onClick={() => onChoose("edit")} className={`rounded px-1.5 py-0.5 ${editing ? "bg-accent/15 text-accent" : "text-fg-muted hover:bg-overlay hover:text-fg"}`} title="手动编辑这一块(各取/各删一点)">手动编辑</button>
       </div>
+      {editing && (
+        <textarea
+          value={seg.edited ?? ""}
+          onChange={(e) => onEdit(e.target.value)}
+          spellCheck={false}
+          rows={Math.min(12, Math.max(3, (seg.edited ?? "").split("\n").length))}
+          className="mt-1 w-full resize-y rounded border border-accent/50 bg-canvas p-2 font-mono text-[12px] leading-5 text-fg focus:border-accent focus:outline-none"
+        />
+      )}
     </div>
   );
 }
