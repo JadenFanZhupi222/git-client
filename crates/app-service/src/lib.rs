@@ -107,6 +107,17 @@ impl RepoService {
         Ok(FileDiffDto::from(diff))
     }
 
+    /// 用例:工作区文件 diff(staged=false 未暂存 / true 已暂存)。
+    pub fn working_diff(
+        &self,
+        repo_path: &Path,
+        file: &str,
+        staged: bool,
+    ) -> Result<FileDiffDto, GitError> {
+        let diff = self.backend.working_diff(repo_path, file, staged)?;
+        Ok(FileDiffDto::from(diff))
+    }
+
     /// 用例:当前 HEAD 分支短名;分离头/空仓库返回 None。
     pub fn current_branch(&self, repo_path: &Path) -> Result<Option<String>, GitError> {
         self.backend.current_branch(repo_path)

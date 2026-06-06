@@ -162,6 +162,21 @@ async fn get_commit_file_diff(
 }
 
 #[tauri::command]
+async fn get_working_diff(
+    repo_path: String,
+    file: String,
+    staged: bool,
+) -> Result<FileDiffDto, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.working_diff(&PathBuf::from(repo_path), &file, staged)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
 async fn get_commit_graph(repo_path: String, limit: usize) -> Result<Vec<GraphRowDto>, IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
@@ -317,6 +332,7 @@ pub fn run() {
             get_log,
             get_commit_files,
             get_commit_file_diff,
+            get_working_diff,
             get_commit_graph,
             get_current_branch,
             list_branches,
