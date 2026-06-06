@@ -168,6 +168,9 @@ impl GitBackend for FakeBackend {
     ) -> Result<FileDiff, GitError> {
         Ok(self.canned_file_diff.lock().unwrap().clone())
     }
+    fn working_diff(&self, _path: &Path, _file: &str, _staged: bool) -> Result<FileDiff, GitError> {
+        Ok(self.canned_file_diff.lock().unwrap().clone())
+    }
     fn branches(&self, _path: &Path) -> Result<Vec<BranchInfo>, GitError> {
         Ok(self.canned_branches.lock().unwrap().clone())
     }

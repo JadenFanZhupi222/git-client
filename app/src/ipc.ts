@@ -164,6 +164,15 @@ export async function getCommitFileDiff(
   return await invoke<FileDiffDto>("get_commit_file_diff", { repoPath, commitId, file });
 }
 
+/** 工作区文件 diff:staged=false 未暂存(index↔工作区)、true 已暂存(HEAD↔index)。 */
+export async function getWorkingDiff(
+  repoPath: string,
+  file: string,
+  staged: boolean,
+): Promise<FileDiffDto> {
+  return await invoke<FileDiffDto>("get_working_diff", { repoPath, file, staged });
+}
+
 // ── 提交图谱 ──
 export interface GraphSegDto {
   from: number;

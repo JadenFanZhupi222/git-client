@@ -48,6 +48,9 @@ impl GitBackend for CompositeBackend {
     ) -> Result<FileDiff, GitError> {
         self.git2.commit_file_diff(repo, commit_id, file)
     }
+    fn working_diff(&self, repo: &Path, file: &str, staged: bool) -> Result<FileDiff, GitError> {
+        self.git2.working_diff(repo, file, staged)
+    }
     fn current_branch(&self, repo: &Path) -> Result<Option<String>, GitError> {
         self.git2.current_branch(repo)
     }
