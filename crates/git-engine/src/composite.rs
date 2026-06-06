@@ -1,0 +1,110 @@
+use crate::cli_backend::CliBackend;
+use crate::git2_backend::Git2Backend;
+use git_core::model::{BranchInfo, Commit, FetchOutcome, FileChange, FileDiff, WorkingTreeStatus};
+use git_core::{GitBackend, GitError};
+use std::path::Path;
+
+/// 组合后端:对外是一个 GitBackend,内部按操作路由。
+/// 既有(读 + 本地写)方法走 git2;网络方法(fetch)走 CLI。
+#[derive(Default)]
+pub struct CompositeBackend {
+    git2: Git2Backend,
+    cli: CliBackend,
+}
+
+impl GitBackend for CompositeBackend {
+    fn open(&self, repo: &Path) -> Result<(), GitError> {
+        self.git2.open(repo)
+    }
+    fn head_commit(&self, repo: &Path) -> Result<Commit, GitError> {
+        self.git2.head_commit(repo)
+    }
+    fn status(&self, repo: &Path) -> Result<WorkingTreeStatus, GitError> {
+        self.git2.status(repo)
+    }
+    fn stage(&self, repo: &Path, file: &Path) -> Result<(), GitError> {
+        self.git2.stage(repo, file)
+    }
+    fn unstage(&self, repo: &Path, file: &Path) -> Result<(), GitError> {
+        self.git2.unstage(repo, file)
+    }
+    fn commit(&self, repo: &Path, message: &str) -> Result<String, GitError> {
+        self.git2.commit(repo, message)
+    }
+    fn log(&self, repo: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, GitError> {
+        self.git2.log(repo, limit, skip)
+    }
+    fn commit_files(&self, repo: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError> {
+        self.git2.commit_files(repo, commit_id)
+    }
+    fn commit_file_diff(
+        &self,
+        repo: &Path,
+        commit_id: &str,
+        file: &str,
+    ) -> Result<FileDiff, GitError> {
+        self.git2.commit_file_diff(repo, commit_id, file)
+    }
+    fn current_branch(&self, repo: &Path) -> Result<Option<String>, GitError> {
+        self.git2.current_branch(repo)
+    }
+    fn branches(&self, repo: &Path) -> Result<Vec<BranchInfo>, GitError> {
+        self.git2.branches(repo)
+    }
+    fn checkout_branch(&self, repo: &Path, name: &str) -> Result<(), GitError> {
+        self.git2.checkout_branch(repo, name)
+    }
+    fn create_branch(&self, repo: &Path, name: &str) -> Result<(), GitError> {
+        self.git2.create_branch(repo, name)
+    }
+    fn delete_branch(&self, repo: &Path, name: &str) -> Result<(), GitError> {
+        self.git2.delete_branch(repo, name)
+    }
+
+    // 网络操作走 CLI 后端。
+    fn fetch(&self, repo: &Path, remote: Option<&str>) -> Result<FetchOutcome, GitError> {
+        self.cli.fetch(repo, remote)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    fn git(dir: &Path, args: &[&str]) {
+        Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap();
+    }
+
+    #[test]
+    fn delegates_branches_to_git2() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-b", "main", "."]);
+        git(dir.path(), &["config", "user.email", "t@e"]);
+        git(dir.path(), &["config", "user.name", "t"]);
+        std::fs::write(dir.path().join("a.txt"), "x").unwrap();
+        git(dir.path(), &["add", "."]);
+        git(dir.path(), &["commit", "-m", "c1"]);
+
+        let composite = CompositeBackend::default();
+        let git2 = Git2Backend;
+        let via_composite: Vec<String> = composite
+            .branches(dir.path())
+            .unwrap()
+            .into_iter()
+            .map(|b| b.name)
+            .collect();
+        let via_git2: Vec<String> = git2
+            .branches(dir.path())
+            .unwrap()
+            .into_iter()
+            .map(|b| b.name)
+            .collect();
+        assert_eq!(via_composite, via_git2, "composite 应把 branches 透传给 git2");
+        assert!(via_composite.contains(&"main".to_string()));
+    }
+}

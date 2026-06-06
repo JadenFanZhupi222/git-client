@@ -3,8 +3,8 @@
 //! 让前后端类型在编译期对齐。阶段 0 先保持简单。
 
 use git_core::model::{
-    BranchInfo, Commit, DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry, FileState, Hunk,
-    WorkingTreeStatus,
+    BranchInfo, Commit, DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry,
+    FileState, Hunk, WorkingTreeStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -115,6 +115,22 @@ impl From<BranchInfo> for BranchDto {
         BranchDto {
             name: b.name,
             is_head: b.is_head,
+        }
+    }
+}
+
+/// 一次 fetch 的结果 DTO。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchResultDto {
+    pub remote: String,
+    pub summary: String,
+}
+
+impl From<FetchOutcome> for FetchResultDto {
+    fn from(o: FetchOutcome) -> Self {
+        FetchResultDto {
+            remote: o.remote,
+            summary: o.summary,
         }
     }
 }

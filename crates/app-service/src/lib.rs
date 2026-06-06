@@ -3,7 +3,9 @@
 //! 后端通过构造函数注入(依赖注入),所以测试时能塞 FakeBackend。
 
 use git_core::{GitBackend, GitError};
-use ipc_types::{BranchDto, CommitDto, FileChangeDto, FileDiffDto, GraphRowDto, StatusDto};
+use ipc_types::{
+    BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, StatusDto,
+};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -132,6 +134,16 @@ impl RepoService {
             return Err(GitError::InvalidBranchName);
         }
         self.backend.delete_branch(repo_path, name)
+    }
+
+    /// 用例:从远程 fetch。remote=None 用默认远程。
+    pub fn fetch(
+        &self,
+        repo_path: &Path,
+        remote: Option<&str>,
+    ) -> Result<FetchResultDto, GitError> {
+        let outcome = self.backend.fetch(repo_path, remote)?;
+        Ok(FetchResultDto::from(outcome))
     }
 
     /// 用例:提交。空白信息在本层拦截,不下探后端。
@@ -305,6 +317,27 @@ mod tests {
         let svc = RepoService::new(fb.clone());
         svc.delete_branch(Path::new("/r"), "old").unwrap();
         assert_eq!(fb.deleted_branches(), vec!["old".to_string()]);
+    }
+
+    #[test]
+    fn fetch_forwards_and_maps_dto() {
+        use git_core::model::FetchOutcome;
+        let fb = FakeBackend::default().with_fetch(FetchOutcome {
+            remote: "origin".into(),
+            summary: "已是最新".into(),
+        });
+        let svc = RepoService::new(Arc::new(fb));
+        let dto = svc.fetch(Path::new("/r"), None).unwrap();
+        assert_eq!(dto.remote, "origin");
+        assert_eq!(dto.summary, "已是最新");
+    }
+
+    #[test]
+    fn fetch_counts_backend_call() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.fetch(Path::new("/r"), Some("origin")).unwrap();
+        assert_eq!(fb.fetch_call_count(), 1);
     }
 
     #[test]

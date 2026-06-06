@@ -3,21 +3,50 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
-import { getCurrentBranch, watchRepo, onRepoChanged } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon } from "./components/icons";
+import { getCurrentBranch, watchRepo, onRepoChanged, fetchRemote, type IpcError } from "./ipc";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon, SpinnerIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
+import { useToast } from "./components/Toast";
 import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
+
+/** 把 git fetch 的原始摘要提炼成简洁细节:优先取 "->" 更新行。 */
+function fetchDetail(summary: string): string | undefined {
+  if (summary === "已是最新") return undefined;
+  const lines = summary.split("\n").map((l) => l.trim()).filter(Boolean);
+  const updates = lines.filter((l) => l.includes("->"));
+  return (updates.length ? updates : lines.slice(0, 1)).join("\n") || undefined;
+}
 
 export default function App() {
   const [repo, setRepo] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("changes");
   const [branch, setBranch] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(getStoredTheme);
+  const [fetching, setFetching] = useState(false);
+  const toast = useToast();
 
   function toggleTheme() {
     const next: Theme = theme === "dark" ? "light" : "dark";
     applyTheme(next);
     setTheme(next);
+  }
+
+  async function doFetch() {
+    if (!repo) return;
+    setFetching(true);
+    try {
+      const r = await fetchRemote(repo);
+      // refs 变化会触发文件监听 → 各视图自动重载;这里只用 toast 反馈结果。
+      toast({
+        kind: "success",
+        title: r.summary === "已是最新" ? "已是最新" : "已拉取更新",
+        detail: fetchDetail(r.summary),
+      });
+    } catch (e) {
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+    } finally {
+      setFetching(false);
+    }
   }
 
   async function pickRepo() {
@@ -41,6 +70,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col bg-canvas text-fg">
+      {fetching && <TopProgress />}
       {/* 顶栏:轻、紧凑、左标题右仓库 */}
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line px-3">
         <div className="flex items-center gap-2 font-semibold">
@@ -49,6 +79,21 @@ export default function App() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {repo && (
+            <button
+              onClick={doFetch}
+              disabled={fetching}
+              title="Fetch(从远程拉取更新)"
+              className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50"
+            >
+              {fetching ? (
+                <SpinnerIcon width={13} height={13} />
+              ) : (
+                <FetchIcon width={13} height={13} />
+              )}
+              {fetching ? "Fetch…" : "Fetch"}
+            </button>
+          )}
           {repo && (
             <span
               title={repo}
@@ -95,6 +140,15 @@ export default function App() {
           </span>
         </footer>
       )}
+    </div>
+  );
+}
+
+/** 顶部不确定态进度条:非阻塞的全局加载信号(fetch 等后台操作进行时显示) */
+function TopProgress() {
+  return (
+    <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] h-0.5 overflow-hidden bg-accent/15">
+      <div className="progress-bar h-full w-1/3 bg-accent" />
     </div>
   );
 }

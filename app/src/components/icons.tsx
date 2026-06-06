@@ -70,6 +70,33 @@ export const MoonIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+export const FetchIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M8 2v7M5 6.5 8 9.5l3-3M3 12.5h10" />
+  </svg>
+);
+
+/** 圆环 + 缺口 spinner(径向对称,旋转顺滑)。始终自旋。 */
+export const SpinnerIcon = ({ className = "", ...p }: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p} className={`animate-spin ${className}`}>
+    <circle cx="8" cy="8" r="6" opacity="0.25" />
+    <path d="M8 2a6 6 0 0 1 6 6" />
+  </svg>
+);
+
+export const AlertIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M8 2.5 1.5 13.5h13L8 2.5Z" />
+    <path d="M8 6.5v3.5M8 12h.01" />
+  </svg>
+);
+
+export const CloseIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M4 4l8 8M12 4l-8 8" />
+  </svg>
+);
+
 export const PlusIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
     <path d="M8 3v10M3 8h10" />

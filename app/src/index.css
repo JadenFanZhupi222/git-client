@@ -161,3 +161,44 @@ body {
 .fade-in {
   animation: fade-in 0.18s ease-out;
 }
+
+/* Toast:从右侧滑入 / 滑出 */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.toast-in {
+  animation: toast-in 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+.toast-out {
+  animation: toast-out 0.18s ease-in forwards;
+}
+
+/* 顶部不确定态进度条:一段高亮反复划过(非阻塞的全局加载信号) */
+@keyframes progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+.progress-bar {
+  animation: progress-slide 1.1s ease-in-out infinite;
+}
