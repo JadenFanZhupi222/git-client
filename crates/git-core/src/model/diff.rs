@@ -1,11 +1,15 @@
 use crate::model::FileState;
 use serde::{Deserialize, Serialize};
 
-/// 一个提交里改动的单个文件(文件级,不含行)。
+/// 一个提交里改动的单个文件(文件级)。带本文件的增删行数(diff --stat)。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileChange {
     pub path: String,
     pub status: FileState,
+    /// 新增行数;二进制文件为 0。
+    pub additions: usize,
+    /// 删除行数;二进制文件为 0。
+    pub deletions: usize,
 }
 
 /// 一行 diff 的种类:上下文 / 新增 / 删除。

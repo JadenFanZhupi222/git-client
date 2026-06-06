@@ -307,6 +307,8 @@ mod tests {
             .with_commit_files(vec![FileChange {
                 path: "a".into(),
                 status: FileState::Added,
+                additions: 1,
+                deletions: 0,
             }])
             .with_branch(Some("main".into()));
         assert_eq!(fb.log(Path::new("/r"), 10, 0).unwrap().len(), 1);
