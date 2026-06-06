@@ -11,7 +11,9 @@ export interface CommitDto {
   id: string;
   short_id: string;
   summary: string;
+  body: string;
   author_name: string;
+  author_email: string;
   timestamp: number;
   parents: string[];
 }

@@ -15,7 +15,10 @@ pub struct CommitDto {
     pub id: String,
     pub short_id: String,
     pub summary: String,
+    /// 提交信息正文(首行 summary 之后的部分);无正文时为空串。
+    pub body: String,
     pub author_name: String,
+    pub author_email: String,
     pub timestamp: i64,
     pub parents: Vec<String>,
 }
@@ -26,7 +29,9 @@ impl From<Commit> for CommitDto {
             id: c.id,
             short_id: c.short_id,
             summary: c.summary,
+            body: c.body,
             author_name: c.author.name,
+            author_email: c.author.email,
             timestamp: c.timestamp,
             parents: c.parents,
         }
