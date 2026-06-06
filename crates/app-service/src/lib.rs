@@ -4,7 +4,8 @@
 
 use git_core::{GitBackend, GitError};
 use ipc_types::{
-    BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, StatusDto,
+    BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto,
+    StatusDto,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -144,6 +145,12 @@ impl RepoService {
     ) -> Result<FetchResultDto, GitError> {
         let outcome = self.backend.fetch(repo_path, remote)?;
         Ok(FetchResultDto::from(outcome))
+    }
+
+    /// 用例:pull(fetch + merge)。remote=None 用上游。
+    pub fn pull(&self, repo_path: &Path, remote: Option<&str>) -> Result<PullResultDto, GitError> {
+        let outcome = self.backend.pull(repo_path, remote)?;
+        Ok(PullResultDto::from(outcome))
     }
 
     /// 用例:提交。空白信息在本层拦截,不下探后端。
@@ -338,6 +345,25 @@ mod tests {
         let svc = RepoService::new(fb.clone());
         svc.fetch(Path::new("/r"), Some("origin")).unwrap();
         assert_eq!(fb.fetch_call_count(), 1);
+    }
+
+    #[test]
+    fn pull_forwards_and_maps_dto() {
+        use git_core::model::PullOutcome;
+        let fb = FakeBackend::default().with_pull(PullOutcome {
+            summary: "Fast-forward".into(),
+        });
+        let svc = RepoService::new(Arc::new(fb));
+        let dto = svc.pull(Path::new("/r"), None).unwrap();
+        assert_eq!(dto.summary, "Fast-forward");
+    }
+
+    #[test]
+    fn pull_counts_backend_call() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.pull(Path::new("/r"), None).unwrap();
+        assert_eq!(fb.pull_call_count(), 1);
     }
 
     #[test]

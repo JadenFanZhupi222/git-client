@@ -4,7 +4,7 @@
 
 use git_core::model::{
     BranchInfo, Commit, DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry,
-    FileState, Hunk, WorkingTreeStatus,
+    FileState, Hunk, PullOutcome, WorkingTreeStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -132,6 +132,18 @@ impl From<FetchOutcome> for FetchResultDto {
             remote: o.remote,
             summary: o.summary,
         }
+    }
+}
+
+/// 一次 pull 的成功结果 DTO。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PullResultDto {
+    pub summary: String,
+}
+
+impl From<PullOutcome> for PullResultDto {
+    fn from(o: PullOutcome) -> Self {
+        PullResultDto { summary: o.summary }
     }
 }
 
