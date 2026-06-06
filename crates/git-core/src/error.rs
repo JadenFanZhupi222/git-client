@@ -37,6 +37,21 @@ pub enum GitError {
     #[error("工作区有未提交的改动,切换分支会被覆盖,请先提交或暂存")]
     CheckoutConflict,
 
+    #[error("未找到 git 命令,请确认已安装 git 并在 PATH 中")]
+    GitCliNotFound,
+
+    #[error("认证失败,请检查凭据或 SSH key")]
+    AuthFailed,
+
+    #[error("网络错误,无法访问远程")]
+    NetworkError,
+
+    #[error("没有配置远程仓库")]
+    NoRemote,
+
+    #[error("该后端不支持此操作")]
+    Unsupported,
+
     /// 兜底:底层 git 库返回的、我们还没细分的错误。
     #[error("底层 git 错误: {0}")]
     Backend(String),
