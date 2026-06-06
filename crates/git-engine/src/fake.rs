@@ -1,5 +1,6 @@
 use git_core::model::{
-    BranchInfo, Commit, FetchOutcome, FileChange, FileDiff, FileEntry, Signature, WorkingTreeStatus,
+    BranchInfo, Commit, FetchOutcome, FileChange, FileDiff, FileEntry, PullOutcome, Signature,
+    WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -24,6 +25,8 @@ pub struct FakeBackend {
     deleted: Mutex<Vec<String>>,
     canned_fetch: Mutex<Option<FetchOutcome>>,
     fetch_calls: Mutex<u32>,
+    canned_pull: Mutex<Option<PullOutcome>>,
+    pull_calls: Mutex<u32>,
 }
 
 impl FakeBackend {
@@ -78,6 +81,13 @@ impl FakeBackend {
     }
     pub fn fetch_call_count(&self) -> u32 {
         *self.fetch_calls.lock().unwrap()
+    }
+    pub fn with_pull(self, outcome: PullOutcome) -> Self {
+        *self.canned_pull.lock().unwrap() = Some(outcome);
+        self
+    }
+    pub fn pull_call_count(&self) -> u32 {
+        *self.pull_calls.lock().unwrap()
     }
 }
 
@@ -163,6 +173,17 @@ impl GitBackend for FakeBackend {
             .clone()
             .unwrap_or(FetchOutcome {
                 remote: remote.unwrap_or("").to_string(),
+                summary: "已是最新".to_string(),
+            }))
+    }
+    fn pull(&self, _path: &Path, _remote: Option<&str>) -> Result<PullOutcome, GitError> {
+        *self.pull_calls.lock().unwrap() += 1;
+        Ok(self
+            .canned_pull
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or(PullOutcome {
                 summary: "已是最新".to_string(),
             }))
     }

@@ -3,8 +3,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
-import { getCurrentBranch, watchRepo, onRepoChanged, fetchRemote, type IpcError } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon, FetchIcon, SpinnerIcon } from "./components/icons";
+import { getCurrentBranch, watchRepo, onRepoChanged, fetchRemote, pullRemote, type IpcError } from "./ipc";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, SpinnerIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { useToast } from "./components/Toast";
 import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
@@ -23,6 +23,7 @@ export default function App() {
   const [branch, setBranch] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(getStoredTheme);
   const [fetching, setFetching] = useState(false);
+  const [pulling, setPulling] = useState(false);
   const toast = useToast();
 
   function toggleTheme() {
@@ -49,6 +50,22 @@ export default function App() {
     }
   }
 
+  async function doPull() {
+    if (!repo) return;
+    setPulling(true);
+    try {
+      const r = await pullRemote(repo);
+      // 成功后工作区/HEAD 变化触发文件监听 → 图谱自动前进。
+      const upToDate = /up to date|已是最新/i.test(r.summary);
+      toast({ kind: "success", title: upToDate ? "已是最新" : "已拉取并合并" });
+    } catch (e) {
+      // 冲突时工作区已留下冲突标记,可到「更改」页查看冲突文件。
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+    } finally {
+      setPulling(false);
+    }
+  }
+
   async function pickRepo() {
     const dir = await open({ directory: true, title: "选择一个 git 仓库" });
     if (typeof dir === "string") setRepo(dir);
@@ -70,7 +87,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen flex-col bg-canvas text-fg">
-      {fetching && <TopProgress />}
+      {(fetching || pulling) && <TopProgress />}
       {/* 顶栏:轻、紧凑、左标题右仓库 */}
       <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line px-3">
         <div className="flex items-center gap-2 font-semibold">
@@ -80,19 +97,34 @@ export default function App() {
 
         <div className="ml-auto flex items-center gap-2">
           {repo && (
-            <button
-              onClick={doFetch}
-              disabled={fetching}
-              title="Fetch(从远程拉取更新)"
-              className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50"
-            >
-              {fetching ? (
-                <SpinnerIcon width={13} height={13} />
-              ) : (
-                <FetchIcon width={13} height={13} />
-              )}
-              {fetching ? "Fetch…" : "Fetch"}
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={doFetch}
+                disabled={fetching || pulling}
+                title="Fetch(从远程拉取更新,不改工作区)"
+                className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50"
+              >
+                {fetching ? (
+                  <SpinnerIcon width={13} height={13} />
+                ) : (
+                  <FetchIcon width={13} height={13} />
+                )}
+                {fetching ? "Fetch…" : "Fetch"}
+              </button>
+              <button
+                onClick={doPull}
+                disabled={fetching || pulling}
+                title="Pull(拉取并合并到当前分支)"
+                className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50"
+              >
+                {pulling ? (
+                  <SpinnerIcon width={13} height={13} />
+                ) : (
+                  <PullIcon width={13} height={13} />
+                )}
+                {pulling ? "Pull…" : "Pull"}
+              </button>
+            </div>
           )}
           {repo && (
             <span

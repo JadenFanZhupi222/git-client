@@ -8,3 +8,10 @@ pub struct FetchOutcome {
     /// git 的人类输出(stderr 那几行);为空表示「已是最新」。
     pub summary: String,
 }
+
+/// 一次 pull(fetch + merge)的成功结果。冲突/无上游等以 GitError 返回。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PullOutcome {
+    /// git pull 的人类输出(Already up to date. / Fast-forward / Merge made…)。
+    pub summary: String,
+}
