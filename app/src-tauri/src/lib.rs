@@ -1,7 +1,9 @@
 use app_service::RepoService;
 use app_service::watcher::{ChangeKind, RepoWatcher};
 use git_engine::Git2Backend; // 真实后端
-use ipc_types::{CommitDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError, StatusDto};
+use ipc_types::{
+    BranchDto, CommitDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError, StatusDto,
+};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -21,6 +23,8 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         NothingToCommit => ("NOTHING_TO_COMMIT", false),
         EmptyCommitMessage => ("EMPTY_COMMIT_MESSAGE", false),
         EmptySignature => ("EMPTY_SIGNATURE", false),
+        BranchNotFound(_) => ("BRANCH_NOT_FOUND", false),
+        CheckoutConflict => ("CHECKOUT_CONFLICT", true),
         Backend(_) => ("BACKEND", true),
     };
     IpcError {
@@ -167,6 +171,28 @@ async fn get_current_branch(repo_path: String) -> Result<Option<String>, IpcErro
     .map_err(to_ipc)
 }
 
+#[tauri::command]
+async fn list_branches(repo_path: String) -> Result<Vec<BranchDto>, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(Git2Backend));
+        service.branches(&PathBuf::from(repo_path))
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn checkout_branch(repo_path: String, name: String) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(Git2Backend));
+        service.checkout_branch(&PathBuf::from(repo_path), &name)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
 /// 开始监听某仓库的文件变化。变化经 debounce + 分类后,
 /// 通过 `repo-changed` 事件通知前端(payload: "worktree" | "index" | "ref")。
 /// 这个命令很快(只注册 OS 监听),无需 spawn_blocking。
@@ -215,6 +241,8 @@ pub fn run() {
             get_commit_file_diff,
             get_commit_graph,
             get_current_branch,
+            list_branches,
+            checkout_branch,
             watch_repo
         ])
         .run(tauri::generate_context!())

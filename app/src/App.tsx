@@ -4,7 +4,8 @@ import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
 import { getCurrentBranch, watchRepo, onRepoChanged } from "./ipc";
-import { FolderIcon, BranchIcon, SunIcon, MoonIcon } from "./components/icons";
+import { FolderIcon, SunIcon, MoonIcon } from "./components/icons";
+import { BranchSwitcher } from "./components/BranchSwitcher";
 import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
 
 export default function App() {
@@ -88,10 +89,7 @@ export default function App() {
       {/* 底部状态栏:分支 + 仓库路径,IDE 风格 */}
       {repo && (
         <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-elevated px-3 text-[11px] text-fg-muted">
-          <span className="flex items-center gap-1 text-accent">
-            <BranchIcon width={12} height={12} />
-            {branch ?? "—"}
-          </span>
+          <BranchSwitcher repo={repo} branch={branch} onSwitched={setBranch} />
           <span className="ml-auto truncate font-mono text-fg-subtle" title={repo}>
             {repo}
           </span>

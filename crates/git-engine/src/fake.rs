@@ -1,4 +1,6 @@
-use git_core::model::{Commit, FileChange, FileDiff, FileEntry, Signature, WorkingTreeStatus};
+use git_core::model::{
+    BranchInfo, Commit, FileChange, FileDiff, FileEntry, Signature, WorkingTreeStatus,
+};
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -16,6 +18,8 @@ pub struct FakeBackend {
     canned_commit_files: Mutex<Vec<FileChange>>,
     canned_branch: Mutex<Option<String>>,
     canned_file_diff: Mutex<FileDiff>,
+    canned_branches: Mutex<Vec<BranchInfo>>,
+    checked_out: Mutex<Vec<String>>,
 }
 
 impl FakeBackend {
@@ -49,6 +53,14 @@ impl FakeBackend {
     pub fn with_file_diff(self, diff: FileDiff) -> Self {
         *self.canned_file_diff.lock().unwrap() = diff;
         self
+    }
+    pub fn with_branches(self, branches: Vec<BranchInfo>) -> Self {
+        *self.canned_branches.lock().unwrap() = branches;
+        self
+    }
+    /// 断言用:记录被 checkout 的分支名(按调用顺序)。
+    pub fn checked_out_branches(&self) -> Vec<String> {
+        self.checked_out.lock().unwrap().clone()
     }
 }
 
@@ -109,6 +121,13 @@ impl GitBackend for FakeBackend {
         _file: &str,
     ) -> Result<FileDiff, GitError> {
         Ok(self.canned_file_diff.lock().unwrap().clone())
+    }
+    fn branches(&self, _path: &Path) -> Result<Vec<BranchInfo>, GitError> {
+        Ok(self.canned_branches.lock().unwrap().clone())
+    }
+    fn checkout_branch(&self, _path: &Path, name: &str) -> Result<(), GitError> {
+        self.checked_out.lock().unwrap().push(name.to_string());
+        Ok(())
     }
 }
 
