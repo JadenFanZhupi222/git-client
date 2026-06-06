@@ -111,6 +111,28 @@ async fn unstage_file(repo_path: String, file_path: String) -> Result<(), IpcErr
 }
 
 #[tauri::command]
+async fn stage_hunk(repo_path: String, file: String, hunk_index: usize) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.stage_hunk(&PathBuf::from(repo_path), &file, hunk_index)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn unstage_hunk(repo_path: String, file: String, hunk_index: usize) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.unstage_hunk(&PathBuf::from(repo_path), &file, hunk_index)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
 async fn commit(repo_path: String, message: String) -> Result<String, IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
@@ -328,6 +350,8 @@ pub fn run() {
             get_status,
             stage_file,
             unstage_file,
+            stage_hunk,
+            unstage_hunk,
             commit,
             get_log,
             get_commit_files,
