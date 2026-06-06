@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  getStatus, stageFile, unstageFile, commit, getWorkingDiff, onRepoChanged,
+  getStatus, stageFile, unstageFile, stageHunk, unstageHunk, commit, getWorkingDiff, onRepoChanged,
   type StatusDto, type FileEntryDto, type FileDiffDto, type IpcError,
 } from "../ipc";
 import { RefreshIcon, CheckIcon, FileDiffIcon } from "../components/icons";
@@ -58,17 +58,28 @@ export function ChangesView({ repo }: { repo: string }) {
     loadDiff(path, staged);
   }
 
-  // status 变化后核对选中项:文件移动了暂存桶就跟随重载,消失则清空
+  // status 变化后核对选中项(按 路径+暂存侧 匹配,因同一文件可同时在两侧):
+  // 当前侧还在 → 不动(diff 由具体动作负责重载);本侧没了 → 跟随另一侧或清空。
   useEffect(() => {
     if (!sel || !status) return;
-    const entry = status.entries.find((e) => e.path === sel.path);
-    if (!entry) { setSel(null); setDiff(null); return; }
-    if (entry.staged !== sel.staged) {
-      setSel({ path: sel.path, staged: entry.staged });
-      loadDiff(sel.path, entry.staged);
-    }
+    const sameSide = status.entries.some((e) => e.path === sel.path && e.staged === sel.staged);
+    if (sameSide) return;
+    const other = status.entries.find((e) => e.path === sel.path);
+    if (other) { setSel({ path: sel.path, staged: other.staged }); loadDiff(sel.path, other.staged); }
+    else { setSel(null); setDiff(null); }
     // eslint-disable-next-line
   }, [status]);
+
+  async function doHunk(path: string, staged: boolean, hunkIndex: number) {
+    setBusy(true);
+    try {
+      if (staged) await unstageHunk(repo, path, hunkIndex);
+      else await stageHunk(repo, path, hunkIndex);
+      await refresh();
+      await loadDiff(path, staged); // 同侧若有剩余 hunk 则刷新显示
+    } catch (e) { toast({ kind: "error", title: (e as IpcError).message ?? String(e) }); }
+    finally { setBusy(false); }
+  }
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
@@ -91,6 +102,12 @@ export function ChangesView({ repo }: { repo: string }) {
   const staged = status?.entries.filter((e) => e.staged) ?? [];
   const unstaged = status?.entries.filter((e) => !e.staged) ?? [];
   const canCommit = !busy && staged.length > 0 && message.trim() !== "";
+
+  // 选中文件可做 hunk 级操作吗?未跟踪文件无 git diff hunk,排除。
+  const selEntry = sel && status ? status.entries.find((e) => e.path === sel.path && e.staged === sel.staged) : undefined;
+  const hunkAction = sel && selEntry && selEntry.state.toLowerCase() !== "untracked"
+    ? { label: sel.staged ? "取消暂存此块" : "暂存此块", disabled: busy, onAct: (hi: number) => doHunk(sel.path, sel.staged, hi) }
+    : undefined;
 
   const Row = ({ entry, isStaged }: { entry: FileEntryDto; isStaged: boolean }) => {
     const s = styleFor(entry.state);
@@ -197,7 +214,7 @@ export function ChangesView({ repo }: { repo: string }) {
             </span>
           ) : "Diff"}
         </div>
-        <DiffView diff={diff} loading={diffLoading} hasFile={!!sel} />
+        <DiffView diff={diff} loading={diffLoading} hasFile={!!sel} hunkAction={hunkAction} />
       </main>
     </div>
   );
