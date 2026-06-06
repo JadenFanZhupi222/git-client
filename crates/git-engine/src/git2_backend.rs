@@ -1,6 +1,6 @@
 use git_core::model::{
-    BranchInfo, Commit, CommitRef, DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry,
-    FileState, Hunk, RefKind, Signature, WorkingTreeStatus,
+    AheadBehind, BranchInfo, Commit, CommitRef, DiffLine, DiffLineKind, FileChange, FileDiff,
+    FileEntry, FileState, Hunk, RefKind, Signature, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -319,6 +319,44 @@ impl GitBackend for Git2Backend {
         }
 
         Ok(out)
+    }
+
+    fn ahead_behind(&self, path: &Path) -> Result<Option<AheadBehind>, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+
+        // 当前分支(分离头 / 空仓库 → None)。
+        let head = match repo.head() {
+            Ok(h) => h,
+            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => return Ok(None),
+            Err(e) => return Err(GitError::Backend(e.to_string())),
+        };
+        if !head.is_branch() {
+            return Ok(None); // 分离头无上游可比
+        }
+        let Some(local_oid) = head.target() else {
+            return Ok(None);
+        };
+        let Some(branch_name) = head.shorthand() else {
+            return Ok(None);
+        };
+
+        // 上游分支(未配置 → None)。
+        let local = repo
+            .find_branch(branch_name, git2::BranchType::Local)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        let upstream = match local.upstream() {
+            Ok(u) => u,
+            Err(_) => return Ok(None), // 没设上游
+        };
+        let Some(up_oid) = upstream.get().target() else {
+            return Ok(None);
+        };
+
+        let (ahead, behind) = repo
+            .graph_ahead_behind(local_oid, up_oid)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        Ok(Some(AheadBehind { ahead, behind }))
     }
 
     fn checkout_branch(&self, path: &Path, name: &str) -> Result<(), GitError> {
@@ -946,6 +984,51 @@ mod tests {
         );
         // 本测试所有引用都指向同一提交
         assert!(refs.iter().all(|r| r.target == sha), "所有引用应指向 c1");
+    }
+
+    #[test]
+    fn ahead_behind_none_without_upstream() {
+        let (_tmp, repo) = init_repo();
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        assert!(
+            Git2Backend.ahead_behind(&repo).unwrap().is_none(),
+            "没有上游应返回 None"
+        );
+    }
+
+    #[test]
+    fn ahead_behind_counts_against_upstream() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        let c1 = commit_index(&repo, "c1", 1000);
+
+        // 配 origin 远程 + 在 C1 处建远程跟踪 ref,并把当前分支上游设过去。
+        let g = git2::Repository::open(&repo).unwrap();
+        g.remote("origin", "https://example.invalid/r.git").unwrap();
+        let head_name = g.head().unwrap().shorthand().unwrap().to_string();
+        g.reference(
+            &format!("refs/remotes/origin/{head_name}"),
+            git2::Oid::from_str(&c1).unwrap(),
+            true,
+            "arrange",
+        )
+        .unwrap();
+        let mut local = g
+            .find_branch(&head_name, git2::BranchType::Local)
+            .unwrap();
+        local
+            .set_upstream(Some(&format!("origin/{head_name}")))
+            .unwrap();
+
+        // 本地再提交一条 → 领先上游 1。
+        stage(&repo, "a.txt", "2");
+        commit_index(&repo, "c2", 2000);
+
+        let ab = b.ahead_behind(&repo).unwrap().expect("配了上游应有结果");
+        assert_eq!(ab.ahead, 1, "本地领先上游 1 个提交");
+        assert_eq!(ab.behind, 0, "不落后");
     }
 
     #[test]

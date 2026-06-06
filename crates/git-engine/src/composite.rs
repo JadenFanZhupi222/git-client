@@ -1,8 +1,8 @@
 use crate::cli_backend::CliBackend;
 use crate::git2_backend::Git2Backend;
 use git_core::model::{
-    BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff, PullOutcome, PushOutcome,
-    WorkingTreeStatus,
+    AheadBehind, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff, PullOutcome,
+    PushOutcome, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -56,6 +56,9 @@ impl GitBackend for CompositeBackend {
     }
     fn refs(&self, repo: &Path) -> Result<Vec<CommitRef>, GitError> {
         self.git2.refs(repo)
+    }
+    fn ahead_behind(&self, repo: &Path) -> Result<Option<AheadBehind>, GitError> {
+        self.git2.ahead_behind(repo)
     }
     fn checkout_branch(&self, repo: &Path, name: &str) -> Result<(), GitError> {
         self.git2.checkout_branch(repo, name)
