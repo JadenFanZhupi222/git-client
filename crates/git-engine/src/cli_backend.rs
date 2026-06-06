@@ -155,11 +155,19 @@ impl CliBackend {
         Err(err)
     }
 
-    /// 执行 `git -C <repo> pull [remote]`(默认 merge,不 rebase)。
+    /// 执行 `git -C <repo> pull [--rebase|--no-rebase] [remote]`。
     /// 会改动工作区与当前分支。冲突 → MergeConflict;无上游 → NoUpstream。
-    pub fn pull(&self, repo: &Path, remote: Option<&str>) -> Result<PullOutcome, GitError> {
+    /// rebase 冲突会停在 rebase 中途(留冲突标记),解决/中止 UI 待阶段 4。
+    pub fn pull(
+        &self,
+        repo: &Path,
+        remote: Option<&str>,
+        rebase: bool,
+    ) -> Result<PullOutcome, GitError> {
         let mut cmd = Command::new("git");
         cmd.arg("-C").arg(repo).arg("pull");
+        // 显式指定模式,避免被用户全局 pull.rebase 配置左右。
+        cmd.arg(if rebase { "--rebase" } else { "--no-rebase" });
         if let Some(r) = remote {
             cmd.arg(r);
         }
@@ -190,7 +198,7 @@ impl CliBackend {
 
         let combined = format!("{stdout}\n{stderr}").to_lowercase();
         let has = |s: &str| combined.contains(s);
-        let err = if has("conflict") || has("automatic merge failed") {
+        let err = if has("conflict") || has("automatic merge failed") || has("could not apply") {
             // 数有几个文件冲突,给更友好的提示。
             let files = stdout
                 .lines()
@@ -457,7 +465,7 @@ mod tests {
         git(a.path(), &["push", "origin", "main"]);
 
         // B pull → 快进到 c2
-        CliBackend.pull(b.path(), None).unwrap();
+        CliBackend.pull(b.path(), None, false).unwrap();
         assert_eq!(
             rev_parse(b.path(), "HEAD"),
             rev_parse(a.path(), "HEAD"),
@@ -491,10 +499,53 @@ mod tests {
         git(b.path(), &["commit", "-am", "cB"]);
 
         // B pull → fetch cA 后与本地 cB 合并,同一文件冲突
-        let err = CliBackend.pull(b.path(), None).unwrap_err();
+        let err = CliBackend.pull(b.path(), None, false).unwrap_err();
         assert!(
             matches!(err, GitError::MergeConflict { .. }),
             "分叉改动 pull 应报 MergeConflict,实际: {err:?}"
+        );
+    }
+
+    #[test]
+    fn pull_rebase_replays_local_commit_linearly() {
+        let remote = tempfile::tempdir().unwrap();
+        git(remote.path(), &["init", "--bare", "-b", "main", "."]);
+        let url = remote.path().to_str().unwrap();
+
+        let a = tempfile::tempdir().unwrap();
+        clone_with_identity(url, a.path());
+        std::fs::write(a.path().join("f.txt"), "base\n").unwrap();
+        git(a.path(), &["add", "."]);
+        git(a.path(), &["commit", "-m", "c1"]);
+        git(a.path(), &["push", "origin", "main"]);
+
+        let b = tempfile::tempdir().unwrap();
+        clone_with_identity(url, b.path());
+
+        // A 推进远程
+        std::fs::write(a.path().join("f.txt"), "from-A\n").unwrap();
+        git(a.path(), &["commit", "-am", "cA"]);
+        git(a.path(), &["push", "origin", "main"]);
+
+        // B 在另一文件提交(不冲突)
+        std::fs::write(b.path().join("g.txt"), "from-B\n").unwrap();
+        git(b.path(), &["add", "."]);
+        git(b.path(), &["commit", "-m", "cB"]);
+
+        // B rebase pull → cB 重放到 cA 之上,线性无 merge
+        CliBackend.pull(b.path(), None, true).unwrap();
+        // trim_end 容忍 Windows autocrlf 把 \n 换成 \r\n。
+        assert_eq!(std::fs::read_to_string(b.path().join("f.txt")).unwrap().trim_end(), "from-A");
+        assert_eq!(std::fs::read_to_string(b.path().join("g.txt")).unwrap().trim_end(), "from-B");
+        let merges = Command::new("git")
+            .current_dir(b.path())
+            .args(["rev-list", "--count", "--merges", "HEAD"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&merges.stdout).trim(),
+            "0",
+            "rebase pull 后不应有 merge 提交"
         );
     }
 

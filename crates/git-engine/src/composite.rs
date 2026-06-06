@@ -77,8 +77,13 @@ impl GitBackend for CompositeBackend {
     fn fetch(&self, repo: &Path, remote: Option<&str>) -> Result<FetchOutcome, GitError> {
         self.cli.fetch(repo, remote)
     }
-    fn pull(&self, repo: &Path, remote: Option<&str>) -> Result<PullOutcome, GitError> {
-        self.cli.pull(repo, remote)
+    fn pull(
+        &self,
+        repo: &Path,
+        remote: Option<&str>,
+        rebase: bool,
+    ) -> Result<PullOutcome, GitError> {
+        self.cli.pull(repo, remote, rebase)
     }
     fn push(&self, repo: &Path, remote: Option<&str>) -> Result<PushOutcome, GitError> {
         self.cli.push(repo, remote)

@@ -193,9 +193,14 @@ impl RepoService {
         Ok(FetchResultDto::from(outcome))
     }
 
-    /// 用例:pull(fetch + merge)。remote=None 用上游。
-    pub fn pull(&self, repo_path: &Path, remote: Option<&str>) -> Result<PullResultDto, GitError> {
-        let outcome = self.backend.pull(repo_path, remote)?;
+    /// 用例:pull。remote=None 用上游;rebase=true 走 fetch+rebase。
+    pub fn pull(
+        &self,
+        repo_path: &Path,
+        remote: Option<&str>,
+        rebase: bool,
+    ) -> Result<PullResultDto, GitError> {
+        let outcome = self.backend.pull(repo_path, remote, rebase)?;
         Ok(PullResultDto::from(outcome))
     }
 
@@ -464,7 +469,7 @@ mod tests {
             summary: "Fast-forward".into(),
         });
         let svc = RepoService::new(Arc::new(fb));
-        let dto = svc.pull(Path::new("/r"), None).unwrap();
+        let dto = svc.pull(Path::new("/r"), None, false).unwrap();
         assert_eq!(dto.summary, "Fast-forward");
     }
 
@@ -472,7 +477,7 @@ mod tests {
     fn pull_counts_backend_call() {
         let fb = Arc::new(FakeBackend::default());
         let svc = RepoService::new(fb.clone());
-        svc.pull(Path::new("/r"), None).unwrap();
+        svc.pull(Path::new("/r"), None, false).unwrap();
         assert_eq!(fb.pull_call_count(), 1);
     }
 

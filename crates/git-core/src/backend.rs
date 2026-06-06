@@ -77,9 +77,15 @@ pub trait GitBackend: Send + Sync {
         Err(GitError::Unsupported)
     }
 
-    /// 从上游 pull(fetch + merge)。更新工作区与当前分支。
-    /// 冲突 → MergeConflict;无上游 → NoUpstream。默认实现返回 Unsupported。
-    fn pull(&self, _repo: &Path, _remote: Option<&str>) -> Result<PullOutcome, GitError> {
+    /// 从上游 pull。`rebase=false` 为 fetch+merge,`true` 为 fetch+rebase。
+    /// 更新工作区与当前分支。冲突 → MergeConflict;无上游 → NoUpstream。
+    /// 默认实现返回 Unsupported。
+    fn pull(
+        &self,
+        _repo: &Path,
+        _remote: Option<&str>,
+        _rebase: bool,
+    ) -> Result<PullOutcome, GitError> {
         Err(GitError::Unsupported)
     }
 

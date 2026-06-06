@@ -226,7 +226,12 @@ impl GitBackend for FakeBackend {
                 summary: "已是最新".to_string(),
             }))
     }
-    fn pull(&self, _path: &Path, _remote: Option<&str>) -> Result<PullOutcome, GitError> {
+    fn pull(
+        &self,
+        _path: &Path,
+        _remote: Option<&str>,
+        _rebase: bool,
+    ) -> Result<PullOutcome, GitError> {
         *self.pull_calls.lock().unwrap() += 1;
         Ok(self
             .canned_pull

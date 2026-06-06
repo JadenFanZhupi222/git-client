@@ -287,10 +287,14 @@ async fn fetch(repo_path: String, remote: Option<String>) -> Result<FetchResultD
 }
 
 #[tauri::command]
-async fn pull(repo_path: String, remote: Option<String>) -> Result<PullResultDto, IpcError> {
+async fn pull(
+    repo_path: String,
+    remote: Option<String>,
+    rebase: bool,
+) -> Result<PullResultDto, IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.pull(&PathBuf::from(repo_path), remote.as_deref())
+        service.pull(&PathBuf::from(repo_path), remote.as_deref(), rebase)
     })
     .await
     .map_err(join_panic)?
