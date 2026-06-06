@@ -116,6 +116,16 @@ export async function pullRemote(repoPath: string, remote?: string): Promise<Pul
   return await invoke<PullResultDto>("pull", { repoPath, remote: remote ?? null });
 }
 
+export interface PushResultDto {
+  summary: string;
+  set_upstream: boolean; // 首次 push 自动建上游时为 true
+}
+
+/** push 当前分支。首次自动建上游;被拒(落后远程)抛 PUSH_REJECTED。 */
+export async function pushRemote(repoPath: string, remote?: string): Promise<PushResultDto> {
+  return await invoke<PushResultDto>("push", { repoPath, remote: remote ?? null });
+}
+
 export interface DiffLineDto {
   kind: string; // "context" | "add" | "del"
   old_lineno: number | null;

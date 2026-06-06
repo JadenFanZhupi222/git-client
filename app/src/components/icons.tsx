@@ -90,6 +90,12 @@ export const PullIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+export const PushIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M8 3v6.5M5.5 5.5 8 3l2.5 2.5M3.5 10.5v2a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-2" />
+  </svg>
+);
+
 export const AlertIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
     <path d="M8 2.5 1.5 13.5h13L8 2.5Z" />
