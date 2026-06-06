@@ -83,6 +83,18 @@ pub trait GitBackend: Send + Sync {
         Err(GitError::Unsupported)
     }
 
+    /// 暂存单个 hunk(把工作区某文件第 `hunk_index` 个未暂存块加入 index)。
+    /// 复杂的局部 patch 应用走 CLI 后端;默认实现返回 Unsupported。
+    fn stage_hunk(&self, _repo: &Path, _file: &str, _hunk_index: usize) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+
+    /// 取消暂存单个 hunk(把 index 里某文件第 `hunk_index` 个已暂存块撤回)。
+    /// 默认实现返回 Unsupported。
+    fn unstage_hunk(&self, _repo: &Path, _file: &str, _hunk_index: usize) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+
     /// 把当前分支推到远程。remote = None 用默认远程(通常 origin)。
     /// 当前分支无上游时自动 `-u` 建立跟踪;被拒(non-fast-forward)→ PushRejected。
     /// 默认实现返回 Unsupported —— 不做网络的后端无需覆盖。

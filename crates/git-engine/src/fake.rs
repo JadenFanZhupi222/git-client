@@ -31,6 +31,8 @@ pub struct FakeBackend {
     pull_calls: Mutex<u32>,
     canned_push: Mutex<Option<PushOutcome>>,
     push_calls: Mutex<u32>,
+    staged_hunks: Mutex<Vec<(String, usize)>>,
+    unstaged_hunks: Mutex<Vec<(String, usize)>>,
 }
 
 impl FakeBackend {
@@ -108,6 +110,12 @@ impl FakeBackend {
     pub fn push_call_count(&self) -> u32 {
         *self.push_calls.lock().unwrap()
     }
+    pub fn staged_hunks(&self) -> Vec<(String, usize)> {
+        self.staged_hunks.lock().unwrap().clone()
+    }
+    pub fn unstaged_hunks(&self) -> Vec<(String, usize)> {
+        self.unstaged_hunks.lock().unwrap().clone()
+    }
 }
 
 impl GitBackend for FakeBackend {
@@ -170,6 +178,20 @@ impl GitBackend for FakeBackend {
     }
     fn working_diff(&self, _path: &Path, _file: &str, _staged: bool) -> Result<FileDiff, GitError> {
         Ok(self.canned_file_diff.lock().unwrap().clone())
+    }
+    fn stage_hunk(&self, _path: &Path, file: &str, hunk_index: usize) -> Result<(), GitError> {
+        self.staged_hunks
+            .lock()
+            .unwrap()
+            .push((file.to_string(), hunk_index));
+        Ok(())
+    }
+    fn unstage_hunk(&self, _path: &Path, file: &str, hunk_index: usize) -> Result<(), GitError> {
+        self.unstaged_hunks
+            .lock()
+            .unwrap()
+            .push((file.to_string(), hunk_index));
+        Ok(())
     }
     fn branches(&self, _path: &Path) -> Result<Vec<BranchInfo>, GitError> {
         Ok(self.canned_branches.lock().unwrap().clone())

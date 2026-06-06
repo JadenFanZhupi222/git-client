@@ -5,10 +5,13 @@ export function DiffView({
   diff,
   loading,
   hasFile,
+  hunkAction,
 }: {
   diff: FileDiffDto | null;
   loading: boolean;
   hasFile: boolean;
+  /** 可选:每个 hunk 头部显示一个动作按钮(Changes 视图的「暂存/取消暂存此块」)。 */
+  hunkAction?: { label: string; onAct: (hunkIndex: number) => void; disabled?: boolean };
 }) {
   if (!hasFile) {
     return <Center>选择一个文件查看 diff</Center>;
@@ -36,8 +39,17 @@ export function DiffView({
     <div className="fade-in flex-1 overflow-auto font-mono text-[12px] leading-5">
       {diff.hunks.map((h, hi) => (
         <div key={hi}>
-          <div className="select-none bg-overlay px-3 py-0.5 text-[11px] text-accent/80">
-            {h.header}
+          <div className="group flex select-none items-center gap-2 bg-overlay px-3 py-0.5 text-[11px] text-accent/80">
+            <span className="truncate">{h.header}</span>
+            {hunkAction && (
+              <button
+                disabled={hunkAction.disabled}
+                onClick={() => hunkAction.onAct(hi)}
+                className="ml-auto shrink-0 rounded px-1.5 text-[10px] text-accent opacity-0 transition-opacity hover:bg-overlay group-hover:opacity-100 disabled:opacity-40"
+              >
+                {hunkAction.label}
+              </button>
+            )}
           </div>
           {h.lines.map((l, li) => {
             const add = l.kind === "add";

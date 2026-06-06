@@ -51,6 +51,16 @@ export async function unstageFile(repoPath: string, filePath: string): Promise<v
   await invoke("unstage_file", { repoPath, filePath });
 }
 
+/** 暂存某文件第 hunkIndex 个未暂存改动块。 */
+export async function stageHunk(repoPath: string, file: string, hunkIndex: number): Promise<void> {
+  await invoke("stage_hunk", { repoPath, file, hunkIndex });
+}
+
+/** 取消暂存某文件第 hunkIndex 个已暂存改动块。 */
+export async function unstageHunk(repoPath: string, file: string, hunkIndex: number): Promise<void> {
+  await invoke("unstage_hunk", { repoPath, file, hunkIndex });
+}
+
 export async function commit(repoPath: string, message: string): Promise<string> {
   return await invoke<string>("commit", { repoPath, message });
 }

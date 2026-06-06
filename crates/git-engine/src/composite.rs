@@ -83,6 +83,12 @@ impl GitBackend for CompositeBackend {
     fn push(&self, repo: &Path, remote: Option<&str>) -> Result<PushOutcome, GitError> {
         self.cli.push(repo, remote)
     }
+    fn stage_hunk(&self, repo: &Path, file: &str, hunk_index: usize) -> Result<(), GitError> {
+        self.cli.stage_hunk(repo, file, hunk_index)
+    }
+    fn unstage_hunk(&self, repo: &Path, file: &str, hunk_index: usize) -> Result<(), GitError> {
+        self.cli.unstage_hunk(repo, file, hunk_index)
+    }
 }
 
 #[cfg(test)]

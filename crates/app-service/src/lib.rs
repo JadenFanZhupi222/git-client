@@ -50,6 +50,21 @@ impl RepoService {
         self.backend.unstage(repo_path, file)
     }
 
+    /// 用例:暂存某文件的第 hunk_index 个未暂存改动块。
+    pub fn stage_hunk(&self, repo_path: &Path, file: &str, hunk_index: usize) -> Result<(), GitError> {
+        self.backend.stage_hunk(repo_path, file, hunk_index)
+    }
+
+    /// 用例:取消暂存某文件的第 hunk_index 个已暂存改动块。
+    pub fn unstage_hunk(
+        &self,
+        repo_path: &Path,
+        file: &str,
+        hunk_index: usize,
+    ) -> Result<(), GitError> {
+        self.backend.unstage_hunk(repo_path, file, hunk_index)
+    }
+
     /// 用例:提交历史,时间倒序,limit/skip 分页。
     pub fn log(
         &self,
@@ -511,6 +526,22 @@ mod tests {
         let dto = service.status(Path::new("/r")).unwrap();
         assert_eq!(dto.entries.len(), 1);
         assert_eq!(dto.entries[0].state, "modified");
+    }
+
+    #[test]
+    fn stage_hunk_forwards_to_backend() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.stage_hunk(Path::new("/r"), "a.txt", 2).unwrap();
+        assert_eq!(fb.staged_hunks(), vec![("a.txt".to_string(), 2)]);
+    }
+
+    #[test]
+    fn unstage_hunk_forwards_to_backend() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.unstage_hunk(Path::new("/r"), "a.txt", 1).unwrap();
+        assert_eq!(fb.unstaged_hunks(), vec![("a.txt".to_string(), 1)]);
     }
 
     #[test]
