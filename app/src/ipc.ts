@@ -70,6 +70,32 @@ export async function getCurrentBranch(repoPath: string): Promise<string | null>
   return await invoke<string | null>("get_current_branch", { repoPath });
 }
 
+// ── 分支管理(阶段 2a) ──
+export interface BranchDto {
+  name: string;
+  is_head: boolean;
+}
+
+/** 列出本地分支(名字升序,当前分支 is_head=true)。 */
+export async function listBranches(repoPath: string): Promise<BranchDto[]> {
+  return await invoke<BranchDto[]>("list_branches", { repoPath });
+}
+
+/** 切换到已有本地分支。脏工作区冲突会抛 IpcError(code: CHECKOUT_CONFLICT)。 */
+export async function checkoutBranch(repoPath: string, name: string): Promise<void> {
+  await invoke("checkout_branch", { repoPath, name });
+}
+
+/** 在 HEAD 新建分支;checkout=true 时建完即切过去。同名抛 BRANCH_EXISTS。 */
+export async function createBranch(repoPath: string, name: string, checkout: boolean): Promise<void> {
+  await invoke("create_branch", { repoPath, name, checkout });
+}
+
+/** 删除本地分支。删当前分支抛 CANNOT_DELETE_CURRENT。 */
+export async function deleteBranch(repoPath: string, name: string): Promise<void> {
+  await invoke("delete_branch", { repoPath, name });
+}
+
 export interface DiffLineDto {
   kind: string; // "context" | "add" | "del"
   old_lineno: number | null;

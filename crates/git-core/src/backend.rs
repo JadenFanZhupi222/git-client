@@ -1,5 +1,5 @@
 use crate::error::GitError;
-use crate::model::{Commit, FileChange, FileDiff, WorkingTreeStatus};
+use crate::model::{BranchInfo, Commit, FileChange, FileDiff, WorkingTreeStatus};
 use std::path::Path;
 
 /// 端口(Port):所有 git 后端必须实现它。
@@ -42,4 +42,17 @@ pub trait GitBackend: Send + Sync {
 
     /// 当前 HEAD 分支短名(如 "main");分离头/空仓库为 None。
     fn current_branch(&self, repo: &Path) -> Result<Option<String>, GitError>;
+
+    /// 列出本地分支(名 + 是否当前),按名字升序。
+    fn branches(&self, repo: &Path) -> Result<Vec<BranchInfo>, GitError>;
+
+    /// 切换到已有的本地分支(更新工作区 + 移动 HEAD)。
+    /// 工作区有冲突改动时应失败而非覆盖(安全 checkout)。
+    fn checkout_branch(&self, repo: &Path, name: &str) -> Result<(), GitError>;
+
+    /// 在当前 HEAD 上新建本地分支(不切换)。同名已存在 → 错误。
+    fn create_branch(&self, repo: &Path, name: &str) -> Result<(), GitError>;
+
+    /// 删除本地分支。不能删除当前所在分支。
+    fn delete_branch(&self, repo: &Path, name: &str) -> Result<(), GitError>;
 }

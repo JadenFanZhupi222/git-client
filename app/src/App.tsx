@@ -4,12 +4,21 @@ import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
 import { getCurrentBranch, watchRepo, onRepoChanged } from "./ipc";
-import { FolderIcon, BranchIcon } from "./components/icons";
+import { FolderIcon, SunIcon, MoonIcon } from "./components/icons";
+import { BranchSwitcher } from "./components/BranchSwitcher";
+import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
 
 export default function App() {
   const [repo, setRepo] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("changes");
   const [branch, setBranch] = useState<string | null>(null);
+  const [theme, setTheme] = useState<Theme>(getStoredTheme);
+
+  function toggleTheme() {
+    const next: Theme = theme === "dark" ? "light" : "dark";
+    applyTheme(next);
+    setTheme(next);
+  }
 
   async function pickRepo() {
     const dir = await open({ directory: true, title: "选择一个 git 仓库" });
@@ -49,6 +58,14 @@ export default function App() {
             </span>
           )}
           <button
+            onClick={toggleTheme}
+            title={theme === "dark" ? "切换到浅色" : "切换到暗色"}
+            aria-label="切换主题"
+            className="grid h-7 w-7 place-items-center rounded-md border border-line-strong bg-elevated text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle"
+          >
+            {theme === "dark" ? <SunIcon width={14} height={14} /> : <MoonIcon width={14} height={14} />}
+          </button>
+          <button
             onClick={pickRepo}
             className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle"
           >
@@ -72,10 +89,7 @@ export default function App() {
       {/* 底部状态栏:分支 + 仓库路径,IDE 风格 */}
       {repo && (
         <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-elevated px-3 text-[11px] text-fg-muted">
-          <span className="flex items-center gap-1 text-accent">
-            <BranchIcon width={12} height={12} />
-            {branch ?? "—"}
-          </span>
+          <BranchSwitcher repo={repo} branch={branch} onSwitched={setBranch} />
           <span className="ml-auto truncate font-mono text-fg-subtle" title={repo}>
             {repo}
           </span>

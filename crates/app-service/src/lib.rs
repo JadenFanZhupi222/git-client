@@ -3,7 +3,7 @@
 //! 后端通过构造函数注入(依赖注入),所以测试时能塞 FakeBackend。
 
 use git_core::{GitBackend, GitError};
-use ipc_types::{CommitDto, FileChangeDto, FileDiffDto, GraphRowDto, StatusDto};
+use ipc_types::{BranchDto, CommitDto, FileChangeDto, FileDiffDto, GraphRowDto, StatusDto};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -92,6 +92,46 @@ impl RepoService {
     /// 用例:当前 HEAD 分支短名;分离头/空仓库返回 None。
     pub fn current_branch(&self, repo_path: &Path) -> Result<Option<String>, GitError> {
         self.backend.current_branch(repo_path)
+    }
+
+    /// 用例:列出本地分支。
+    pub fn branches(&self, repo_path: &Path) -> Result<Vec<BranchDto>, GitError> {
+        let list = self.backend.branches(repo_path)?;
+        Ok(list.into_iter().map(BranchDto::from).collect())
+    }
+
+    /// 用例:切换分支。空名在本层拦截。
+    pub fn checkout_branch(&self, repo_path: &Path, name: &str) -> Result<(), GitError> {
+        if name.trim().is_empty() {
+            return Err(GitError::InvalidBranchName);
+        }
+        self.backend.checkout_branch(repo_path, name)
+    }
+
+    /// 用例:新建分支(在 HEAD 上)。`checkout=true` 时建完即切过去 ——
+    /// 对应「新建并切换」这个最常见流程。空名在本层拦截。
+    pub fn create_branch(
+        &self,
+        repo_path: &Path,
+        name: &str,
+        checkout: bool,
+    ) -> Result<(), GitError> {
+        if name.trim().is_empty() {
+            return Err(GitError::InvalidBranchName);
+        }
+        self.backend.create_branch(repo_path, name)?;
+        if checkout {
+            self.backend.checkout_branch(repo_path, name)?;
+        }
+        Ok(())
+    }
+
+    /// 用例:删除本地分支。
+    pub fn delete_branch(&self, repo_path: &Path, name: &str) -> Result<(), GitError> {
+        if name.trim().is_empty() {
+            return Err(GitError::InvalidBranchName);
+        }
+        self.backend.delete_branch(repo_path, name)
     }
 
     /// 用例:提交。空白信息在本层拦截,不下探后端。
@@ -201,6 +241,79 @@ mod tests {
             svc.current_branch(Path::new("/r")).unwrap(),
             Some("main".into())
         );
+    }
+
+    #[test]
+    fn branches_map_to_dto() {
+        use git_core::model::BranchInfo;
+        let fb = FakeBackend::default().with_branches(vec![
+            BranchInfo {
+                name: "main".into(),
+                is_head: true,
+            },
+            BranchInfo {
+                name: "dev".into(),
+                is_head: false,
+            },
+        ]);
+        let svc = RepoService::new(Arc::new(fb));
+        let dtos = svc.branches(Path::new("/r")).unwrap();
+        assert_eq!(dtos.len(), 2);
+        assert_eq!(dtos[0].name, "main");
+        assert!(dtos[0].is_head);
+        assert!(!dtos[1].is_head);
+    }
+
+    #[test]
+    fn checkout_forwards_to_backend() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.checkout_branch(Path::new("/r"), "dev").unwrap();
+        assert_eq!(fb.checked_out_branches(), vec!["dev".to_string()]);
+    }
+
+    #[test]
+    fn checkout_rejects_empty_name() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        let err = svc.checkout_branch(Path::new("/r"), "  ").unwrap_err();
+        assert!(matches!(err, GitError::InvalidBranchName));
+        assert!(fb.checked_out_branches().is_empty(), "空名不应下探后端");
+    }
+
+    #[test]
+    fn create_branch_without_checkout() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.create_branch(Path::new("/r"), "feat/x", false).unwrap();
+        assert_eq!(fb.created_branches(), vec!["feat/x".to_string()]);
+        assert!(fb.checked_out_branches().is_empty(), "checkout=false 不应切换");
+    }
+
+    #[test]
+    fn create_branch_with_checkout_also_switches() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.create_branch(Path::new("/r"), "feat/y", true).unwrap();
+        assert_eq!(fb.created_branches(), vec!["feat/y".to_string()]);
+        assert_eq!(fb.checked_out_branches(), vec!["feat/y".to_string()]);
+    }
+
+    #[test]
+    fn delete_branch_forwards() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.delete_branch(Path::new("/r"), "old").unwrap();
+        assert_eq!(fb.deleted_branches(), vec!["old".to_string()]);
+    }
+
+    #[test]
+    fn create_branch_rejects_empty_name() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        let err = svc.create_branch(Path::new("/r"), " ", true).unwrap_err();
+        assert!(matches!(err, GitError::InvalidBranchName));
+        assert!(fb.created_branches().is_empty());
     }
 
     #[test]

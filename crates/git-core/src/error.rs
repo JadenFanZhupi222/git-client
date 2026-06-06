@@ -22,6 +22,21 @@ pub enum GitError {
     #[error("git 身份未配置,请先设置 user.name / user.email")]
     EmptySignature,
 
+    #[error("分支不存在: {0}")]
+    BranchNotFound(String),
+
+    #[error("分支已存在: {0}")]
+    BranchAlreadyExists(String),
+
+    #[error("分支名无效")]
+    InvalidBranchName,
+
+    #[error("不能删除当前所在的分支,请先切到别的分支")]
+    CannotDeleteCurrentBranch,
+
+    #[error("工作区有未提交的改动,切换分支会被覆盖,请先提交或暂存")]
+    CheckoutConflict,
+
     /// 兜底:底层 git 库返回的、我们还没细分的错误。
     #[error("底层 git 错误: {0}")]
     Backend(String),

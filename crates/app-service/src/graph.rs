@@ -12,36 +12,50 @@
 
 use git_core::model::Commit;
 use ipc_types::{CommitDto, GraphRowDto, GraphSegDto};
+use std::collections::HashSet;
 
-/// 调色板大小:颜色按列号取模循环。
+/// 调色板大小:颜色循环复用。
 const NCOLORS: u32 = 8;
 
-fn color_of(col: usize) -> u32 {
-    (col as u32) % NCOLORS
+/// 一条 lane:正在等待到达 `sha` 的提交,以及它出生时分到的颜色。
+///
+/// 关键:颜色随 lane 走、不随列号变。一条分支从分叉到合并始终同色,
+/// 这样视觉上能跟踪「这是同一条分支」,而不是「这是第 1 列」。
+#[derive(Clone)]
+struct Lane {
+    sha: String,
+    color: u32,
 }
 
 /// 最左空闲列;没有则返回末尾(= 新增一列)。
-fn first_free(lanes: &[Option<String>]) -> usize {
+fn first_free(lanes: &[Option<Lane>]) -> usize {
     lanes
         .iter()
         .position(|l| l.is_none())
         .unwrap_or(lanes.len())
 }
 
-fn ensure_len(lanes: &mut Vec<Option<String>>, n: usize) {
+fn ensure_len(lanes: &mut Vec<Option<Lane>>, n: usize) {
     if lanes.len() < n {
         lanes.resize(n, None);
     }
 }
 
-fn was_active(before: &[Option<String>], k: usize) -> bool {
+fn was_active(before: &[Option<Lane>], k: usize) -> bool {
     before.get(k).map(|l| l.is_some()).unwrap_or(false)
+}
+
+/// 给新 lane 挑一个颜色:当前所有活跃 lane 都没用到的最小色号。
+/// 这样并存的相邻分支保证不同色;并发分支 ≤ NCOLORS 时永不撞色。
+fn pick_color(lanes: &[Option<Lane>]) -> u32 {
+    let used: HashSet<u32> = lanes.iter().flatten().map(|l| l.color).collect();
+    (0..NCOLORS).find(|c| !used.contains(c)).unwrap_or(0)
 }
 
 /// 把按时间倒序(新→旧)的提交列表排成图谱行。
 pub fn layout(commits: &[Commit]) -> Vec<GraphRowDto> {
-    // lanes[k] = Some(sha):第 k 列正等待到达该 sha 的提交;None = 空闲。
-    let mut lanes: Vec<Option<String>> = Vec::new();
+    // lanes[k] = Some(Lane):第 k 列正等待到达该 sha 的提交;None = 空闲。
+    let mut lanes: Vec<Option<Lane>> = Vec::new();
     let mut rows = Vec::with_capacity(commits.len());
 
     for c in commits {
@@ -50,65 +64,101 @@ pub fn layout(commits: &[Commit]) -> Vec<GraphRowDto> {
         // 1) 节点列:等待本提交的最左列;没有则取最左空闲列。
         let node_col = lanes
             .iter()
-            .position(|l| l.as_deref() == Some(c.id.as_str()))
+            .position(|l| l.as_ref().map(|x| x.sha.as_str()) == Some(c.id.as_str()))
             .unwrap_or_else(|| first_free(&lanes));
         ensure_len(&mut lanes, node_col + 1);
+
+        // 节点颜色:延续 node_col 上已有 lane 的颜色;若该列是新生的(分支 tip /
+        // 孤立 HEAD),则现挑一个不撞色的新颜色。整条分支由此保持同色。
+        let node_color = match &lanes[node_col] {
+            Some(l) => l.color,
+            None => pick_color(&lanes),
+        };
 
         // 2) 所有等待本提交的列(全部汇入节点;非 node_col 的随后释放)。
         let merging: Vec<usize> = before
             .iter()
             .enumerate()
-            .filter(|(_, l)| l.as_deref() == Some(c.id.as_str()))
+            .filter(|(_, l)| l.as_ref().map(|x| x.sha.as_str()) == Some(c.id.as_str()))
             .map(|(k, _)| k)
             .collect();
 
-        // 3) 计算 lanes_after。
+        // 3) 计算 lanes_after,并记录每个父的去向(用于下半段连线)。
         for &k in &merging {
             lanes[k] = None; // 先清空所有汇入列
         }
-        // node_col 接第一个父(没有父则空)
-        lanes[node_col] = c.parents.first().cloned();
-        // 其余父各占一条新列
-        for p in c.parents.iter().skip(1) {
-            let k = first_free(&lanes);
-            ensure_len(&mut lanes, k + 1);
-            lanes[k] = Some(p.clone());
+
+        // 每个父决定一条「从本节点出发」的下半段线 (to_col, color):
+        //   - 父已有 lane 在等  → 直接并入该列(干净的合并弧,不再开冗余 lane);
+        //   - 否则第一个父       → 延续 node_col,主干同色直下;
+        //   - 否则               → 各开一条新列,挑不撞色的新颜色。
+        let mut spawns: Vec<(usize, u32)> = Vec::new();
+        for (i, p) in c.parents.iter().enumerate() {
+            if let Some(k) = lanes
+                .iter()
+                .position(|l| l.as_ref().map(|x| x.sha.as_str()) == Some(p.as_str()))
+            {
+                // 该父已在 col k 等候(通常是更早的主干)→ 本节点并入,不新开列。
+                spawns.push((k, node_color));
+            } else if i == 0 {
+                lanes[node_col] = Some(Lane {
+                    sha: p.clone(),
+                    color: node_color,
+                });
+                spawns.push((node_col, node_color));
+            } else {
+                let k = first_free(&lanes);
+                ensure_len(&mut lanes, k + 1);
+                let color = pick_color(&lanes);
+                lanes[k] = Some(Lane {
+                    sha: p.clone(),
+                    color,
+                });
+                spawns.push((k, color));
+            }
         }
         let after = lanes.clone();
 
         // 4) 上半段:基于 before。汇入本提交的列连到 node_col,其余直穿。
+        //    线的颜色 = 该 lane 自己的颜色(随分支,不随列)。
         let mut top = Vec::new();
         for (k, l) in before.iter().enumerate() {
-            if l.is_none() {
-                continue;
-            }
+            let Some(lane) = l else { continue };
             let to = if merging.contains(&k) { node_col } else { k };
             top.push(GraphSegDto {
                 from: k as u32,
                 to: to as u32,
-                color: color_of(k),
+                color: lane.color,
             });
         }
 
-        // 5) 下半段:基于 after。本提交新生的列(node 延续 / 新父)从 node_col 出发,其余直穿。
+        // 5) 下半段:本节点出发的线(延续 / 新父 / 并入已有列)+ 与本提交无关的直穿 lane。
         let mut bottom = Vec::new();
+        for &(to, color) in &spawns {
+            bottom.push(GraphSegDto {
+                from: node_col as u32,
+                to: to as u32,
+                color,
+            });
+        }
         for (k, l) in after.iter().enumerate() {
-            if l.is_none() {
+            // 直穿:本就活跃、且本行没动过它(非 node_col、非汇入列)的 lane。
+            if k == node_col || merging.contains(&k) || !was_active(&before, k) {
                 continue;
             }
-            let spawned = k == node_col || !was_active(&before, k);
-            let from = if spawned { node_col } else { k };
-            bottom.push(GraphSegDto {
-                from: from as u32,
-                to: k as u32,
-                color: color_of(k),
-            });
+            if let Some(lane) = l {
+                bottom.push(GraphSegDto {
+                    from: k as u32,
+                    to: k as u32,
+                    color: lane.color,
+                });
+            }
         }
 
         rows.push(GraphRowDto {
             commit: CommitDto::from(c.clone()),
             column: node_col as u32,
-            color: color_of(node_col),
+            color: node_color,
             top,
             bottom,
         });
@@ -170,24 +220,66 @@ mod tests {
         assert!(m.bottom.iter().any(|s| s.to == 0));
         assert!(m.bottom.iter().any(|s| s.to == 1));
 
-        // base 收敛:上半段有一条来自列 1 汇入列 0
+        // 去重后:b 的父 base 已在第 0 列等候,合并在 b 这一行就完成 ——
+        // b 的下半段直接画一条「第 1 列 → 第 0 列」的合并弧,不再多占一行。
+        let b = &rows[2];
+        assert!(
+            b.bottom.iter().any(|s| s.from == 1 && s.to == 0),
+            "b 应直接并入第 0 列(去重:不开冗余 lane)"
+        );
+        // 因此 base 不再需要承接一条来自第 1 列的汇入线。
         let base = &rows[3];
         assert!(
-            base.top.iter().any(|s| s.from == 1 && s.to == 0),
-            "base 应有从第 1 列汇入第 0 列的合并线"
+            !base.top.iter().any(|s| s.from == 1),
+            "合并已在 b 行完成,base 上半段不应再有第 1 列汇入"
         );
         assert!(base.bottom.is_empty(), "根提交无父,无下半段");
     }
 
     #[test]
-    fn second_parent_lane_is_colored_by_column() {
+    fn concurrent_lanes_get_distinct_colors() {
+        // m 分叉出两条并存分支,二者颜色必须不同(相邻不撞色)。
         let rows = layout(&[
             commit("m", &["a", "b"]),
             commit("a", &["x"]),
             commit("b", &["x"]),
         ]);
-        // b 在第 1 列,颜色应 = 列号 1
-        assert_eq!(rows[2].column, 1);
-        assert_eq!(rows[2].color, 1);
+        // 主干(m→a)沿用 m 的颜色;第二父 b 现挑一个不同色。
+        assert_eq!(rows[0].color, rows[1].color, "主干延续应同色");
+        assert_ne!(rows[1].color, rows[2].color, "并存的两条分支必须异色");
+    }
+
+    #[test]
+    fn lane_color_is_stable_along_branch() {
+        // 一条分支从分叉到合并应始终同色,不随它所在列变化。
+        //   m(a,b) / a(c) / c(e) / b(e) / e()
+        // 第二父分支:b 这一条 lane 走到 e 之前颜色不变。
+        let rows = layout(&[
+            commit("m", &["a", "b"]),
+            commit("a", &["c"]),
+            commit("c", &["e"]),
+            commit("b", &["e"]),
+            commit("e", &[]),
+        ]);
+        // b 分支的颜色 = m 下半段里通向 b 那条线的颜色,且 b 节点本身同色。
+        let b_branch_color = rows[0]
+            .bottom
+            .iter()
+            .find(|s| s.to != rows[0].column)
+            .expect("m 应分叉出第二父分支")
+            .color;
+        let b_row = rows.iter().find(|r| r.commit.id == "b").unwrap();
+        assert_eq!(
+            b_row.color, b_branch_color,
+            "b 分支从诞生到此处应保持同色"
+        );
+        // b 并入主干时(b 行下半段)那条合并弧仍是 b 分支的颜色 —— 同色贯穿始终。
+        assert!(
+            b_row
+                .bottom
+                .iter()
+                .any(|s| s.from != s.to && s.color == b_branch_color),
+            "b 并入主干的合并弧应保持同色"
+        );
     }
 }

@@ -3,7 +3,7 @@
 //! 让前后端类型在编译期对齐。阶段 0 先保持简单。
 
 use git_core::model::{
-    Commit, DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry, FileState, Hunk,
+    BranchInfo, Commit, DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry, FileState, Hunk,
     WorkingTreeStatus,
 };
 use serde::{Deserialize, Serialize};
@@ -99,6 +99,22 @@ impl From<FileChange> for FileChangeDto {
         FileChangeDto {
             path: c.path,
             status: status.to_string(),
+        }
+    }
+}
+
+/// 本地分支 DTO。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BranchDto {
+    pub name: String,
+    pub is_head: bool,
+}
+
+impl From<BranchInfo> for BranchDto {
+    fn from(b: BranchInfo) -> Self {
+        BranchDto {
+            name: b.name,
+            is_head: b.is_head,
         }
     }
 }

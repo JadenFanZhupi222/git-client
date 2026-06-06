@@ -1,6 +1,6 @@
 use git_core::model::{
-    Commit, DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry, FileState, Hunk, Signature,
-    WorkingTreeStatus,
+    BranchInfo, Commit, DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry, FileState, Hunk,
+    Signature, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -230,6 +230,97 @@ impl GitBackend for Git2Backend {
             Err(e) if e.code() == git2::ErrorCode::UnbornBranch => Ok(None),
             Err(e) => Err(GitError::Backend(e.to_string())),
         }
+    }
+
+    fn branches(&self, path: &Path) -> Result<Vec<BranchInfo>, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let iter = repo
+            .branches(Some(git2::BranchType::Local))
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+
+        let mut out = Vec::new();
+        for item in iter {
+            let (branch, _) = item.map_err(|e| GitError::Backend(e.to_string()))?;
+            // is_head 借用了 branch,要在 name() 之前取(name() 也借用)。
+            let is_head = branch.is_head();
+            if let Some(name) = branch.name().map_err(|e| GitError::Backend(e.to_string()))? {
+                out.push(BranchInfo {
+                    name: name.to_string(),
+                    is_head,
+                });
+            }
+        }
+        // 名字升序,UI 列表稳定。
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
+    }
+
+    fn checkout_branch(&self, path: &Path, name: &str) -> Result<(), GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let refname = format!("refs/heads/{name}");
+
+        // 目标分支的提交对象(树);不存在 → 友好错误。
+        let obj = repo
+            .revparse_single(&refname)
+            .map_err(|_| GitError::BranchNotFound(name.to_string()))?;
+
+        // ⚠️ 显式 .safe():CheckoutBuilder 默认策略是 NONE(dry-run,不写盘)。
+        // safe = 更新可安全覆盖的文件,遇到会丢失本地改动的冲突则报错,绝不强覆盖。
+        let mut co = git2::build::CheckoutBuilder::new();
+        co.safe();
+        repo.checkout_tree(&obj, Some(&mut co)).map_err(|e| {
+            // 只认 Conflict code(safe checkout 遇到会丢失本地改动时正是返回它);
+            // 不要用 ErrorClass::Checkout 兜底 —— 那会把 IO/损坏等无关错误也误判成
+            // 「工作区有改动」,给用户不可恢复却提示去暂存的误导。
+            if e.code() == git2::ErrorCode::Conflict {
+                GitError::CheckoutConflict
+            } else {
+                GitError::Backend(e.to_string())
+            }
+        })?;
+
+        // 工作区/index 已就位后再移动 HEAD 指向该分支。
+        repo.set_head(&refname)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        Ok(())
+    }
+
+    fn create_branch(&self, path: &Path, name: &str) -> Result<(), GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let target = repo
+            .head()
+            .map_err(|_| GitError::NoHead)?
+            .peel_to_commit()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        // force=false:同名已存在则报错,不覆盖。
+        match repo.branch(name, &target, false) {
+            Ok(_) => Ok(()),
+            Err(e) if e.code() == git2::ErrorCode::Exists => {
+                Err(GitError::BranchAlreadyExists(name.to_string()))
+            }
+            Err(e) => Err(GitError::Backend(e.to_string())),
+        }
+    }
+
+    fn delete_branch(&self, path: &Path, name: &str) -> Result<(), GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        // 当前分支不可删。
+        if let Ok(head) = repo.head()
+            && head.shorthand() == Some(name)
+        {
+            return Err(GitError::CannotDeleteCurrentBranch);
+        }
+        let mut branch = repo
+            .find_branch(name, git2::BranchType::Local)
+            .map_err(|_| GitError::BranchNotFound(name.to_string()))?;
+        branch
+            .delete()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        Ok(())
     }
 
     fn commit_file_diff(
@@ -722,5 +813,146 @@ mod tests {
         // 查 a.txt(本提交未改)→ 无 hunk
         let diff = b.commit_file_diff(&repo, &sha, "a.txt").unwrap();
         assert!(diff.hunks.is_empty(), "未改动的文件应无 hunk");
+    }
+
+    // ===== 2a: branches / checkout =====
+
+    /// 在当前 HEAD 提交上建一条本地分支(不切过去)。
+    fn make_branch(repo_path: &Path, name: &str) {
+        let g = git2::Repository::open(repo_path).unwrap();
+        let head = g.head().unwrap().peel_to_commit().unwrap();
+        g.branch(name, &head, false).unwrap();
+    }
+
+    #[test]
+    fn branches_lists_local_with_single_head() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        make_branch(&repo, "dev");
+        make_branch(&repo, "feat/x");
+
+        let list = b.branches(&repo).unwrap();
+        let names: Vec<&str> = list.iter().map(|x| x.name.as_str()).collect();
+        assert!(names.contains(&"dev"));
+        assert!(names.contains(&"feat/x"));
+        // 升序排列
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted);
+        // 恰好一个当前分支
+        assert_eq!(list.iter().filter(|x| x.is_head).count(), 1);
+    }
+
+    #[test]
+    fn checkout_switches_head() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        make_branch(&repo, "dev");
+
+        b.checkout_branch(&repo, "dev").unwrap();
+        assert_eq!(b.current_branch(&repo).unwrap(), Some("dev".into()));
+    }
+
+    #[test]
+    fn checkout_missing_branch_errors() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+
+        let err = b.checkout_branch(&repo, "does-not-exist").unwrap_err();
+        assert!(matches!(err, GitError::BranchNotFound(_)));
+    }
+
+    #[test]
+    fn checkout_with_dirty_conflict_errors() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "base\n");
+        commit_index(&repo, "c1", 1000);
+        let main = b.current_branch(&repo).unwrap().unwrap();
+
+        // dev 上把 a.txt 改成不同内容并提交
+        make_branch(&repo, "dev");
+        b.checkout_branch(&repo, "dev").unwrap();
+        stage(&repo, "a.txt", "dev-version\n");
+        commit_index(&repo, "c2", 2000);
+
+        // 回到主分支(a.txt 恢复 base),再制造未提交的本地改动
+        b.checkout_branch(&repo, &main).unwrap();
+        std::fs::write(repo.join("a.txt"), "dirty-uncommitted\n").unwrap();
+
+        // 切到 dev 会覆盖未提交改动 → 安全 checkout 拒绝
+        let err = b.checkout_branch(&repo, "dev").unwrap_err();
+        assert!(
+            matches!(err, GitError::CheckoutConflict),
+            "脏工作区切分支应报 CheckoutConflict,实际: {err:?}"
+        );
+    }
+
+    #[test]
+    fn create_branch_then_listable() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+
+        b.create_branch(&repo, "feature/new").unwrap();
+        let names: Vec<String> = b.branches(&repo).unwrap().into_iter().map(|x| x.name).collect();
+        assert!(names.contains(&"feature/new".to_string()));
+        // 新建不切换:当前分支不变
+        assert_ne!(b.current_branch(&repo).unwrap(), Some("feature/new".into()));
+    }
+
+    #[test]
+    fn create_branch_duplicate_errors() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+
+        b.create_branch(&repo, "dup").unwrap();
+        let err = b.create_branch(&repo, "dup").unwrap_err();
+        assert!(matches!(err, GitError::BranchAlreadyExists(_)));
+    }
+
+    #[test]
+    fn delete_branch_removes_it() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        b.create_branch(&repo, "tmp").unwrap();
+
+        b.delete_branch(&repo, "tmp").unwrap();
+        let names: Vec<String> = b.branches(&repo).unwrap().into_iter().map(|x| x.name).collect();
+        assert!(!names.contains(&"tmp".to_string()));
+    }
+
+    #[test]
+    fn delete_current_branch_errors() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        let main = b.current_branch(&repo).unwrap().unwrap();
+
+        let err = b.delete_branch(&repo, &main).unwrap_err();
+        assert!(matches!(err, GitError::CannotDeleteCurrentBranch));
+    }
+
+    #[test]
+    fn delete_missing_branch_errors() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+
+        let err = b.delete_branch(&repo, "ghost").unwrap_err();
+        assert!(matches!(err, GitError::BranchNotFound(_)));
     }
 }

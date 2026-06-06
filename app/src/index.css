@@ -6,35 +6,75 @@
    想换主题/调对比度,只改这里一处,所有组件跟着变。
    ──────────────────────────────────────────────────────────── */
 @theme {
-  /* 表面层级:从最暗(画布)到最亮(选中/悬浮) */
-  --color-canvas: #0d1117; /* 应用背景 */
-  --color-elevated: #161b22; /* 面板 / hover 表面 */
-  --color-overlay: #1c2128; /* 选中行 / 更高一层 */
+  /* 表面层级(浅色):基底白 → hover 浅灰 → 选中更深灰。
+     浅色主题靠「渐深 + 细边框」表达层次,而非暗色那种填充深浅。 */
+  --color-canvas: #ffffff; /* 应用背景 / 列表 / 输入 */
+  --color-elevated: #f3f5f8; /* 面板 / chip / footer / hover 表面 */
+  --color-overlay: #e7ecf2; /* 选中行 / 更高一层(微冷灰) */
 
   /* 描边 */
-  --color-line: #21262d; /* 常规分隔线 */
-  --color-line-strong: #30363d; /* 强调描边 / 提交轨 */
+  --color-line: #e6e9ee; /* 常规分隔线(发丝级) */
+  --color-line-strong: #d0d7de; /* 强调描边 / 提交轨 / 滚动条 */
 
-  /* 文字 */
-  --color-fg: #e6edf3; /* 主文字 */
-  --color-fg-muted: #8b949e; /* 次要文字 */
-  --color-fg-subtle: #6e7681; /* 占位 / 禁用 */
+  /* 文字(近黑而非纯黑,更柔和;对比度满足 AA) */
+  --color-fg: #1f2328; /* 主文字 */
+  --color-fg-muted: #59636e; /* 次要文字 */
+  --color-fg-subtle: #818b98; /* 占位 / 禁用 */
 
-  /* 语义色 */
-  --color-accent: #58a6ff; /* 链接 / 焦点 / 当前提交 */
-  --color-accent-emphasis: #1f6feb; /* 选中高亮边 */
-  --color-success: #3fb950; /* 新增 / 成功 */
-  --color-danger: #f85149; /* 删除 / 错误 */
-  --color-warning: #d29922; /* 重命名 / 警告 */
-  --color-done: #238636; /* 提交按钮(实心绿) */
+  /* 语义色(加深以适配白底) */
+  --color-accent: #0969da; /* 链接 / 焦点 / 当前提交 */
+  --color-accent-emphasis: #0550ae; /* 选中高亮边(更深一档) */
+  --color-success: #1a7f37; /* 新增 / 成功 */
+  --color-danger: #cf222e; /* 删除 / 错误 */
+  --color-warning: #9a6700; /* 重命名 / 警告 */
+  --color-done: #1f883d; /* 提交按钮(实心绿),配白字 */
 
   /* 字体 */
   --font-sans: ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
   --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
 }
 
-/* 提交图谱泳道调色板(数据可视化色,与语义 UI token 分开)。 */
+/* 提交图谱泳道调色板(数据可视化色,与语义 UI token 分开)。
+   为白底重新调校:比暗色版更深、更饱和,保证线条在浅背景上清晰可辨。 */
 :root {
+  color-scheme: light;
+  --lane-0: #0969da; /* 蓝 */
+  --lane-1: #1a7f37; /* 绿 */
+  --lane-2: #bc4c00; /* 橙 */
+  --lane-3: #bf3989; /* 品红 */
+  --lane-4: #8250df; /* 紫 */
+  --lane-5: #cf222e; /* 红 */
+  --lane-6: #1b7c83; /* 青 */
+  --lane-7: #9a6700; /* 赭 */
+}
+
+/* ────────────────────────────────────────────────────────────
+   暗色主题:整套 token 的覆盖块。由 <html data-theme="dark"> 激活。
+   用 :root[data-theme] 提高特异性,确保盖过 @theme 的浅色默认值。
+   想调暗色只改这里;浅色改上面的 @theme —— 两套各自独立。
+   ──────────────────────────────────────────────────────────── */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-canvas: #0d1117;
+  --color-elevated: #161b22;
+  --color-overlay: #1c2128;
+
+  --color-line: #21262d;
+  --color-line-strong: #30363d;
+
+  --color-fg: #e6edf3;
+  --color-fg-muted: #8b949e;
+  --color-fg-subtle: #6e7681;
+
+  --color-accent: #58a6ff;
+  --color-accent-emphasis: #1f6feb;
+  --color-success: #3fb950;
+  --color-danger: #f85149;
+  --color-warning: #d29922;
+  --color-done: #238636;
+
+  /* 泳道:暗底用更亮的一组(原暗色版配色) */
   --lane-0: #58a6ff;
   --lane-1: #3fb950;
   --lane-2: #d29922;
@@ -60,7 +100,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* 细滚动条,贴合暗色主题 */
+/* 细滚动条,跟随主题 token */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--color-line-strong) transparent;
