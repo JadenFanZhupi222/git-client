@@ -1,23 +1,43 @@
 import { type FileChangeDto } from "../ipc";
 
-const COLOR: Record<string, string> = {
-  added: "text-[#3fb950]", modified: "text-[#58a6ff]", deleted: "text-[#f85149]", renamed: "text-[#d29922]",
+/** 提交内文件状态 → 颜色 + 单字母 */
+const STYLE: Record<string, { letter: string; cls: string }> = {
+  added: { letter: "A", cls: "text-success" },
+  modified: { letter: "M", cls: "text-accent" },
+  deleted: { letter: "D", cls: "text-danger" },
+  renamed: { letter: "R", cls: "text-warning" },
 };
-const LETTER: Record<string, string> = { added: "A", modified: "M", deleted: "D", renamed: "R" };
 
 export function CommitFileList({
   files, selected, onSelect,
 }: { files: FileChangeDto[]; selected: string | null; onSelect: (path: string) => void }) {
-  if (files.length === 0) return <div className="p-3 text-xs text-[#6e7681]">无改动文件</div>;
+  if (files.length === 0) return <div className="p-3 text-xs text-fg-subtle">无改动文件</div>;
   return (
     <div className="overflow-y-auto">
-      {files.map((f) => (
-        <div key={f.path} onClick={() => onSelect(f.path)}
-          className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer font-mono text-sm ${selected === f.path ? "bg-[#161b22]" : "hover:bg-[#161b22]"}`}>
-          <span className={`w-4 ${COLOR[f.status] ?? "text-[#8b949e]"}`}>{LETTER[f.status] ?? "?"}</span>
-          <span className="truncate text-[#c9d1d9]">{f.path}</span>
-        </div>
-      ))}
+      {files.map((f) => {
+        const s = STYLE[f.status] ?? { letter: "?", cls: "text-fg-muted" };
+        const on = selected === f.path;
+        // 文件名与所在目录分开显示:文件名亮、目录灰,便于扫读
+        const slash = f.path.lastIndexOf("/");
+        const dir = slash >= 0 ? f.path.slice(0, slash + 1) : "";
+        const name = slash >= 0 ? f.path.slice(slash + 1) : f.path;
+        return (
+          <div
+            key={f.path}
+            onClick={() => onSelect(f.path)}
+            title={f.path}
+            className={`flex cursor-pointer items-center gap-2 px-3 py-1.5 font-mono text-[13px] transition-colors ${
+              on ? "bg-overlay" : "hover:bg-elevated"
+            }`}
+          >
+            <span className={`w-3.5 shrink-0 text-center text-xs font-semibold ${s.cls}`}>{s.letter}</span>
+            <span className="truncate">
+              {dir && <span className="text-fg-subtle">{dir}</span>}
+              <span className="text-fg">{name}</span>
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }

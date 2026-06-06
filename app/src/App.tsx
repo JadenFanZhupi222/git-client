@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
+import { FolderIcon } from "./components/icons";
 
 export default function App() {
   const [repo, setRepo] = useState<string | null>(null);
@@ -13,17 +14,82 @@ export default function App() {
     if (typeof dir === "string") setRepo(dir);
   }
 
+  // 仓库路径只显示尾部目录名,完整路径放 title 悬浮
+  const repoName = repo?.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? null;
+
   return (
-    <main className="min-h-screen bg-[#0d1117] text-[#e6edf3] font-sans">
-      <header className="flex items-center gap-3 px-4 py-3 border-b border-[#21262d]">
-        <h1 className="text-lg font-bold">Git 客户端</h1>
-        <button className="text-sm px-2 py-1 rounded bg-[#21262d] text-[#c9d1d9]" onClick={pickRepo}>选择仓库</button>
-        {repo && <span className="text-xs text-[#8b949e] font-mono truncate">{repo}</span>}
+    <div className="flex h-screen flex-col bg-canvas text-fg">
+      {/* 顶栏:轻、紧凑、左标题右仓库 */}
+      <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line px-3">
+        <div className="flex items-center gap-2 font-semibold">
+          <BranchMark />
+          <span className="text-sm">Git 客户端</span>
+        </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          {repo && (
+            <span
+              title={repo}
+              className="max-w-[16rem] truncate rounded-md bg-elevated px-2 py-1 font-mono text-xs text-fg-muted"
+            >
+              {repoName}
+            </span>
+          )}
+          <button
+            onClick={pickRepo}
+            className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle"
+          >
+            <FolderIcon width={14} height={14} />
+            {repo ? "切换仓库" : "选择仓库"}
+          </button>
+        </div>
       </header>
+
       {repo && <TabBar active={tab} onChange={setTab} />}
-      {repo
-        ? (tab === "changes" ? <ChangesView repo={repo} /> : <HistoryView repo={repo} />)
-        : <p className="p-6 text-[#8b949e]">选择一个本地 git 仓库开始。</p>}
-    </main>
+
+      {/* 主体 */}
+      {repo ? (
+        <div className="min-h-0 flex-1">
+          {tab === "changes" ? <ChangesView repo={repo} /> : <HistoryView repo={repo} />}
+        </div>
+      ) : (
+        <EmptyState onPick={pickRepo} />
+      )}
+    </div>
+  );
+}
+
+/** 顶栏左侧的小标记,纯装饰 */
+function BranchMark() {
+  return (
+    <span className="grid h-5 w-5 place-items-center rounded bg-accent/15 text-accent">
+      <svg width={13} height={13} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+        <circle cx="4" cy="3.5" r="1.5" />
+        <circle cx="4" cy="12.5" r="1.5" />
+        <circle cx="12" cy="3.5" r="1.5" />
+        <path d="M4 5v6M12 5v1a3 3 0 0 1-3 3H4" />
+      </svg>
+    </span>
+  );
+}
+
+/** 没选仓库时的引导空态 */
+function EmptyState({ onPick }: { onPick: () => void }) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
+      <div className="grid h-16 w-16 place-items-center rounded-2xl bg-elevated text-fg-subtle">
+        <FolderIcon width={30} height={30} />
+      </div>
+      <div>
+        <p className="text-base font-medium text-fg">还没有打开仓库</p>
+        <p className="mt-1 text-sm text-fg-muted">选择一个本地 git 仓库开始工作。</p>
+      </div>
+      <button
+        onClick={onPick}
+        className="rounded-md bg-done px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+      >
+        选择仓库
+      </button>
+    </div>
   );
 }
