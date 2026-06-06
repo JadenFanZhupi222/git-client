@@ -1,6 +1,8 @@
 use crate::cli_backend::CliBackend;
 use crate::git2_backend::Git2Backend;
-use git_core::model::{BranchInfo, Commit, FetchOutcome, FileChange, FileDiff, WorkingTreeStatus};
+use git_core::model::{
+    BranchInfo, Commit, FetchOutcome, FileChange, FileDiff, PullOutcome, WorkingTreeStatus,
+};
 use git_core::{GitBackend, GitError};
 use std::path::Path;
 
@@ -64,6 +66,9 @@ impl GitBackend for CompositeBackend {
     // 网络操作走 CLI 后端。
     fn fetch(&self, repo: &Path, remote: Option<&str>) -> Result<FetchOutcome, GitError> {
         self.cli.fetch(repo, remote)
+    }
+    fn pull(&self, repo: &Path, remote: Option<&str>) -> Result<PullOutcome, GitError> {
+        self.cli.pull(repo, remote)
     }
 }
 
