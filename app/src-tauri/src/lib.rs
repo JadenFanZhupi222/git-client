@@ -412,6 +412,33 @@ async fn cherry_pick(repo_path: String, commit_id: String) -> Result<(), IpcErro
     .map_err(to_ipc)
 }
 
+/// 写入冲突解决后的内容并标记已解决(写文件 + git add)。防目录穿越。
+#[tauri::command]
+async fn write_resolved(repo_path: String, file: String, content: String) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || -> Result<(), IpcError> {
+        let write_err = |m: String| IpcError {
+            code: "WRITE_FILE".into(),
+            message: m,
+            recoverable: true,
+        };
+        let repo = PathBuf::from(&repo_path);
+        let target = repo.join(&file);
+        let repo_c = repo.canonicalize().map_err(|e| write_err(e.to_string()))?;
+        let target_c = target.canonicalize().map_err(|e| write_err(e.to_string()))?;
+        if !target_c.starts_with(&repo_c) {
+            return Err(write_err("路径越界".into()));
+        }
+        std::fs::write(&target_c, content).map_err(|e| write_err(e.to_string()))?;
+        // 写完即 git add 标记已解决
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service
+            .stage(&repo, std::path::Path::new(&file))
+            .map_err(to_ipc)
+    })
+    .await
+    .map_err(join_panic)?
+}
+
 /// 读工作区某文件原文(用于冲突文件只读展示)。不经 git,直接 fs;防目录穿越。
 #[tauri::command]
 async fn read_working_file(repo_path: String, file: String) -> Result<String, IpcError> {
@@ -558,6 +585,7 @@ pub fn run() {
             cherry_pick,
             blame,
             read_working_file,
+            write_resolved,
             stash_list,
             stash_save,
             stash_apply,

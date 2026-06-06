@@ -7,7 +7,7 @@ import {
 import { useStatus, useWorkingDiff, useRepoState, invalidateWorktree, invalidateHistory, qk } from "../lib/queries";
 import { RefreshIcon, CheckIcon, FileDiffIcon, PlusIcon, MinusIcon } from "../components/icons";
 import { DiffView } from "../components/DiffView";
-import { ConflictView } from "../components/ConflictView";
+import { ConflictEditor } from "../components/ConflictEditor";
 import { ConflictBanner } from "../components/ConflictBanner";
 import { Resizer, useResizableWidth } from "../components/Resizer";
 import { useToast } from "../components/Toast";
@@ -275,7 +275,7 @@ export function ChangesView({ repo }: { repo: string }) {
           ) : "Diff"}
         </div>
         {isConflict && sel ? (
-          <ConflictView repo={repo} file={sel.path} />
+          <ConflictEditor repo={repo} file={sel.path} />
         ) : (
           <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!sel} hunkAction={hunkAction} />
         )}
