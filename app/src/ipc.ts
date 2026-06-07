@@ -261,6 +261,18 @@ export async function resetTo(repoPath: string, commitId: string, mode: ResetMod
   await invoke("reset", { repoPath, commitId, mode });
 }
 
+export type RebaseActionKind = "pick" | "reword" | "squash" | "fixup" | "drop";
+export interface RebaseStepInput {
+  sha: string;
+  action: RebaseActionKind;
+  message?: string; // reword/squash 用
+}
+/** 交互式 rebase。base=最旧提交的父 SHA(null→--root);steps 为 oldest→newest。
+ *  冲突抛 MERGE_CONFLICT(进入 rebasing 中,去 Changes 页解决)。 */
+export async function interactiveRebase(repoPath: string, base: string | null, steps: RebaseStepInput[]): Promise<void> {
+  await invoke("interactive_rebase", { repoPath, base, steps });
+}
+
 // ── 贮藏(stash) ──
 export interface StashDto {
   index: number;

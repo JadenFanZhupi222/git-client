@@ -6,6 +6,7 @@ import { CommitGraph } from "../components/CommitGraph";
 import { CommitLines } from "../components/CommitLines";
 import { TagManager } from "../components/TagManager";
 import { ResetMenu } from "../components/ResetMenu";
+import { RebaseEditor } from "../components/RebaseEditor";
 import { CommitFileList } from "../components/CommitFileList";
 import { CommitDetail } from "../components/CommitDetail";
 import { DiffView } from "../components/DiffView";
@@ -33,6 +34,7 @@ export function HistoryView({ repo }: { repo: string }) {
   const [busy, setBusy] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [query, setQuery] = useState(""); // debounce 后的查询
+  const [rebaseOpen, setRebaseOpen] = useState(false);
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -59,8 +61,19 @@ export function HistoryView({ repo }: { repo: string }) {
     ? (rows.find((r) => r.commit.id === selected.id)?.refs.filter((x) => x.kind === "tag").map((x) => x.name) ?? [])
     : [];
 
+  // 交互式变基范围:从选中提交(最旧)到 HEAD(最新)。仅当选中提交在图谱窗口内可用。
+  const selIdx = selected ? rows.findIndex((r) => r.commit.id === selected.id) : -1;
+  const rebaseCommits = selIdx >= 0 ? rows.slice(0, selIdx + 1).map((r) => r.commit).reverse() : [];
+  const rebaseBase = selected ? (selected.parents[0] ?? null) : null;
+  const afterRebase = () => {
+    setRebaseOpen(false);
+    invalidateHistory(qc, repo);
+    invalidateWorktree(qc, repo);
+    qc.invalidateQueries({ queryKey: qk.repoState(repo) });
+  };
+
   // 切仓库:重置分页、选择与搜索
-  useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); setSearchInput(""); setQuery(""); }, [repo]);
+  useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); setSearchInput(""); setQuery(""); setRebaseOpen(false); }, [repo]);
 
   function selectCommit(c: CommitDto) {
     setSelected(c);
@@ -139,6 +152,7 @@ export function HistoryView({ repo }: { repo: string }) {
         onSelectFile={setSelectedFile}
         onCherryPick={selected ? () => doCherryPick(selected) : undefined}
         onRevert={selected ? () => doRevert(selected) : undefined}
+        onRebase={selIdx >= 0 ? () => setRebaseOpen(true) : undefined}
         repo={repo}
         tags={selectedTags}
         onTagsChanged={() => invalidateHistory(qc, repo)}
@@ -157,6 +171,17 @@ export function HistoryView({ repo }: { repo: string }) {
         </ColumnHead>
         <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!selectedFile} />
       </main>
+
+      {rebaseOpen && selected && rebaseCommits.length > 0 && (
+        <RebaseEditor
+          repo={repo}
+          commits={rebaseCommits}
+          base={rebaseBase}
+          onClose={() => setRebaseOpen(false)}
+          onConflict={afterRebase}
+          onDone={afterRebase}
+        />
+      )}
     </div>
   );
 }
@@ -263,7 +288,7 @@ function SearchList({
 
 /** 中间列:提交详情 + 改动文件(含可拖拽宽度) */
 function MidColumn({
-  repo, commit, files, selectedFile, onSelectFile, onCherryPick, onRevert, onResetDone, tags, onTagsChanged, busy,
+  repo, commit, files, selectedFile, onSelectFile, onCherryPick, onRevert, onRebase, onResetDone, tags, onTagsChanged, busy,
 }: {
   repo: string;
   commit: CommitDto | null;
@@ -272,6 +297,7 @@ function MidColumn({
   onSelectFile: (path: string) => void;
   onCherryPick?: () => void;
   onRevert?: () => void;
+  onRebase?: () => void;
   onResetDone: () => void;
   tags: string[];
   onTagsChanged: () => void;
@@ -306,6 +332,16 @@ function MidColumn({
                   className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-40"
                 >
                   Revert
+                </button>
+              )}
+              {onRebase && (
+                <button
+                  onClick={onRebase}
+                  disabled={busy}
+                  title="从此提交开始交互式变基(改写历史:reorder/squash/reword/drop)"
+                  className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-40"
+                >
+                  变基
                 </button>
               )}
             </div>

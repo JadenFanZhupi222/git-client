@@ -1,7 +1,7 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, FileEntry, PullOutcome, PushOutcome, RepoState, ResetMode, Signature, StashEntry,
-    SyncCommits, WorkingTreeStatus,
+    FileDiff, FileEntry, PullOutcome, PushOutcome, RebaseAction, RebaseStep, RepoState, ResetMode,
+    Signature, StashEntry, SyncCommits, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -43,6 +43,7 @@ pub struct FakeBackend {
     conflict_ops: Mutex<Vec<String>>,
     canned_conflict_sides: Mutex<Option<ConflictSides>>,
     tag_ops: Mutex<Vec<String>>,
+    rebase_ops: Mutex<Vec<String>>,
 }
 
 impl FakeBackend {
@@ -153,6 +154,9 @@ impl FakeBackend {
     }
     pub fn tag_ops(&self) -> Vec<String> {
         self.tag_ops.lock().unwrap().clone()
+    }
+    pub fn rebase_ops(&self) -> Vec<String> {
+        self.rebase_ops.lock().unwrap().clone()
     }
     pub fn with_conflict_sides(self, sides: ConflictSides) -> Self {
         *self.canned_conflict_sides.lock().unwrap() = Some(sides);
@@ -391,6 +395,26 @@ impl GitBackend for FakeBackend {
             .lock()
             .unwrap()
             .push(format!("reset:{m}:{commit_id}"));
+        Ok(())
+    }
+    fn interactive_rebase(
+        &self,
+        _path: &Path,
+        base: Option<&str>,
+        steps: &[RebaseStep],
+    ) -> Result<(), GitError> {
+        let mut ops = self.rebase_ops.lock().unwrap();
+        ops.push(format!("base:{}", base.unwrap_or("--root")));
+        for s in steps {
+            let a = match &s.action {
+                RebaseAction::Pick => "pick".to_string(),
+                RebaseAction::Reword(m) => format!("reword:{m}"),
+                RebaseAction::Squash(m) => format!("squash:{m}"),
+                RebaseAction::Fixup => "fixup".to_string(),
+                RebaseAction::Drop => "drop".to_string(),
+            };
+            ops.push(format!("{}:{a}", s.sha));
+        }
         Ok(())
     }
     fn ahead_behind(&self, _path: &Path) -> Result<Option<AheadBehind>, GitError> {

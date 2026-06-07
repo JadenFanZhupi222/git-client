@@ -340,6 +340,30 @@ impl RepoService {
         self.backend.reset(repo_path, commit_id, mode)
     }
 
+    /// 用例:交互式 rebase。base=最旧提交的父(None→--root);steps 为 oldest→newest。
+    /// 校验:首个非 drop 步骤不能是 fixup/squash(没有可并入的前一个提交)。
+    pub fn interactive_rebase(
+        &self,
+        repo_path: &Path,
+        base: Option<&str>,
+        steps: &[git_core::model::RebaseStep],
+    ) -> Result<(), GitError> {
+        use git_core::model::RebaseAction;
+        let first_kept = steps
+            .iter()
+            .find(|s| !matches!(s.action, RebaseAction::Drop));
+        match first_kept {
+            None => return Err(GitError::Backend("至少要保留一个提交".into())),
+            Some(s) if matches!(s.action, RebaseAction::Fixup | RebaseAction::Squash(_)) => {
+                return Err(GitError::Backend(
+                    "第一个提交不能是 squash/fixup(没有可并入的前一个提交)".into(),
+                ));
+            }
+            _ => {}
+        }
+        self.backend.interactive_rebase(repo_path, base, steps)
+    }
+
     // ---- 贮藏 ----
     pub fn stash_list(&self, repo_path: &Path) -> Result<Vec<StashDto>, GitError> {
         Ok(self
@@ -828,6 +852,58 @@ mod tests {
         assert_eq!(fb.tag_ops(), vec!["reset:soft:abc123", "reset:hard:def456"]);
         // 空 id 拦截
         assert!(svc.reset(Path::new("/r"), " ", ResetMode::Mixed).is_err());
+    }
+
+    #[test]
+    fn interactive_rebase_forwards_and_validates() {
+        use git_core::model::{RebaseAction, RebaseStep};
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        let steps = vec![
+            RebaseStep {
+                sha: "aaa".into(),
+                action: RebaseAction::Pick,
+            },
+            RebaseStep {
+                sha: "bbb".into(),
+                action: RebaseAction::Fixup,
+            },
+            RebaseStep {
+                sha: "ccc".into(),
+                action: RebaseAction::Reword("new".into()),
+            },
+            RebaseStep {
+                sha: "ddd".into(),
+                action: RebaseAction::Drop,
+            },
+        ];
+        svc.interactive_rebase(Path::new("/r"), Some("base0"), &steps)
+            .unwrap();
+        assert_eq!(
+            fb.rebase_ops(),
+            vec![
+                "base:base0",
+                "aaa:pick",
+                "bbb:fixup",
+                "ccc:reword:new",
+                "ddd:drop"
+            ]
+        );
+        // 首个有效步骤是 fixup → 拒绝
+        let bad = vec![RebaseStep {
+            sha: "x".into(),
+            action: RebaseAction::Fixup,
+        }];
+        assert!(svc.interactive_rebase(Path::new("/r"), None, &bad).is_err());
+        // 全 drop → 拒绝
+        let all_drop = vec![RebaseStep {
+            sha: "x".into(),
+            action: RebaseAction::Drop,
+        }];
+        assert!(
+            svc.interactive_rebase(Path::new("/r"), None, &all_drop)
+                .is_err()
+        );
     }
 
     #[test]

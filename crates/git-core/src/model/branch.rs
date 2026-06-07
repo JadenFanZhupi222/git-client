@@ -1,6 +1,28 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+/// 交互式 rebase 中对单个提交的操作。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RebaseAction {
+    /// 保留该提交不变。
+    Pick,
+    /// 保留改动,改写提交信息为附带的字符串。
+    Reword(String),
+    /// 并入前一个提交,并把合并后的提交信息设为附带字符串。
+    Squash(String),
+    /// 并入前一个提交,丢弃本提交信息。
+    Fixup,
+    /// 删除该提交(连同其改动)。
+    Drop,
+}
+
+/// 交互式 rebase 的一步:对某提交施加某操作。steps 按 oldest→newest 排列。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RebaseStep {
+    pub sha: String,
+    pub action: RebaseAction,
+}
+
 /// reset 的三种模式,决定把 HEAD 移到目标提交时如何处理暂存区与工作区。
 /// - `Soft`:只移动 HEAD,暂存区与工作区都保留(原 HEAD 的改动变为已暂存)。
 /// - `Mixed`(git 默认):移动 HEAD + 重置暂存区,保留工作区(改动变为未暂存)。

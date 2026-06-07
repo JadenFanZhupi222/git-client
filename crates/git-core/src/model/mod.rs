@@ -9,7 +9,9 @@ mod stash;
 mod status;
 
 pub use blame::BlameLine;
-pub use branch::{AheadBehind, BranchInfo, CommitRef, RefKind, ResetMode, SyncCommits};
+pub use branch::{
+    AheadBehind, BranchInfo, CommitRef, RebaseAction, RebaseStep, RefKind, ResetMode, SyncCommits,
+};
 pub use commit::{Commit, Signature};
 pub use conflict::ConflictSides;
 pub use diff::{DiffLine, DiffLineKind, FileChange, FileDiff, Hunk};
