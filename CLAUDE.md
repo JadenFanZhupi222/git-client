@@ -8,7 +8,7 @@
 ## 必读文档
 - 完整架构设计见 @ARCHITECTURE.md
 - 启动步骤见 @README.md
-- 当前进度:阶段 0 骨架已编译验证通过
+- **当前进度、铁律、下一步、竖切模式见 @docs/HANDOFF.md(换机器/新会话先读这个)**
 
 ## 关键铁律
 - 所有 git 操作必须放进 spawn_blocking,绝不在 async 命令里直接调
