@@ -63,6 +63,56 @@ fn head_revwalk(repo: &git2::Repository) -> Result<Option<git2::Revwalk<'_>>, Gi
     Ok(Some(walk))
 }
 
+/// 把一个 tree↔tree 的 git2::Diff 摊成文件级 FileChange 列表(含增删行数)。
+/// commit_files(提交↔父)与 compare_files(任意两 revision)共用。
+fn diff_to_changes(diff: &git2::Diff) -> Result<Vec<FileChange>, GitError> {
+    let mut out = Vec::new();
+    for (idx, delta) in diff.deltas().enumerate() {
+        let status = match delta.status() {
+            git2::Delta::Added | git2::Delta::Copied => FileState::Added,
+            git2::Delta::Deleted => FileState::Deleted,
+            git2::Delta::Renamed => FileState::Renamed,
+            git2::Delta::Modified | git2::Delta::Typechange => FileState::Modified,
+            _ => continue,
+        };
+        let p = delta
+            .new_file()
+            .path()
+            .or_else(|| delta.old_file().path())
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        // 本文件增删行数(diff --stat)。二进制 delta → Patch 为 None → 0/0。
+        let (additions, deletions) = match git2::Patch::from_diff(diff, idx)
+            .map_err(|e| GitError::Backend(e.to_string()))?
+        {
+            Some(patch) => {
+                let (_ctx, adds, dels) = patch
+                    .line_stats()
+                    .map_err(|e| GitError::Backend(e.to_string()))?;
+                (adds, dels)
+            }
+            None => (0, 0),
+        };
+        out.push(FileChange {
+            path: p,
+            status,
+            additions,
+            deletions,
+        });
+    }
+    Ok(out)
+}
+
+/// 把一个 revision 字符串(commit SHA / 分支名 / 标签名)解析为它的 tree。
+/// 用 revparse_single 兼容多种写法,再 peel 到 tree。
+fn resolve_tree<'r>(repo: &'r git2::Repository, rev: &str) -> Result<git2::Tree<'r>, GitError> {
+    let obj = repo
+        .revparse_single(rev)
+        .map_err(|e| GitError::Backend(format!("无法解析 '{rev}': {e}")))?;
+    obj.peel_to_tree()
+        .map_err(|e| GitError::Backend(e.to_string()))
+}
+
 /// 从一个 git2::Diff 里抽出指定文件的行级 FileDiff。
 /// commit_file_diff(树↔树)与 working_diff(工作区/index)共用,保证渲染一致。
 fn file_diff_from(diff: &git2::Diff, file: &str) -> Result<FileDiff, GitError> {
@@ -418,42 +468,43 @@ impl GitBackend for Git2Backend {
         let diff = repo
             .diff_tree_to_tree(parent_tree.as_ref(), Some(&new_tree), None)
             .map_err(|e| GitError::Backend(e.to_string()))?;
-        let mut out = Vec::new();
-        for (idx, delta) in diff.deltas().enumerate() {
-            let status = match delta.status() {
-                git2::Delta::Added | git2::Delta::Copied => FileState::Added,
-                git2::Delta::Deleted => FileState::Deleted,
-                // 坑5:不开重命名检测,此分支当前不命中(保留无害)
-                git2::Delta::Renamed => FileState::Renamed,
-                git2::Delta::Modified | git2::Delta::Typechange => FileState::Modified,
-                _ => continue,
-            };
-            let p = delta
-                .new_file()
-                .path()
-                .or_else(|| delta.old_file().path())
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            // 本文件增删行数(diff --stat)。二进制 delta → Patch 为 None → 0/0。
-            let (additions, deletions) = match git2::Patch::from_diff(&diff, idx)
-                .map_err(|e| GitError::Backend(e.to_string()))?
-            {
-                Some(patch) => {
-                    let (_ctx, adds, dels) = patch
-                        .line_stats()
-                        .map_err(|e| GitError::Backend(e.to_string()))?;
-                    (adds, dels)
-                }
-                None => (0, 0),
-            };
-            out.push(FileChange {
-                path: p,
-                status,
-                additions,
-                deletions,
-            });
-        }
-        Ok(out)
+        diff_to_changes(&diff)
+    }
+
+    fn compare_files(
+        &self,
+        path: &Path,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<FileChange>, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let from_tree = resolve_tree(&repo, from)?;
+        let to_tree = resolve_tree(&repo, to)?;
+        let diff = repo
+            .diff_tree_to_tree(Some(&from_tree), Some(&to_tree), None)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        diff_to_changes(&diff)
+    }
+
+    fn compare_file_diff(
+        &self,
+        path: &Path,
+        from: &str,
+        to: &str,
+        file: &str,
+    ) -> Result<FileDiff, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let from_tree = resolve_tree(&repo, from)?;
+        let to_tree = resolve_tree(&repo, to)?;
+        // pathspec 限定只 diff 这一个文件,避免整棵树 diff 的开销。
+        let mut opts = git2::DiffOptions::new();
+        opts.pathspec(file);
+        let diff = repo
+            .diff_tree_to_tree(Some(&from_tree), Some(&to_tree), Some(&mut opts))
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        file_diff_from(&diff, file)
     }
     fn current_branch(&self, path: &Path) -> Result<Option<String>, GitError> {
         let repo =
@@ -1729,6 +1780,57 @@ mod tests {
             "1",
             "hard reset 应丢弃工作区改动,回到 c1 内容"
         );
+    }
+
+    #[test]
+    fn compare_files_and_diff_between_branches() {
+        let repo = tempfile::tempdir().unwrap();
+        let g = |args: &[&str]| {
+            std::process::Command::new("git")
+                .current_dir(repo.path())
+                .args(args)
+                .output()
+                .unwrap();
+        };
+        g(&["init", "-b", "main", "."]);
+        g(&["config", "user.email", "t@e"]);
+        g(&["config", "user.name", "t"]);
+        std::fs::write(repo.path().join("a.txt"), "base\n").unwrap();
+        g(&["add", "."]);
+        g(&["commit", "-m", "c1"]);
+        // feat 分支:改 a.txt + 新增 b.txt
+        g(&["checkout", "-b", "feat"]);
+        std::fs::write(repo.path().join("a.txt"), "changed\n").unwrap();
+        std::fs::write(repo.path().join("b.txt"), "new\n").unwrap();
+        g(&["add", "."]);
+        g(&["commit", "-m", "c2"]);
+
+        let b = Git2Backend;
+        // main → feat:a 改了、b 新增
+        let files = b.compare_files(repo.path(), "main", "feat").unwrap();
+        assert_eq!(files.len(), 2);
+        let a = files.iter().find(|f| f.path == "a.txt").unwrap();
+        assert_eq!(a.status, FileState::Modified);
+        let bf = files.iter().find(|f| f.path == "b.txt").unwrap();
+        assert_eq!(bf.status, FileState::Added);
+        // 单文件行级 diff(main→feat 的 a.txt:base→changed)
+        let diff = b
+            .compare_file_diff(repo.path(), "main", "feat", "a.txt")
+            .unwrap();
+        assert_eq!(diff.path, "a.txt");
+        assert!(
+            diff.hunks
+                .iter()
+                .any(|h| h.lines.iter().any(|l| l.content == "changed"))
+        );
+        // 同一 revision 比较 → 无改动
+        assert!(
+            b.compare_files(repo.path(), "main", "main")
+                .unwrap()
+                .is_empty()
+        );
+        // 无法解析的 revision → 错误
+        assert!(b.compare_files(repo.path(), "nope-xyz", "main").is_err());
     }
 
     #[test]

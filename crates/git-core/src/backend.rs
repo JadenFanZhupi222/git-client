@@ -50,6 +50,28 @@ pub trait GitBackend: Send + Sync {
     /// 某提交相对第一个父的改动文件(文件级)。
     fn commit_files(&self, repo: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError>;
 
+    /// 任意两个 revision(commit SHA / 分支名 / 标签名)间的改动文件(from→to,文件级)。
+    /// 默认 Unsupported。
+    fn compare_files(
+        &self,
+        _repo: &Path,
+        _from: &str,
+        _to: &str,
+    ) -> Result<Vec<FileChange>, GitError> {
+        Err(GitError::Unsupported)
+    }
+
+    /// 任意两个 revision 间单个文件的行级 diff(from→to)。默认 Unsupported。
+    fn compare_file_diff(
+        &self,
+        _repo: &Path,
+        _from: &str,
+        _to: &str,
+        _file: &str,
+    ) -> Result<FileDiff, GitError> {
+        Err(GitError::Unsupported)
+    }
+
     /// 某提交中单个文件相对第一个父的行级 diff。
     /// `file` 为仓库根相对路径(git 风格,正斜杠)。
     fn commit_file_diff(

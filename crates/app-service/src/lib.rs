@@ -156,6 +156,36 @@ impl RepoService {
         Ok(files.into_iter().map(FileChangeDto::from).collect())
     }
 
+    /// 用例:任意两 revision(commit/分支/标签)间的改动文件(from→to)。
+    pub fn compare_files(
+        &self,
+        repo_path: &Path,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<FileChangeDto>, GitError> {
+        if from.trim().is_empty() || to.trim().is_empty() {
+            return Err(GitError::Backend("比较的 revision 不能为空".into()));
+        }
+        let files = self
+            .backend
+            .compare_files(repo_path, from.trim(), to.trim())?;
+        Ok(files.into_iter().map(FileChangeDto::from).collect())
+    }
+
+    /// 用例:两 revision 间单个文件的行级 diff(from→to)。
+    pub fn compare_file_diff(
+        &self,
+        repo_path: &Path,
+        from: &str,
+        to: &str,
+        file: &str,
+    ) -> Result<FileDiffDto, GitError> {
+        let diff = self
+            .backend
+            .compare_file_diff(repo_path, from.trim(), to.trim(), file)?;
+        Ok(FileDiffDto::from(diff))
+    }
+
     /// 用例:某提交中单个文件的行级 diff。
     pub fn commit_file_diff(
         &self,
@@ -622,6 +652,23 @@ mod tests {
         let svc = RepoService::new(Arc::new(fb));
         let dtos = svc.commit_files(Path::new("/r"), "x").unwrap();
         assert_eq!(dtos[0].status, "modified");
+    }
+
+    #[test]
+    fn compare_files_maps_and_validates() {
+        let fb = FakeBackend::default().with_commit_files(vec![FileChange {
+            path: "a".into(),
+            status: FileState::Added,
+            additions: 5,
+            deletions: 0,
+        }]);
+        let svc = RepoService::new(Arc::new(fb));
+        let dtos = svc.compare_files(Path::new("/r"), "main", "feat").unwrap();
+        assert_eq!(dtos.len(), 1);
+        assert_eq!(dtos[0].status, "added");
+        // 空 revision 在 service 层拦截
+        assert!(svc.compare_files(Path::new("/r"), "", "feat").is_err());
+        assert!(svc.compare_files(Path::new("/r"), "main", " ").is_err());
     }
 
     #[test]

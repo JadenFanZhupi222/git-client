@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { TabBar, type Tab } from "./components/TabBar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
+import { CompareView } from "./views/CompareView";
 import { BlameView } from "./views/BlameView";
 import { useQueryClient } from "@tanstack/react-query";
 import { setUpstream, fetchRemote, pullRemote, pushRemote, type IpcError } from "./ipc";
@@ -293,7 +294,7 @@ export default function App() {
       {/* 主体 */}
       {repo ? (
         <div className="min-h-0 flex-1">
-          {tab === "changes" ? <ChangesView repo={repo} /> : tab === "history" ? <HistoryView repo={repo} /> : <BlameView repo={repo} />}
+          {tab === "changes" ? <ChangesView repo={repo} /> : tab === "history" ? <HistoryView repo={repo} /> : tab === "compare" ? <CompareView repo={repo} /> : <BlameView repo={repo} />}
         </div>
       ) : (
         <EmptyState onPick={pickRepo} />

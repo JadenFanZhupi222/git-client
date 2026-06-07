@@ -50,6 +50,23 @@ impl GitBackend for CompositeBackend {
     fn commit_files(&self, repo: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError> {
         self.git2.commit_files(repo, commit_id)
     }
+    fn compare_files(
+        &self,
+        repo: &Path,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<FileChange>, GitError> {
+        self.git2.compare_files(repo, from, to)
+    }
+    fn compare_file_diff(
+        &self,
+        repo: &Path,
+        from: &str,
+        to: &str,
+        file: &str,
+    ) -> Result<FileDiff, GitError> {
+        self.git2.compare_file_diff(repo, from, to, file)
+    }
     fn commit_file_diff(
         &self,
         repo: &Path,

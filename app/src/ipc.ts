@@ -312,6 +312,16 @@ export async function getCommitFileDiff(
   return await invoke<FileDiffDto>("get_commit_file_diff", { repoPath, commitId, file });
 }
 
+/** 任意两 revision(commit/分支/标签)间的改动文件(from→to)。 */
+export async function compareFiles(repoPath: string, from: string, to: string): Promise<FileChangeDto[]> {
+  return await invoke<FileChangeDto[]>("compare_files", { repoPath, from, to });
+}
+
+/** 两 revision 间单个文件的行级 diff(from→to)。 */
+export async function compareFileDiff(repoPath: string, from: string, to: string, file: string): Promise<FileDiffDto> {
+  return await invoke<FileDiffDto>("compare_file_diff", { repoPath, from, to, file });
+}
+
 /** 工作区文件 diff:staged=false 未暂存(index↔工作区)、true 已暂存(HEAD↔index)。 */
 export async function getWorkingDiff(
   repoPath: string,
