@@ -234,6 +234,23 @@ impl GitBackend for FakeBackend {
     fn commit_files(&self, _path: &Path, _commit_id: &str) -> Result<Vec<FileChange>, GitError> {
         Ok(self.canned_commit_files.lock().unwrap().clone())
     }
+    fn compare_files(
+        &self,
+        _path: &Path,
+        _from: &str,
+        _to: &str,
+    ) -> Result<Vec<FileChange>, GitError> {
+        Ok(self.canned_commit_files.lock().unwrap().clone())
+    }
+    fn compare_file_diff(
+        &self,
+        _path: &Path,
+        _from: &str,
+        _to: &str,
+        _file: &str,
+    ) -> Result<FileDiff, GitError> {
+        Ok(self.canned_file_diff.lock().unwrap().clone())
+    }
     fn current_branch(&self, _path: &Path) -> Result<Option<String>, GitError> {
         Ok(self.canned_branch.lock().unwrap().clone())
     }

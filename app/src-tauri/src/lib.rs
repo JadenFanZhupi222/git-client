@@ -209,6 +209,37 @@ async fn get_commit_file_diff(
 }
 
 #[tauri::command]
+async fn compare_files(
+    repo_path: String,
+    from: String,
+    to: String,
+) -> Result<Vec<FileChangeDto>, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.compare_files(&PathBuf::from(repo_path), &from, &to)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn compare_file_diff(
+    repo_path: String,
+    from: String,
+    to: String,
+    file: String,
+) -> Result<FileDiffDto, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.compare_file_diff(&PathBuf::from(repo_path), &from, &to, &file)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
 async fn get_working_diff(
     repo_path: String,
     file: String,
@@ -692,6 +723,8 @@ pub fn run() {
             get_working_diff,
             get_commit_graph,
             search_commits,
+            compare_files,
+            compare_file_diff,
             get_current_branch,
             list_branches,
             get_ahead_behind,

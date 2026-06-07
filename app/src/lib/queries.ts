@@ -6,6 +6,7 @@ import { useQuery, useQueryClient, keepPreviousData, type QueryClient } from "@t
 import { useEffect } from "react";
 import {
   getStatus, getWorkingDiff, getCommitGraph, searchCommits, getCommitFiles, getCommitFileDiff,
+  compareFiles, compareFileDiff,
   getCurrentBranch, getAheadBehind, getRemotes, listBranches, stashList,
   getRepoState, readWorkingFile, blame, conflictSides,
   watchRepo, onRepoChanged,
@@ -28,6 +29,8 @@ export const qk = {
   blame: (repo: string) => ["blame", repo] as const,
   conflictSides: (repo: string) => ["conflictSides", repo] as const,
   search: (repo: string) => ["search", repo] as const,
+  compareFiles: (repo: string) => ["compareFiles", repo] as const,
+  compareDiff: (repo: string) => ["compareDiff", repo] as const,
 };
 
 // ---- 读 hooks ----
@@ -59,6 +62,24 @@ export function useCommitSearch(repo: string, query: string, limit: number) {
     queryFn: () => searchCommits(repo, q, limit),
     enabled: !!repo && q.length > 0,
     placeholderData: keepPreviousData, // 连续输入时不闪空
+  });
+}
+
+/** 两 revision 间改动文件;from/to 任一为空则不查。 */
+export function useCompareFiles(repo: string, from: string, to: string) {
+  return useQuery({
+    queryKey: [...qk.compareFiles(repo), from, to],
+    queryFn: () => compareFiles(repo, from, to),
+    enabled: !!repo && !!from && !!to,
+  });
+}
+
+/** 两 revision 间单文件 diff;需 from/to/file 都有。 */
+export function useCompareDiff(repo: string, from: string, to: string, file: string | null) {
+  return useQuery({
+    queryKey: [...qk.compareDiff(repo), from, to, file ?? ""],
+    queryFn: () => compareFileDiff(repo, from, to, file!),
+    enabled: !!repo && !!from && !!to && !!file,
   });
 }
 

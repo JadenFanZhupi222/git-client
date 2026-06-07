@@ -1,8 +1,9 @@
-export type Tab = "changes" | "history" | "blame";
+export type Tab = "changes" | "history" | "compare" | "blame";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "changes", label: "更改" },
   { id: "history", label: "历史" },
+  { id: "compare", label: "比较" },
   { id: "blame", label: "追溯" },
 ];
 
