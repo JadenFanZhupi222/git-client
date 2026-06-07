@@ -7,6 +7,7 @@ use ipc_types::{
     StatusDto,
 };
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::Emitter;
@@ -14,6 +15,11 @@ use tauri::Emitter;
 /// 持有当前仓库的文件监听器。切仓库时替换 → 旧 watcher 被 drop → 自动停止监听。
 #[derive(Default)]
 struct WatcherState(Mutex<Option<RepoWatcher>>);
+
+/// 搜索代次:每次搜索领一个递增号;后来的搜索把全局号推进,使先前那次的
+/// 闭包检测到 `当前 != 自己的号` → 返回 Cancelled,尽快放手不再扫历史。
+#[derive(Default)]
+struct SearchGen(Arc<AtomicU64>);
 
 // 把领域错误翻译成给前端的结构化错误(带 code,前端可据此做分支)
 fn to_ipc(e: git_core::GitError) -> IpcError {
@@ -229,13 +235,18 @@ async fn get_commit_graph(repo_path: String, limit: usize) -> Result<Vec<GraphRo
 
 #[tauri::command]
 async fn search_commits(
+    state: tauri::State<'_, SearchGen>,
     repo_path: String,
     query: String,
     limit: usize,
 ) -> Result<Vec<CommitDto>, IpcError> {
+    // 领号:本次搜索的代次。后来的搜索 fetch_add 会推进全局号,使本次的闭包失效。
+    let generation = state.0.clone();
+    let mine = generation.fetch_add(1, Ordering::SeqCst) + 1;
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.search_commits(&PathBuf::from(repo_path), &query, limit)
+        let cancelled = || generation.load(Ordering::SeqCst) != mine;
+        service.search_commits(&PathBuf::from(repo_path), &query, limit, &cancelled)
     })
     .await
     .map_err(join_panic)?
@@ -608,6 +619,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init()) // 选目录对话框用
         .manage(WatcherState::default())
+        .manage(SearchGen::default())
         .invoke_handler(tauri::generate_handler![
             get_head_commit,
             get_status,

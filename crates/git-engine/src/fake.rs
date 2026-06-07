@@ -200,7 +200,13 @@ impl GitBackend for FakeBackend {
     fn log(&self, _path: &Path, _limit: usize, _skip: usize) -> Result<Vec<Commit>, GitError> {
         Ok(self.canned_log.lock().unwrap().clone())
     }
-    fn search_commits(&self, _path: &Path, query: &str, limit: usize) -> Result<Vec<Commit>, GitError> {
+    fn search_commits(
+        &self,
+        _path: &Path,
+        query: &str,
+        limit: usize,
+        _cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Commit>, GitError> {
         let q = query.trim().to_lowercase();
         if q.is_empty() {
             return Ok(Vec::new());

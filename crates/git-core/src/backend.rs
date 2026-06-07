@@ -33,11 +33,15 @@ pub trait GitBackend: Send + Sync {
 
     /// 从 HEAD 搜索提交(时间倒序),大小写不敏感匹配 summary/body/作者名/邮箱/SHA 前缀。
     /// 最多返回 limit 条。空 query / 不支持 → 空。默认 Unsupported。
+    ///
+    /// `cancelled`:遍历大仓库历史时定期回调,返回 true 则尽快中断并返回
+    /// `GitError::Cancelled`(上层在用户改了搜索词时取消上一次,避免占满阻塞线程池)。
     fn search_commits(
         &self,
         _repo: &Path,
         _query: &str,
         _limit: usize,
+        _cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<Commit>, GitError> {
         Err(GitError::Unsupported)
     }

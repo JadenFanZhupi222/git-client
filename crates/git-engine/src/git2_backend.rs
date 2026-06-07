@@ -350,6 +350,7 @@ impl GitBackend for Git2Backend {
         path: &Path,
         query: &str,
         limit: usize,
+        cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<Commit>, GitError> {
         let q = query.trim().to_lowercase();
         if q.is_empty() {
@@ -362,8 +363,12 @@ impl GitBackend for Git2Backend {
         };
 
         // 惰性遍历整段历史,逐条匹配后收集,够 limit 即停 —— 不预先 collect。
+        // 大仓库可能遍历很久:每条都检查取消信号,用户改搜索词时尽快放手。
         let mut out = Vec::new();
         for oid in walk {
+            if cancelled() {
+                return Err(GitError::Cancelled);
+            }
             let oid = oid.map_err(|e| GitError::Backend(e.to_string()))?;
             let commit = repo
                 .find_commit(oid)
@@ -1549,21 +1554,28 @@ mod tests {
         stage(&repo, "a.txt", "2");
         let c2 = commit_index(&repo, "add feature", 2000);
 
+        let never = || false;
         // 按 message(大小写不敏感)
-        let hits = b.search_commits(&repo, "LOGIN", 10).unwrap();
+        let hits = b.search_commits(&repo, "LOGIN", 10, &never).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].summary, "fix login bug");
         // 按 SHA 前缀
-        let by_sha = b.search_commits(&repo, &c2[..6], 10).unwrap();
+        let by_sha = b.search_commits(&repo, &c2[..6], 10, &never).unwrap();
         assert_eq!(by_sha.len(), 1);
         assert_eq!(by_sha[0].id, c2);
         // 按作者(init_repo 配的是 Test)
-        let by_author = b.search_commits(&repo, "test", 10).unwrap();
+        let by_author = b.search_commits(&repo, "test", 10, &never).unwrap();
         assert_eq!(by_author.len(), 2, "两条都由 Test 提交");
         // 空 query → 空
-        assert!(b.search_commits(&repo, "  ", 10).unwrap().is_empty());
+        assert!(b.search_commits(&repo, "  ", 10, &never).unwrap().is_empty());
         // 无匹配 → 空
-        assert!(b.search_commits(&repo, "zzz-nope", 10).unwrap().is_empty());
+        assert!(b.search_commits(&repo, "zzz-nope", 10, &never).unwrap().is_empty());
+        // 取消信号 → Cancelled
+        let always = || true;
+        assert!(matches!(
+            b.search_commits(&repo, "login", 10, &always),
+            Err(GitError::Cancelled)
+        ));
     }
 
     #[test]
