@@ -3,9 +3,9 @@
 //! 让前后端类型在编译期对齐。阶段 0 先保持简单。
 
 use git_core::model::{
-    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, DiffLine, DiffLineKind, FetchOutcome,
-    FileChange, FileDiff, FileEntry, FileState, Hunk, PullOutcome, PushOutcome, RefKind, StashEntry,
-    WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, DiffLine, DiffLineKind,
+    FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk, PullOutcome, PushOutcome,
+    RefKind, StashEntry, WorkingTreeStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -149,6 +149,24 @@ impl From<BlameLine> for BlameLineDto {
             author_name: l.author_name,
             timestamp: l.timestamp,
             content: l.content,
+        }
+    }
+}
+
+/// 冲突文件三方内容 DTO(base/ours/theirs,某方缺失为 null)。供三栏合并编辑器用。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConflictSidesDto {
+    pub base: Option<String>,
+    pub ours: Option<String>,
+    pub theirs: Option<String>,
+}
+
+impl From<ConflictSides> for ConflictSidesDto {
+    fn from(s: ConflictSides) -> Self {
+        ConflictSidesDto {
+            base: s.base,
+            ours: s.ours,
+            theirs: s.theirs,
         }
     }
 }

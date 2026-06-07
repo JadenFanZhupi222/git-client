@@ -1,8 +1,8 @@
 use crate::cli_backend::CliBackend;
 use crate::git2_backend::Git2Backend;
 use git_core::model::{
-    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff,
-    PullOutcome, PushOutcome, RepoState, StashEntry, WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
+    FileDiff, PullOutcome, PushOutcome, RepoState, StashEntry, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -65,6 +65,9 @@ impl GitBackend for CompositeBackend {
     }
     fn blame(&self, repo: &Path, file: &str) -> Result<Vec<BlameLine>, GitError> {
         self.git2.blame(repo, file)
+    }
+    fn conflict_sides(&self, repo: &Path, file: &str) -> Result<ConflictSides, GitError> {
+        self.git2.conflict_sides(repo, file)
     }
     fn resolve_ours(&self, repo: &Path, file: &str) -> Result<(), GitError> {
         self.cli.resolve_ours(repo, file)

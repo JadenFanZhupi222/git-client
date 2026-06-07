@@ -1,7 +1,7 @@
 use crate::error::GitError;
 use crate::model::{
-    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff,
-    PullOutcome, PushOutcome, RepoState, StashEntry, WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
+    FileDiff, PullOutcome, PushOutcome, RepoState, StashEntry, WorkingTreeStatus,
 };
 use std::path::Path;
 
@@ -71,6 +71,11 @@ pub trait GitBackend: Send + Sync {
     }
     /// 整文件采用「对方(theirs)」并标记已解决(checkout --theirs + add)。
     fn resolve_theirs(&self, _repo: &Path, _file: &str) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+    /// 读冲突文件的三方内容(base/ours/theirs,来自 index stage 1/2/3 的 blob)。
+    /// 供三栏合并编辑器使用。默认 Unsupported。
+    fn conflict_sides(&self, _repo: &Path, _file: &str) -> Result<ConflictSides, GitError> {
         Err(GitError::Unsupported)
     }
     /// 继续进行中的操作(合并提交 / rebase --continue / cherry-pick --continue)。

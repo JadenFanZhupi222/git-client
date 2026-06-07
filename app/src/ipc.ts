@@ -213,6 +213,18 @@ export async function readWorkingFile(repoPath: string, file: string): Promise<s
   return await invoke<string>("read_working_file", { repoPath, file });
 }
 
+/** 冲突文件三方内容(base/ours/theirs,某方缺失为 null)。供三栏合并编辑器。 */
+export interface ConflictSidesDto {
+  base: string | null;
+  ours: string | null;
+  theirs: string | null;
+}
+
+/** 读冲突文件三方内容(index stage 1/2/3 blob)。 */
+export async function conflictSides(repoPath: string, file: string): Promise<ConflictSidesDto> {
+  return await invoke<ConflictSidesDto>("conflict_sides", { repoPath, file });
+}
+
 /** 写入解决后的内容并标记已解决(写文件 + git add)。 */
 export async function writeResolved(repoPath: string, file: string, content: string): Promise<void> {
   await invoke("write_resolved", { repoPath, file, content });
