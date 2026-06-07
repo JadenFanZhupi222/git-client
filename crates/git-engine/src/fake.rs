@@ -42,6 +42,7 @@ pub struct FakeBackend {
     canned_repo_state: Mutex<Option<RepoState>>, // None → Clean
     conflict_ops: Mutex<Vec<String>>,
     canned_conflict_sides: Mutex<Option<ConflictSides>>,
+    tag_ops: Mutex<Vec<String>>,
 }
 
 impl FakeBackend {
@@ -149,6 +150,9 @@ impl FakeBackend {
     }
     pub fn conflict_ops(&self) -> Vec<String> {
         self.conflict_ops.lock().unwrap().clone()
+    }
+    pub fn tag_ops(&self) -> Vec<String> {
+        self.tag_ops.lock().unwrap().clone()
     }
     pub fn with_conflict_sides(self, sides: ConflictSides) -> Self {
         *self.canned_conflict_sides.lock().unwrap() = Some(sides);
@@ -333,6 +337,24 @@ impl GitBackend for FakeBackend {
             .lock()
             .unwrap()
             .push(format!("cherry-pick:{commit_id}"));
+        Ok(())
+    }
+    fn create_tag(
+        &self,
+        _path: &Path,
+        name: &str,
+        commit_id: &str,
+        message: Option<&str>,
+    ) -> Result<(), GitError> {
+        let m = message.unwrap_or("");
+        self.tag_ops
+            .lock()
+            .unwrap()
+            .push(format!("create:{name}@{commit_id}:{m}"));
+        Ok(())
+    }
+    fn delete_tag(&self, _path: &Path, name: &str) -> Result<(), GitError> {
+        self.tag_ops.lock().unwrap().push(format!("delete:{name}"));
         Ok(())
     }
     fn ahead_behind(&self, _path: &Path) -> Result<Option<AheadBehind>, GitError> {

@@ -240,6 +240,16 @@ export async function revert(repoPath: string, commitId: string): Promise<void> 
   await invoke("revert", { repoPath, commitId });
 }
 
+/** 在某提交上打标签。message 非空 → 附注标签,否则轻量标签。同名抛 TAG_EXISTS。 */
+export async function createTag(repoPath: string, name: string, commitId: string, message?: string): Promise<void> {
+  await invoke("create_tag", { repoPath, name, commitId, message: message?.trim() ? message : null });
+}
+
+/** 删除标签。 */
+export async function deleteTag(repoPath: string, name: string): Promise<void> {
+  await invoke("delete_tag", { repoPath, name });
+}
+
 // ── 贮藏(stash) ──
 export interface StashDto {
   index: number;

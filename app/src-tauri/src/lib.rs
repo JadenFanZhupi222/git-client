@@ -36,6 +36,7 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         BranchAlreadyExists(_) => ("BRANCH_EXISTS", false),
         InvalidBranchName => ("INVALID_BRANCH_NAME", false),
         CannotDeleteCurrentBranch => ("CANNOT_DELETE_CURRENT", false),
+        TagAlreadyExists(_) => ("TAG_EXISTS", false),
         CheckoutConflict => ("CHECKOUT_CONFLICT", true),
         GitCliNotFound => ("GIT_CLI_NOT_FOUND", false),
         AuthFailed => ("AUTH_FAILED", true),
@@ -466,6 +467,33 @@ async fn revert(repo_path: String, commit_id: String) -> Result<(), IpcError> {
     .map_err(to_ipc)
 }
 
+#[tauri::command]
+async fn create_tag(
+    repo_path: String,
+    name: String,
+    commit_id: String,
+    message: Option<String>,
+) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.create_tag(&PathBuf::from(repo_path), &name, &commit_id, message.as_deref())
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn delete_tag(repo_path: String, name: String) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.delete_tag(&PathBuf::from(repo_path), &name)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
 /// 写入冲突解决后的内容并标记已解决(写文件 + git add)。防目录穿越。
 #[tauri::command]
 async fn write_resolved(repo_path: String, file: String, content: String) -> Result<(), IpcError> {
@@ -655,6 +683,8 @@ pub fn run() {
             abort_op,
             cherry_pick,
             revert,
+            create_tag,
+            delete_tag,
             blame,
             conflict_sides,
             read_working_file,

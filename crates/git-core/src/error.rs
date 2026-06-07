@@ -37,6 +37,9 @@ pub enum GitError {
     #[error("不能删除当前所在的分支,请先切到别的分支")]
     CannotDeleteCurrentBranch,
 
+    #[error("标签已存在: {0}")]
+    TagAlreadyExists(String),
+
     #[error("工作区有未提交的改动,切换分支会被覆盖,请先提交或暂存")]
     CheckoutConflict,
 

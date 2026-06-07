@@ -99,6 +99,18 @@ impl GitBackend for CompositeBackend {
     fn revert(&self, repo: &Path, commit_id: &str) -> Result<(), GitError> {
         self.cli.revert(repo, commit_id)
     }
+    fn create_tag(
+        &self,
+        repo: &Path,
+        name: &str,
+        commit_id: &str,
+        message: Option<&str>,
+    ) -> Result<(), GitError> {
+        self.git2.create_tag(repo, name, commit_id, message)
+    }
+    fn delete_tag(&self, repo: &Path, name: &str) -> Result<(), GitError> {
+        self.git2.delete_tag(repo, name)
+    }
     fn ahead_behind(&self, repo: &Path) -> Result<Option<AheadBehind>, GitError> {
         self.git2.ahead_behind(repo)
     }
