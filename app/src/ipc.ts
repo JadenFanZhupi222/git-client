@@ -120,6 +120,11 @@ export async function getRemotes(repoPath: string): Promise<string[]> {
   return await invoke<string[]>("get_remotes", { repoPath });
 }
 
+/** 列出所有引用(本地分支/远程跟踪/标签/HEAD)。 */
+export async function listRefs(repoPath: string): Promise<RefDto[]> {
+  return await invoke<RefDto[]>("list_refs", { repoPath });
+}
+
 /** 把当前分支上游设为 upstream(形如 "origin/main")。 */
 export async function setUpstream(repoPath: string, upstream: string): Promise<void> {
   await invoke("set_upstream", { repoPath, upstream });

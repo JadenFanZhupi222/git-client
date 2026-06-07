@@ -232,6 +232,16 @@ impl RepoService {
         self.backend.remotes(repo_path)
     }
 
+    /// 用例:列出所有引用(本地分支/远程跟踪/标签/HEAD),供「比较」选择器等使用。
+    pub fn refs(&self, repo_path: &Path) -> Result<Vec<RefDto>, GitError> {
+        Ok(self
+            .backend
+            .refs(repo_path)?
+            .into_iter()
+            .map(RefDto::from)
+            .collect())
+    }
+
     /// 用例:把当前分支上游设为 upstream(形如 "origin/main")。
     pub fn set_upstream(&self, repo_path: &Path, upstream: &str) -> Result<(), GitError> {
         if upstream.trim().is_empty() {
@@ -736,6 +746,28 @@ mod tests {
         assert_eq!(dtos[0].name, "main");
         assert!(dtos[0].is_head);
         assert!(!dtos[1].is_head);
+    }
+
+    #[test]
+    fn refs_map_to_dto() {
+        use git_core::model::{CommitRef, RefKind};
+        let fb = FakeBackend::default().with_refs(vec![
+            CommitRef {
+                name: "main".into(),
+                kind: RefKind::LocalBranch,
+                target: "a".into(),
+            },
+            CommitRef {
+                name: "origin/main".into(),
+                kind: RefKind::RemoteBranch,
+                target: "a".into(),
+            },
+        ]);
+        let svc = RepoService::new(Arc::new(fb));
+        let dtos = svc.refs(Path::new("/r")).unwrap();
+        assert_eq!(dtos.len(), 2);
+        assert_eq!(dtos[1].name, "origin/main");
+        assert_eq!(dtos[1].kind, "remote");
     }
 
     #[test]
