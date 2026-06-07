@@ -31,6 +31,17 @@ pub trait GitBackend: Send + Sync {
     /// 提交历史,时间倒序(新→旧)。limit/skip 分页。
     fn log(&self, repo: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, GitError>;
 
+    /// 从 HEAD 搜索提交(时间倒序),大小写不敏感匹配 summary/body/作者名/邮箱/SHA 前缀。
+    /// 最多返回 limit 条。空 query / 不支持 → 空。默认 Unsupported。
+    fn search_commits(
+        &self,
+        _repo: &Path,
+        _query: &str,
+        _limit: usize,
+    ) -> Result<Vec<Commit>, GitError> {
+        Err(GitError::Unsupported)
+    }
+
     /// 某提交相对第一个父的改动文件(文件级)。
     fn commit_files(&self, repo: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError>;
 

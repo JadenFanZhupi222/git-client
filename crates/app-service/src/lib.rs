@@ -120,6 +120,20 @@ impl RepoService {
         Ok(rows)
     }
 
+    /// 用例:从 HEAD 搜索提交(匹配 message/作者/SHA),扁平列表。空 query 返回空。
+    pub fn search_commits(
+        &self,
+        repo_path: &Path,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<CommitDto>, GitError> {
+        if query.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let commits = self.backend.search_commits(repo_path, query, limit)?;
+        Ok(commits.into_iter().map(CommitDto::from).collect())
+    }
+
     /// 用例:某提交改动的文件列表。
     pub fn commit_files(
         &self,
@@ -418,6 +432,41 @@ mod tests {
         assert_eq!(rows[1].refs.len(), 1);
         assert_eq!(rows[1].refs[0].kind, "remote");
         assert_eq!(rows[1].refs[0].name, "origin/main");
+    }
+
+    #[test]
+    fn search_commits_filters_and_limits() {
+        use git_core::model::{Commit, Signature};
+        let mk = |id: &str, summary: &str, author: &str| Commit {
+            id: id.into(),
+            short_id: id.chars().take(7).collect(),
+            summary: summary.into(),
+            body: String::new(),
+            author: Signature { name: author.into(), email: format!("{author}@e") },
+            timestamp: 0,
+            parents: vec![],
+        };
+        let fb = FakeBackend::default().with_log(vec![
+            mk("aaa111", "fix login bug", "alice"),
+            mk("bbb222", "add Login page", "bob"),
+            mk("ccc333", "refactor utils", "carol"),
+        ]);
+        let svc = RepoService::new(Arc::new(fb));
+        // 大小写不敏感匹配 summary
+        let hits = svc.search_commits(Path::new("/r"), "login", 10).unwrap();
+        assert_eq!(hits.len(), 2);
+        // 按作者
+        let by_author = svc.search_commits(Path::new("/r"), "carol", 10).unwrap();
+        assert_eq!(by_author.len(), 1);
+        assert_eq!(by_author[0].id, "ccc333");
+        // SHA 前缀
+        let by_sha = svc.search_commits(Path::new("/r"), "bbb", 10).unwrap();
+        assert_eq!(by_sha.len(), 1);
+        // limit 生效
+        let limited = svc.search_commits(Path::new("/r"), "login", 1).unwrap();
+        assert_eq!(limited.len(), 1);
+        // 空 query → 空
+        assert!(svc.search_commits(Path::new("/r"), "  ", 10).unwrap().is_empty());
     }
 
     #[test]

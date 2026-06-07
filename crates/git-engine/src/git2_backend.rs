@@ -339,6 +339,52 @@ impl GitBackend for Git2Backend {
         }
         Ok(out)
     }
+
+    fn search_commits(
+        &self,
+        path: &Path,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<Commit>, GitError> {
+        let q = query.trim().to_lowercase();
+        if q.is_empty() {
+            return Ok(Vec::new());
+        }
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        // 空仓库(unborn HEAD)→ 无可搜。
+        match repo.head() {
+            Ok(_) => {}
+            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => return Ok(Vec::new()),
+            Err(e) => return Err(GitError::Backend(e.to_string())),
+        }
+        let mut walk = repo.revwalk().map_err(|e| GitError::Backend(e.to_string()))?;
+        walk.set_sorting(git2::Sort::TIME)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        walk.push_head().map_err(|e| GitError::Backend(e.to_string()))?;
+
+        // 惰性遍历整段历史,逐条匹配后收集,够 limit 即停 —— 不预先 collect。
+        let mut out = Vec::new();
+        for oid in walk {
+            let oid = oid.map_err(|e| GitError::Backend(e.to_string()))?;
+            let commit = repo
+                .find_commit(oid)
+                .map_err(|e| GitError::Backend(e.to_string()))?;
+            let c = build_commit(&commit);
+            let hit = c.id.starts_with(&q)
+                || c.summary.to_lowercase().contains(&q)
+                || c.body.to_lowercase().contains(&q)
+                || c.author.name.to_lowercase().contains(&q)
+                || c.author.email.to_lowercase().contains(&q);
+            if hit {
+                out.push(c);
+                if out.len() >= limit {
+                    break;
+                }
+            }
+        }
+        Ok(out)
+    }
     fn commit_files(&self, path: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError> {
         let repo =
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
@@ -1494,6 +1540,32 @@ mod tests {
         let ab = Git2Backend.ahead_behind(&repo).unwrap();
         assert!(ab.is_some(), "设上游后应能计算 ahead/behind");
         assert_eq!(ab.unwrap().ahead, 0);
+    }
+
+    #[test]
+    fn search_commits_matches_message_author_sha() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "fix login bug", 1000);
+        stage(&repo, "a.txt", "2");
+        let c2 = commit_index(&repo, "add feature", 2000);
+
+        // 按 message(大小写不敏感)
+        let hits = b.search_commits(&repo, "LOGIN", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].summary, "fix login bug");
+        // 按 SHA 前缀
+        let by_sha = b.search_commits(&repo, &c2[..6], 10).unwrap();
+        assert_eq!(by_sha.len(), 1);
+        assert_eq!(by_sha[0].id, c2);
+        // 按作者(init_repo 配的是 Test)
+        let by_author = b.search_commits(&repo, "test", 10).unwrap();
+        assert_eq!(by_author.len(), 2, "两条都由 Test 提交");
+        // 空 query → 空
+        assert!(b.search_commits(&repo, "  ", 10).unwrap().is_empty());
+        // 无匹配 → 空
+        assert!(b.search_commits(&repo, "zzz-nope", 10).unwrap().is_empty());
     }
 
     #[test]

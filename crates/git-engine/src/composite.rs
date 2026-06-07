@@ -37,6 +37,9 @@ impl GitBackend for CompositeBackend {
     fn log(&self, repo: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, GitError> {
         self.git2.log(repo, limit, skip)
     }
+    fn search_commits(&self, repo: &Path, query: &str, limit: usize) -> Result<Vec<Commit>, GitError> {
+        self.git2.search_commits(repo, query, limit)
+    }
     fn commit_files(&self, repo: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError> {
         self.git2.commit_files(repo, commit_id)
     }

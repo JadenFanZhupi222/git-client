@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cherryPick, revert, type CommitDto, type GraphRowDto, type FileChangeDto, type IpcError } from "../ipc";
-import { useGraph, useCommitFiles, useCommitDiff, useCurrentBranch, invalidateHistory, invalidateWorktree, qk } from "../lib/queries";
+import { useGraph, useCommitSearch, useCommitFiles, useCommitDiff, useCurrentBranch, invalidateHistory, invalidateWorktree, qk } from "../lib/queries";
 import { CommitGraph } from "../components/CommitGraph";
 import { CommitFileList } from "../components/CommitFileList";
 import { CommitDetail } from "../components/CommitDetail";
 import { DiffView } from "../components/DiffView";
 import { Resizer, useResizableWidth } from "../components/Resizer";
 import { useToast } from "../components/Toast";
-import { BranchIcon, CommitIcon, FileDiffIcon } from "../components/icons";
+import { formatRelative } from "../lib/time";
+import { BranchIcon, CommitIcon, FileDiffIcon, SearchIcon, CloseIcon } from "../components/icons";
 
 const PAGE = 50;
+const SEARCH_LIMIT = 200;
 
 /** 栏头:小标题 + 可选图标,统一三栏顶部观感 */
 function ColumnHead({ icon, children }: { icon?: React.ReactNode; children: React.ReactNode }) {
@@ -27,12 +29,22 @@ export function HistoryView({ repo }: { repo: string }) {
   const [selected, setSelected] = useState<CommitDto | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
+  const [query, setQuery] = useState(""); // debounce 后的查询
   const qc = useQueryClient();
   const toast = useToast();
+
+  // 输入防抖:停止输入 300ms 后才真正查询,避免每个字符一次 IPC。
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(searchInput), 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+  const searching = query.trim().length > 0;
 
   // 图谱从 HEAD 整段计算(skip=0,limit 递增),保证泳道一致。失效/limit 变化自动重取。
   const graphQ = useGraph(repo, limit);
   const rows = graphQ.data ?? [];
+  const searchQ = useCommitSearch(repo, query, SEARCH_LIMIT);
   const branchQ = useCurrentBranch(repo);
   const filesQ = useCommitFiles(repo, selected?.id ?? null);
   const diffQ = useCommitDiff(repo, selected?.id ?? null, selectedFile);
@@ -44,8 +56,8 @@ export function HistoryView({ repo }: { repo: string }) {
     (diffQ.error as { message?: string } | null)?.message ??
     null;
 
-  // 切仓库:重置分页与选择
-  useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); }, [repo]);
+  // 切仓库:重置分页、选择与搜索
+  useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); setSearchInput(""); setQuery(""); }, [repo]);
 
   function selectCommit(c: CommitDto) {
     setSelected(c);
@@ -109,6 +121,11 @@ export function HistoryView({ repo }: { repo: string }) {
         firstLoad={graphQ.isLoading}
         hasMore={hasMore}
         error={error}
+        searchInput={searchInput}
+        onSearchChange={setSearchInput}
+        searching={searching}
+        searchResults={searchQ.data ?? []}
+        searchLoading={searchQ.isFetching}
       />
 
       {/* 中间列:提交详情(上)+ 改动文件(下) */}
@@ -133,9 +150,10 @@ export function HistoryView({ repo }: { repo: string }) {
   );
 }
 
-/** 图谱列(含可拖拽宽度) */
+/** 图谱列(含可拖拽宽度 + 提交搜索)。搜索时切扁平匹配列表,清空回到图谱。 */
 function GraphColumn({
   branch, rows, selectedId, onSelect, onLoadMore, loading, firstLoad, hasMore, error,
+  searchInput, onSearchChange, searching, searchResults, searchLoading,
 }: {
   branch: string | null;
   rows: GraphRowDto[];
@@ -146,6 +164,11 @@ function GraphColumn({
   firstLoad: boolean;
   hasMore: boolean;
   error: string | null;
+  searchInput: string;
+  onSearchChange: (v: string) => void;
+  searching: boolean;
+  searchResults: CommitDto[];
+  searchLoading: boolean;
 }) {
   const col = useResizableWidth("history.graphW", 320, 220, 640);
   return (
@@ -154,18 +177,79 @@ function GraphColumn({
         <ColumnHead icon={<BranchIcon width={13} height={13} />}>
           {branch ? <span className="font-mono normal-case tracking-normal text-fg">{branch}</span> : "提交历史"}
         </ColumnHead>
+        {/* 搜索框:按 message / 作者 / SHA 过滤 */}
+        <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-2.5 py-1.5">
+          <SearchIcon width={13} height={13} className="shrink-0 text-fg-subtle" />
+          <input
+            value={searchInput}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="搜索提交(信息 / 作者 / SHA)"
+            className="min-w-0 flex-1 bg-transparent text-xs text-fg placeholder:text-fg-subtle focus:outline-none"
+          />
+          {searchInput && (
+            <button onClick={() => onSearchChange("")} title="清除" className="shrink-0 text-fg-subtle hover:text-fg">
+              <CloseIcon width={12} height={12} />
+            </button>
+          )}
+        </div>
         {error && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{error}</p>}
-        <CommitGraph
-          rows={rows}
-          selectedId={selectedId}
-          onSelect={onSelect}
-          onLoadMore={onLoadMore}
-          loading={firstLoad || loading}
-          hasMore={hasMore}
-        />
+        {searching ? (
+          <SearchList results={searchResults} loading={searchLoading} selectedId={selectedId} onSelect={onSelect} />
+        ) : (
+          <CommitGraph
+            rows={rows}
+            selectedId={selectedId}
+            onSelect={onSelect}
+            onLoadMore={onLoadMore}
+            loading={firstLoad || loading}
+            hasMore={hasMore}
+          />
+        )}
       </div>
       <Resizer onDown={col.onDown} />
     </>
+  );
+}
+
+/** 搜索结果:扁平提交列表(无泳道)。 */
+function SearchList({
+  results, loading, selectedId, onSelect,
+}: {
+  results: CommitDto[];
+  loading: boolean;
+  selectedId: string | null;
+  onSelect: (c: CommitDto) => void;
+}) {
+  if (loading && results.length === 0) {
+    return <div className="p-3 text-xs text-fg-subtle">搜索中…</div>;
+  }
+  if (results.length === 0) {
+    return <div className="p-3 text-xs text-fg-subtle">没有匹配的提交</div>;
+  }
+  return (
+    <div className="fade-in overflow-y-auto">
+      <div className="px-3 py-1.5 text-[11px] text-fg-subtle">{results.length} 条匹配{results.length >= SEARCH_LIMIT ? "(已截断)" : ""}</div>
+      {results.map((c) => {
+        const on = selectedId === c.id;
+        return (
+          <div
+            key={c.id}
+            onClick={() => onSelect(c)}
+            className={`flex cursor-pointer items-center gap-2 border-l-2 px-3 py-2 transition-colors ${
+              on ? "border-accent-emphasis bg-overlay" : "border-transparent hover:bg-elevated"
+            }`}
+          >
+            <span className="h-2 w-2 shrink-0 rounded-full bg-fg-subtle" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[13px] text-fg" title={c.summary}>{c.summary}</div>
+              <div className="truncate font-mono text-[11px] text-fg-muted">
+                {c.short_id} · {c.author_name} · {formatRelative(c.timestamp)}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
