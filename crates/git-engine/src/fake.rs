@@ -1,7 +1,7 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, FileEntry, PullOutcome, PushOutcome, RepoState, Signature, StashEntry, SyncCommits,
-    WorkingTreeStatus,
+    FileDiff, FileEntry, PullOutcome, PushOutcome, RepoState, ResetMode, Signature, StashEntry,
+    SyncCommits, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -355,6 +355,15 @@ impl GitBackend for FakeBackend {
     }
     fn delete_tag(&self, _path: &Path, name: &str) -> Result<(), GitError> {
         self.tag_ops.lock().unwrap().push(format!("delete:{name}"));
+        Ok(())
+    }
+    fn reset(&self, _path: &Path, commit_id: &str, mode: ResetMode) -> Result<(), GitError> {
+        let m = match mode {
+            ResetMode::Soft => "soft",
+            ResetMode::Mixed => "mixed",
+            ResetMode::Hard => "hard",
+        };
+        self.tag_ops.lock().unwrap().push(format!("reset:{m}:{commit_id}"));
         Ok(())
     }
     fn ahead_behind(&self, _path: &Path) -> Result<Option<AheadBehind>, GitError> {

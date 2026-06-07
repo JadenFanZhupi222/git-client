@@ -2,7 +2,8 @@ use crate::cli_backend::CliBackend;
 use crate::git2_backend::Git2Backend;
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, PullOutcome, PushOutcome, RepoState, StashEntry, SyncCommits, WorkingTreeStatus,
+    FileDiff, PullOutcome, PushOutcome, RepoState, ResetMode, StashEntry, SyncCommits,
+    WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -110,6 +111,9 @@ impl GitBackend for CompositeBackend {
     }
     fn delete_tag(&self, repo: &Path, name: &str) -> Result<(), GitError> {
         self.git2.delete_tag(repo, name)
+    }
+    fn reset(&self, repo: &Path, commit_id: &str, mode: ResetMode) -> Result<(), GitError> {
+        self.git2.reset(repo, commit_id, mode)
     }
     fn ahead_behind(&self, repo: &Path) -> Result<Option<AheadBehind>, GitError> {
         self.git2.ahead_behind(repo)

@@ -494,6 +494,28 @@ async fn delete_tag(repo_path: String, name: String) -> Result<(), IpcError> {
     .map_err(to_ipc)
 }
 
+#[tauri::command]
+async fn reset(repo_path: String, commit_id: String, mode: String) -> Result<(), IpcError> {
+    use git_core::model::ResetMode;
+    let mode = match mode.as_str() {
+        "soft" => ResetMode::Soft,
+        "mixed" => ResetMode::Mixed,
+        "hard" => ResetMode::Hard,
+        other => {
+            return Err(to_ipc(git_core::GitError::Backend(format!(
+                "未知 reset 模式: {other}"
+            ))));
+        }
+    };
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.reset(&PathBuf::from(repo_path), &commit_id, mode)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
 /// 写入冲突解决后的内容并标记已解决(写文件 + git add)。防目录穿越。
 #[tauri::command]
 async fn write_resolved(repo_path: String, file: String, content: String) -> Result<(), IpcError> {
@@ -685,6 +707,7 @@ pub fn run() {
             revert,
             create_tag,
             delete_tag,
+            reset,
             blame,
             conflict_sides,
             read_working_file,

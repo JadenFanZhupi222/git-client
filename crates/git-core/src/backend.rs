@@ -1,7 +1,8 @@
 use crate::error::GitError;
 use crate::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, PullOutcome, PushOutcome, RepoState, StashEntry, SyncCommits, WorkingTreeStatus,
+    FileDiff, PullOutcome, PushOutcome, RepoState, ResetMode, StashEntry, SyncCommits,
+    WorkingTreeStatus,
 };
 use std::path::Path;
 
@@ -129,6 +130,12 @@ pub trait GitBackend: Send + Sync {
 
     /// 删除标签。默认 Unsupported。
     fn delete_tag(&self, _repo: &Path, _name: &str) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+
+    /// 把当前分支 HEAD 重置到指定提交。mode 决定是否一并重置暂存区/工作区
+    /// (Hard 会丢弃未提交改动)。默认 Unsupported。
+    fn reset(&self, _repo: &Path, _commit_id: &str, _mode: ResetMode) -> Result<(), GitError> {
         Err(GitError::Unsupported)
     }
 

@@ -5,6 +5,7 @@ import { useGraph, useCommitSearch, useCommitFiles, useCommitDiff, useCurrentBra
 import { CommitGraph } from "../components/CommitGraph";
 import { CommitLines } from "../components/CommitLines";
 import { TagManager } from "../components/TagManager";
+import { ResetMenu } from "../components/ResetMenu";
 import { CommitFileList } from "../components/CommitFileList";
 import { CommitDetail } from "../components/CommitDetail";
 import { DiffView } from "../components/DiffView";
@@ -141,6 +142,11 @@ export function HistoryView({ repo }: { repo: string }) {
         repo={repo}
         tags={selectedTags}
         onTagsChanged={() => invalidateHistory(qc, repo)}
+        onResetDone={() => {
+          invalidateHistory(qc, repo);
+          invalidateWorktree(qc, repo);
+          qc.invalidateQueries({ queryKey: qk.repoState(repo) });
+        }}
         busy={busy}
       />
 
@@ -257,7 +263,7 @@ function SearchList({
 
 /** 中间列:提交详情 + 改动文件(含可拖拽宽度) */
 function MidColumn({
-  repo, commit, files, selectedFile, onSelectFile, onCherryPick, onRevert, tags, onTagsChanged, busy,
+  repo, commit, files, selectedFile, onSelectFile, onCherryPick, onRevert, onResetDone, tags, onTagsChanged, busy,
 }: {
   repo: string;
   commit: CommitDto | null;
@@ -266,6 +272,7 @@ function MidColumn({
   onSelectFile: (path: string) => void;
   onCherryPick?: () => void;
   onRevert?: () => void;
+  onResetDone: () => void;
   tags: string[];
   onTagsChanged: () => void;
   busy?: boolean;
@@ -278,8 +285,9 @@ function MidColumn({
         <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
           <CommitIcon width={13} height={13} />
           <span>提交详情</span>
-          {commit && (onCherryPick || onRevert) && (
+          {commit && (
             <div className="ml-auto flex items-center gap-1">
+              <ResetMenu repo={repo} commit={commit} onDone={onResetDone} />
               {onCherryPick && (
                 <button
                   onClick={onCherryPick}

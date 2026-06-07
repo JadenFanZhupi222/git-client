@@ -1,7 +1,7 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, DiffLine, DiffLineKind,
-    FileChange, FileDiff, FileEntry, FileState, Hunk, RefKind, RepoState, Signature, SyncCommits,
-    WorkingTreeStatus,
+    FileChange, FileDiff, FileEntry, FileState, Hunk, RefKind, RepoState, ResetMode, Signature,
+    SyncCommits, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::collections::HashSet;
@@ -613,6 +613,23 @@ impl GitBackend for Git2Backend {
         let repo =
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
         repo.tag_delete(name)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        Ok(())
+    }
+
+    fn reset(&self, path: &Path, commit_id: &str, mode: ResetMode) -> Result<(), GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let oid = git2::Oid::from_str(commit_id).map_err(|e| GitError::Backend(e.to_string()))?;
+        let obj = repo
+            .find_object(oid, None)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        let kind = match mode {
+            ResetMode::Soft => git2::ResetType::Soft,
+            ResetMode::Mixed => git2::ResetType::Mixed,
+            ResetMode::Hard => git2::ResetType::Hard,
+        };
+        repo.reset(&obj, kind, None)
             .map_err(|e| GitError::Backend(e.to_string()))?;
         Ok(())
     }
@@ -1686,6 +1703,31 @@ mod tests {
             .collect();
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].name, "v1.1");
+    }
+
+    #[test]
+    fn reset_moves_head_and_handles_worktree() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        let c1 = commit_index(&repo, "c1", 1000);
+        stage(&repo, "a.txt", "2");
+        let c2 = commit_index(&repo, "c2", 2000);
+
+        // soft reset 到 c1:HEAD 回到 c1,但工作区仍是 "2"。
+        b.reset(&repo, &c1, ResetMode::Soft).unwrap();
+        assert_eq!(b.log(&repo, 10, 0).unwrap().len(), 1, "soft 后只剩 c1 可达");
+        assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "2");
+
+        // 前进回 c2(hard),再 hard reset 到 c1:工作区也被重置成 "1"。
+        b.reset(&repo, &c2, ResetMode::Hard).unwrap();
+        assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "2");
+        b.reset(&repo, &c1, ResetMode::Hard).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+            "1",
+            "hard reset 应丢弃工作区改动,回到 c1 内容"
+        );
     }
 
     #[test]
