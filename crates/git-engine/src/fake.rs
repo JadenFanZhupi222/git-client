@@ -1,6 +1,7 @@
 use git_core::model::{
-    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, FetchOutcome, FileChange, FileDiff,
-    FileEntry, PullOutcome, PushOutcome, RepoState, StashEntry, Signature, WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
+    FileDiff, FileEntry, PullOutcome, PushOutcome, RepoState, StashEntry, Signature,
+    WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -39,6 +40,7 @@ pub struct FakeBackend {
     stash_ops: Mutex<Vec<String>>,
     canned_repo_state: Mutex<Option<RepoState>>, // None → Clean
     conflict_ops: Mutex<Vec<String>>,
+    canned_conflict_sides: Mutex<Option<ConflictSides>>,
 }
 
 impl FakeBackend {
@@ -143,6 +145,10 @@ impl FakeBackend {
     pub fn conflict_ops(&self) -> Vec<String> {
         self.conflict_ops.lock().unwrap().clone()
     }
+    pub fn with_conflict_sides(self, sides: ConflictSides) -> Self {
+        *self.canned_conflict_sides.lock().unwrap() = Some(sides);
+        self
+    }
 }
 
 impl GitBackend for FakeBackend {
@@ -238,6 +244,18 @@ impl GitBackend for FakeBackend {
     }
     fn blame(&self, _path: &Path, _file: &str) -> Result<Vec<BlameLine>, GitError> {
         Ok(Vec::new())
+    }
+    fn conflict_sides(&self, _path: &Path, _file: &str) -> Result<ConflictSides, GitError> {
+        Ok(self
+            .canned_conflict_sides
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or(ConflictSides {
+                base: None,
+                ours: None,
+                theirs: None,
+            }))
     }
     fn resolve_ours(&self, _path: &Path, file: &str) -> Result<(), GitError> {
         self.conflict_ops.lock().unwrap().push(format!("ours:{file}"));

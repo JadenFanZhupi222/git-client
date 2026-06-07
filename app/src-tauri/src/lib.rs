@@ -2,8 +2,9 @@ use app_service::RepoService;
 use app_service::watcher::{ChangeKind, RepoWatcher};
 use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组合
 use ipc_types::{
-    AheadBehindDto, BlameLineDto, BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto,
-    GraphRowDto, IpcError, PullResultDto, PushResultDto, StashDto, StatusDto,
+    AheadBehindDto, BlameLineDto, BranchDto, CommitDto, ConflictSidesDto, FetchResultDto,
+    FileChangeDto, FileDiffDto, GraphRowDto, IpcError, PullResultDto, PushResultDto, StashDto,
+    StatusDto,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -455,6 +456,18 @@ async fn write_resolved(repo_path: String, file: String, content: String) -> Res
     .map_err(join_panic)?
 }
 
+/// 读冲突文件三方内容(base/ours/theirs)供三栏合并编辑器渲染。
+#[tauri::command]
+async fn conflict_sides(repo_path: String, file: String) -> Result<ConflictSidesDto, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.conflict_sides(&PathBuf::from(repo_path), &file)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
 /// 读工作区某文件原文(用于冲突文件只读展示)。不经 git,直接 fs;防目录穿越。
 #[tauri::command]
 async fn read_working_file(repo_path: String, file: String) -> Result<String, IpcError> {
@@ -601,6 +614,7 @@ pub fn run() {
             abort_op,
             cherry_pick,
             blame,
+            conflict_sides,
             read_working_file,
             write_resolved,
             stash_list,

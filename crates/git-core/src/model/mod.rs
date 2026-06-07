@@ -1,6 +1,7 @@
 mod blame;
 mod branch;
 mod commit;
+mod conflict;
 mod diff;
 mod remote;
 mod repo_state;
@@ -10,6 +11,7 @@ mod status;
 pub use blame::BlameLine;
 pub use branch::{AheadBehind, BranchInfo, CommitRef, RefKind};
 pub use commit::{Commit, Signature};
+pub use conflict::ConflictSides;
 pub use diff::{DiffLine, DiffLineKind, FileChange, FileDiff, Hunk};
 pub use remote::{FetchOutcome, PullOutcome, PushOutcome};
 pub use repo_state::RepoState;

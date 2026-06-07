@@ -1,6 +1,7 @@
 use git_core::model::{
-    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, DiffLine, DiffLineKind, FileChange,
-    FileDiff, FileEntry, FileState, Hunk, RefKind, RepoState, Signature, WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, DiffLine, DiffLineKind,
+    FileChange, FileDiff, FileEntry, FileState, Hunk, RefKind, RepoState, Signature,
+    WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -609,6 +610,50 @@ impl GitBackend for Git2Backend {
             S::Revert | S::RevertSequence => RepoState::Reverting,
             _ => RepoState::Other,
         })
+    }
+
+    fn conflict_sides(&self, path: &Path, file: &str) -> Result<ConflictSides, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let index = repo.index().map_err(|e| GitError::Backend(e.to_string()))?;
+        let conflicts = index
+            .conflicts()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+
+        // git index 内部统一用正斜杠存路径;Windows 传进来的可能是反斜杠,先归一化。
+        let want = file.replace('\\', "/").into_bytes();
+
+        // 把一个 stage 条目的 blob 读成文本(二进制按 lossy 处理);缺失 → None。
+        let read_blob = |entry: &Option<git2::IndexEntry>| -> Result<Option<String>, GitError> {
+            match entry {
+                Some(e) => {
+                    let blob = repo
+                        .find_blob(e.id)
+                        .map_err(|e| GitError::Backend(e.to_string()))?;
+                    Ok(Some(String::from_utf8_lossy(blob.content()).into_owned()))
+                }
+                None => Ok(None),
+            }
+        };
+
+        for c in conflicts {
+            let c = c.map_err(|e| GitError::Backend(e.to_string()))?;
+            // 任一 stage 条目都带同一路径;取第一个存在的来匹配。
+            let entry_path = c
+                .our
+                .as_ref()
+                .or(c.their.as_ref())
+                .or(c.ancestor.as_ref())
+                .map(|e| e.path.clone());
+            if entry_path.as_deref() == Some(want.as_slice()) {
+                return Ok(ConflictSides {
+                    base: read_blob(&c.ancestor)?,
+                    ours: read_blob(&c.our)?,
+                    theirs: read_blob(&c.their)?,
+                });
+            }
+        }
+        Err(GitError::Backend(format!("文件无冲突记录: {file}")))
     }
 
     fn set_upstream(&self, path: &Path, upstream: &str) -> Result<(), GitError> {
@@ -1457,6 +1502,34 @@ mod tests {
         g(&["merge", "other"]); // 同一行分叉 → 冲突,进入合并中
 
         assert_eq!(b.repo_state(&repo).unwrap(), RepoState::Merging);
+    }
+
+    #[test]
+    fn conflict_sides_returns_three_ways() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        let g = |args: &[&str]| {
+            std::process::Command::new("git")
+                .current_dir(&repo)
+                .args(args)
+                .output()
+                .unwrap();
+        };
+        write(&repo, "f.txt", "base\n");
+        g(&["add", "."]);
+        g(&["commit", "-m", "c1"]);
+        g(&["checkout", "-b", "other"]);
+        write(&repo, "f.txt", "theirs\n");
+        g(&["commit", "-am", "cO"]);
+        g(&["checkout", "-"]); // 回到初始分支
+        write(&repo, "f.txt", "ours\n");
+        g(&["commit", "-am", "cM"]);
+        g(&["merge", "other"]); // 同行分叉 → 冲突,进入合并中
+
+        let sides = b.conflict_sides(&repo, "f.txt").unwrap();
+        assert_eq!(sides.base.as_deref(), Some("base\n"));
+        assert_eq!(sides.ours.as_deref(), Some("ours\n"));
+        assert_eq!(sides.theirs.as_deref(), Some("theirs\n"));
     }
 
     #[test]

@@ -7,7 +7,7 @@ import { useEffect } from "react";
 import {
   getStatus, getWorkingDiff, getCommitGraph, getCommitFiles, getCommitFileDiff,
   getCurrentBranch, getAheadBehind, getRemotes, listBranches, stashList,
-  getRepoState, readWorkingFile, blame,
+  getRepoState, readWorkingFile, blame, conflictSides,
   watchRepo, onRepoChanged,
 } from "../ipc";
 
@@ -26,6 +26,7 @@ export const qk = {
   repoState: (repo: string) => ["repoState", repo] as const,
   fileText: (repo: string) => ["fileText", repo] as const,
   blame: (repo: string) => ["blame", repo] as const,
+  conflictSides: (repo: string) => ["conflictSides", repo] as const,
 };
 
 // ---- 读 hooks ----
@@ -94,6 +95,15 @@ export function useBlame(repo: string, file: string | null) {
   return useQuery({
     queryKey: [...qk.blame(repo), file ?? ""],
     queryFn: () => blame(repo, file!),
+    enabled: !!repo && !!file,
+  });
+}
+
+/** 冲突文件三方内容(base/ours/theirs);供三栏合并编辑器。 */
+export function useConflictSides(repo: string, file: string | null) {
+  return useQuery({
+    queryKey: [...qk.conflictSides(repo), file ?? ""],
+    queryFn: () => conflictSides(repo, file!),
     enabled: !!repo && !!file,
   });
 }

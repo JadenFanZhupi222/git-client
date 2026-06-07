@@ -4,8 +4,9 @@
 
 use git_core::{GitBackend, GitError};
 use ipc_types::{
-    AheadBehindDto, BlameLineDto, BranchDto, CommitDto, FetchResultDto, FileChangeDto, FileDiffDto,
-    GraphRowDto, PullResultDto, PushResultDto, RefDto, StashDto, StatusDto,
+    AheadBehindDto, BlameLineDto, BranchDto, CommitDto, ConflictSidesDto, FetchResultDto,
+    FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto, StashDto,
+    StatusDto,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -190,6 +191,16 @@ impl RepoService {
     /// 用例:逐行 blame。
     pub fn blame(&self, repo_path: &Path, file: &str) -> Result<Vec<BlameLineDto>, GitError> {
         Ok(self.backend.blame(repo_path, file)?.into_iter().map(BlameLineDto::from).collect())
+    }
+    /// 用例:读冲突文件三方内容,供三栏合并编辑器渲染。
+    pub fn conflict_sides(
+        &self,
+        repo_path: &Path,
+        file: &str,
+    ) -> Result<ConflictSidesDto, GitError> {
+        Ok(ConflictSidesDto::from(
+            self.backend.conflict_sides(repo_path, file)?,
+        ))
     }
     pub fn resolve_ours(&self, repo_path: &Path, file: &str) -> Result<(), GitError> {
         self.backend.resolve_ours(repo_path, file)
@@ -492,6 +503,21 @@ mod tests {
         let fb = FakeBackend::default().with_repo_state(RepoState::Merging);
         let svc = RepoService::new(Arc::new(fb));
         assert_eq!(svc.repo_state(Path::new("/r")).unwrap(), "merging");
+    }
+
+    #[test]
+    fn conflict_sides_maps_to_dto() {
+        use git_core::model::ConflictSides;
+        let fb = FakeBackend::default().with_conflict_sides(ConflictSides {
+            base: Some("b\n".into()),
+            ours: Some("o\n".into()),
+            theirs: None,
+        });
+        let svc = RepoService::new(Arc::new(fb));
+        let dto = svc.conflict_sides(Path::new("/r"), "a.txt").unwrap();
+        assert_eq!(dto.base.as_deref(), Some("b\n"));
+        assert_eq!(dto.ours.as_deref(), Some("o\n"));
+        assert_eq!(dto.theirs, None);
     }
 
     #[test]
