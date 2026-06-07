@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useBranches, useCurrentBranch, useCompareFiles, useCompareDiff } from "../lib/queries";
+import { useRefs, useCurrentBranch, useCompareFiles, useCompareDiff } from "../lib/queries";
 import { CommitFileList } from "../components/CommitFileList";
 import { DiffView } from "../components/DiffView";
 import { Resizer, useResizableWidth } from "../components/Resizer";
@@ -9,9 +9,12 @@ import type { IpcError } from "../ipc";
 /** 比较两个 revision(分支/标签/提交)的改动:from → to。
  *  顶部两个分支选择器,左列改动文件,右侧行级 diff。 */
 export function CompareView({ repo }: { repo: string }) {
-  const branchesQ = useBranches(repo, !!repo);
+  const refsQ = useRefs(repo, !!repo);
   const curQ = useCurrentBranch(repo);
-  const branches = branchesQ.data ?? [];
+  // 选择器候选:本地分支 + 远程跟踪分支 + 标签(去掉 HEAD 这种符号引用)。
+  const refNames = (refsQ.data ?? [])
+    .filter((r) => r.kind === "local" || r.kind === "remote" || r.kind === "tag")
+    .map((r) => r.name);
 
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -39,10 +42,10 @@ export function CompareView({ repo }: { repo: string }) {
   const pick = "rounded border border-line-strong bg-canvas px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none";
   const Selector = ({ value, onChange, label }: { value: string; onChange: (v: string) => void; label: string }) => (
     <select value={value} onChange={(e) => onChange(e.target.value)} className={pick} title={label} aria-label={label}>
-      {/* 当前值若不在分支列表里(如填了 SHA/标签),仍展示出来 */}
-      {value && !branches.some((b) => b.name === value) && <option value={value}>{value}</option>}
-      {branches.map((b) => (
-        <option key={b.name} value={b.name}>{b.name}</option>
+      {/* 当前值若不在候选里(如填了 SHA),仍展示出来 */}
+      {value && !refNames.includes(value) && <option value={value}>{value}</option>}
+      {refNames.map((n) => (
+        <option key={n} value={n}>{n}</option>
       ))}
     </select>
   );

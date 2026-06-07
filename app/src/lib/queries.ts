@@ -7,7 +7,7 @@ import { useEffect } from "react";
 import {
   getStatus, getWorkingDiff, getCommitGraph, searchCommits, getCommitFiles, getCommitFileDiff,
   compareFiles, compareFileDiff,
-  getCurrentBranch, getAheadBehind, getRemotes, listBranches, stashList,
+  getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
   getRepoState, readWorkingFile, blame, conflictSides,
   watchRepo, onRepoChanged,
 } from "../ipc";
@@ -31,6 +31,7 @@ export const qk = {
   search: (repo: string) => ["search", repo] as const,
   compareFiles: (repo: string) => ["compareFiles", repo] as const,
   compareDiff: (repo: string) => ["compareDiff", repo] as const,
+  refs: (repo: string) => ["refs", repo] as const,
 };
 
 // ---- 读 hooks ----
@@ -113,6 +114,10 @@ export function useRemotes(repo: string) {
 
 export function useBranches(repo: string, enabled: boolean) {
   return useQuery({ queryKey: qk.branches(repo), queryFn: () => listBranches(repo), enabled });
+}
+
+export function useRefs(repo: string, enabled: boolean) {
+  return useQuery({ queryKey: qk.refs(repo), queryFn: () => listRefs(repo), enabled: enabled && !!repo });
 }
 
 export function useStashList(repo: string) {

@@ -3,8 +3,8 @@ use app_service::watcher::{ChangeKind, RepoWatcher};
 use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组合
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDto, CommitDto, ConflictSidesDto, FetchResultDto,
-    FileChangeDto, FileDiffDto, GraphRowDto, IpcError, PullResultDto, PushResultDto, StashDto,
-    StatusDto,
+    FileChangeDto, FileDiffDto, GraphRowDto, IpcError, PullResultDto, PushResultDto, RefDto,
+    StashDto, StatusDto,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -334,6 +334,17 @@ async fn get_remotes(repo_path: String) -> Result<Vec<String>, IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
         service.remotes(&PathBuf::from(repo_path))
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn list_refs(repo_path: String) -> Result<Vec<RefDto>, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.refs(&PathBuf::from(repo_path))
     })
     .await
     .map_err(join_panic)?
@@ -781,6 +792,7 @@ pub fn run() {
             list_branches,
             get_ahead_behind,
             get_remotes,
+            list_refs,
             set_upstream,
             checkout_branch,
             create_branch,
