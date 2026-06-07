@@ -319,6 +319,7 @@ export interface GraphRowDto {
   top: GraphSegDto[];
   bottom: GraphSegDto[];
   refs: RefDto[]; // 指向本行提交的引用(分支/远程/HEAD),多数为空
+  sync: "" | "outgoing" | "incoming"; // outgoing=已commit未push,incoming=已fetch未pull
 }
 
 /** 从 HEAD 取 limit 条提交并算好 lane 布局。 */

@@ -2,7 +2,7 @@ use crate::cli_backend::CliBackend;
 use crate::git2_backend::Git2Backend;
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, PullOutcome, PushOutcome, RepoState, StashEntry, WorkingTreeStatus,
+    FileDiff, PullOutcome, PushOutcome, RepoState, StashEntry, SyncCommits, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -92,6 +92,9 @@ impl GitBackend for CompositeBackend {
     }
     fn remotes(&self, repo: &Path) -> Result<Vec<String>, GitError> {
         self.git2.remotes(repo)
+    }
+    fn sync_commits(&self, repo: &Path) -> Result<SyncCommits, GitError> {
+        self.git2.sync_commits(repo)
     }
     fn set_upstream(&self, repo: &Path, upstream: &str) -> Result<(), GitError> {
         self.git2.set_upstream(repo, upstream)

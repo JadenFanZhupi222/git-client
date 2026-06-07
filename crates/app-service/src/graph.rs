@@ -162,6 +162,7 @@ pub fn layout(commits: &[Commit]) -> Vec<GraphRowDto> {
             top,
             bottom,
             refs: Vec::new(), // 由 service 在布局后按 SHA 挂上引用。
+            sync: String::new(), // 由 service 在布局后按未 push/未 pull 标记。
         });
     }
 

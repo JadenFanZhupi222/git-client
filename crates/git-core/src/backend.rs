@@ -1,7 +1,7 @@
 use crate::error::GitError;
 use crate::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, PullOutcome, PushOutcome, RepoState, StashEntry, WorkingTreeStatus,
+    FileDiff, PullOutcome, PushOutcome, RepoState, StashEntry, SyncCommits, WorkingTreeStatus,
 };
 use std::path::Path;
 
@@ -96,6 +96,12 @@ pub trait GitBackend: Send + Sync {
 
     /// 当前分支相对上游的领先/落后数。无上游 / 分离头 / 空仓库 → None。
     fn ahead_behind(&self, repo: &Path) -> Result<Option<AheadBehind>, GitError>;
+
+    /// 本地与远程跟踪分支的提交差集(未 push / 未 pull),供图谱逐行标记。
+    /// 无远程跟踪引用 → 两集合均空。默认实现返回空(无网络/不支持的后端)。
+    fn sync_commits(&self, _repo: &Path) -> Result<SyncCommits, GitError> {
+        Ok(SyncCommits::default())
+    }
 
     /// 列出远程名(如 ["origin", "upstream"]),按 git 返回顺序。
     fn remotes(&self, repo: &Path) -> Result<Vec<String>, GitError>;
