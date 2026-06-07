@@ -115,6 +115,23 @@ pub trait GitBackend: Send + Sync {
         Err(GitError::Unsupported)
     }
 
+    /// 在指定提交上打标签。`message` 非空 → 附注标签(annotated,需 git 身份);
+    /// 否则轻量标签(lightweight)。同名已存在 → TagAlreadyExists。默认 Unsupported。
+    fn create_tag(
+        &self,
+        _repo: &Path,
+        _name: &str,
+        _commit_id: &str,
+        _message: Option<&str>,
+    ) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+
+    /// 删除标签。默认 Unsupported。
+    fn delete_tag(&self, _repo: &Path, _name: &str) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+
     /// 当前分支相对上游的领先/落后数。无上游 / 分离头 / 空仓库 → None。
     fn ahead_behind(&self, repo: &Path) -> Result<Option<AheadBehind>, GitError>;
 

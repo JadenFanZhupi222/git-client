@@ -576,6 +576,47 @@ impl GitBackend for Git2Backend {
         Ok(out)
     }
 
+    fn create_tag(
+        &self,
+        path: &Path,
+        name: &str,
+        commit_id: &str,
+        message: Option<&str>,
+    ) -> Result<(), GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        // 同名已存在 → 友好错误(git2 force=false 也会报错,但这样 code 更精确)。
+        if repo.refname_to_id(&format!("refs/tags/{name}")).is_ok() {
+            return Err(GitError::TagAlreadyExists(name.to_string()));
+        }
+        let oid = git2::Oid::from_str(commit_id).map_err(|e| GitError::Backend(e.to_string()))?;
+        let obj = repo
+            .find_object(oid, None)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        match message {
+            // 附注标签:带 tagger 身份与信息。
+            Some(m) if !m.trim().is_empty() => {
+                let sig = repo.signature().map_err(|_| GitError::EmptySignature)?;
+                repo.tag(name, &obj, &sig, m, false)
+                    .map_err(|e| GitError::Backend(e.to_string()))?;
+            }
+            // 轻量标签:仅一个指向 commit 的 ref。
+            _ => {
+                repo.tag_lightweight(name, &obj, false)
+                    .map_err(|e| GitError::Backend(e.to_string()))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn delete_tag(&self, path: &Path, name: &str) -> Result<(), GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        repo.tag_delete(name)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        Ok(())
+    }
+
     fn ahead_behind(&self, path: &Path) -> Result<Option<AheadBehind>, GitError> {
         let repo =
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
@@ -1608,6 +1649,43 @@ mod tests {
             b.search_commits(&repo, "login", 10, &always),
             Err(GitError::Cancelled)
         ));
+    }
+
+    #[test]
+    fn create_and_delete_tag() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        let c1 = commit_index(&repo, "c1", 1000);
+
+        // 轻量标签
+        b.create_tag(&repo, "v1.0", &c1, None).unwrap();
+        // 附注标签(带信息)
+        b.create_tag(&repo, "v1.1", &c1, Some("first release")).unwrap();
+        // refs() 应能看到两个 tag,都指向 c1
+        let tags: Vec<_> = b
+            .refs(&repo)
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.kind == RefKind::Tag)
+            .collect();
+        assert_eq!(tags.len(), 2);
+        assert!(tags.iter().all(|t| t.target == c1));
+        // 同名再建 → TagAlreadyExists
+        assert!(matches!(
+            b.create_tag(&repo, "v1.0", &c1, None),
+            Err(GitError::TagAlreadyExists(_))
+        ));
+        // 删除
+        b.delete_tag(&repo, "v1.0").unwrap();
+        let left: Vec<_> = b
+            .refs(&repo)
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.kind == RefKind::Tag)
+            .collect();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].name, "v1.1");
     }
 
     #[test]

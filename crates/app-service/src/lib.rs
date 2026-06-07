@@ -271,6 +271,31 @@ impl RepoService {
         self.backend.revert(repo_path, commit_id)
     }
 
+    /// 在指定提交上打标签。name 空在本层拦截;message 空串视为轻量标签。
+    pub fn create_tag(
+        &self,
+        repo_path: &Path,
+        name: &str,
+        commit_id: &str,
+        message: Option<&str>,
+    ) -> Result<(), GitError> {
+        if name.trim().is_empty() {
+            return Err(GitError::Backend("标签名不能为空".into()));
+        }
+        if commit_id.trim().is_empty() {
+            return Err(GitError::Backend("提交 ID 不能为空".into()));
+        }
+        self.backend.create_tag(repo_path, name.trim(), commit_id, message)
+    }
+
+    /// 删除标签。name 空在本层拦截。
+    pub fn delete_tag(&self, repo_path: &Path, name: &str) -> Result<(), GitError> {
+        if name.trim().is_empty() {
+            return Err(GitError::Backend("标签名不能为空".into()));
+        }
+        self.backend.delete_tag(repo_path, name.trim())
+    }
+
     // ---- 贮藏 ----
     pub fn stash_list(&self, repo_path: &Path) -> Result<Vec<StashDto>, GitError> {
         Ok(self
@@ -694,6 +719,22 @@ mod tests {
         );
         // 空 id 在 service 层拦截
         assert!(svc.revert(Path::new("/r"), "  ").is_err());
+    }
+
+    #[test]
+    fn tag_ops_forward_and_validate() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.create_tag(Path::new("/r"), "v1.0", "abc123", None).unwrap();
+        svc.create_tag(Path::new("/r"), " v1.1 ", "def456", Some("release")).unwrap();
+        svc.delete_tag(Path::new("/r"), "v1.0").unwrap();
+        assert_eq!(
+            fb.tag_ops(),
+            vec!["create:v1.0@abc123:", "create:v1.1@def456:release", "delete:v1.0"]
+        );
+        // 空名在 service 层拦截
+        assert!(svc.create_tag(Path::new("/r"), "  ", "abc", None).is_err());
+        assert!(svc.delete_tag(Path::new("/r"), "").is_err());
     }
 
     #[test]

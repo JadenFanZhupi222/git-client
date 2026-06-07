@@ -4,6 +4,7 @@ import { cherryPick, revert, type CommitDto, type GraphRowDto, type FileChangeDt
 import { useGraph, useCommitSearch, useCommitFiles, useCommitDiff, useCurrentBranch, invalidateHistory, invalidateWorktree, qk } from "../lib/queries";
 import { CommitGraph } from "../components/CommitGraph";
 import { CommitLines } from "../components/CommitLines";
+import { TagManager } from "../components/TagManager";
 import { CommitFileList } from "../components/CommitFileList";
 import { CommitDetail } from "../components/CommitDetail";
 import { DiffView } from "../components/DiffView";
@@ -52,6 +53,10 @@ export function HistoryView({ repo }: { repo: string }) {
   const hasMore = rows.length === limit;
   const errMsg = (e: unknown) => (e as IpcError | null)?.message ?? null;
   const error = errMsg(graphQ.error) ?? errMsg(filesQ.error) ?? errMsg(diffQ.error);
+  // 选中提交的已有标签(从图谱行的 refs 派生;窗口外/搜索结果无行则为空,仍可新建)
+  const selectedTags = selected
+    ? (rows.find((r) => r.commit.id === selected.id)?.refs.filter((x) => x.kind === "tag").map((x) => x.name) ?? [])
+    : [];
 
   // 切仓库:重置分页、选择与搜索
   useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); setSearchInput(""); setQuery(""); }, [repo]);
@@ -133,6 +138,9 @@ export function HistoryView({ repo }: { repo: string }) {
         onSelectFile={setSelectedFile}
         onCherryPick={selected ? () => doCherryPick(selected) : undefined}
         onRevert={selected ? () => doRevert(selected) : undefined}
+        repo={repo}
+        tags={selectedTags}
+        onTagsChanged={() => invalidateHistory(qc, repo)}
         busy={busy}
       />
 
@@ -249,14 +257,17 @@ function SearchList({
 
 /** 中间列:提交详情 + 改动文件(含可拖拽宽度) */
 function MidColumn({
-  commit, files, selectedFile, onSelectFile, onCherryPick, onRevert, busy,
+  repo, commit, files, selectedFile, onSelectFile, onCherryPick, onRevert, tags, onTagsChanged, busy,
 }: {
+  repo: string;
   commit: CommitDto | null;
   files: FileChangeDto[];
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
   onCherryPick?: () => void;
   onRevert?: () => void;
+  tags: string[];
+  onTagsChanged: () => void;
   busy?: boolean;
 }) {
   const col = useResizableWidth("history.midW", 288, 200, 640);
@@ -292,6 +303,11 @@ function MidColumn({
             </div>
           )}
         </div>
+        {commit && (
+          <div className="shrink-0 border-b border-line px-3 py-1.5">
+            <TagManager repo={repo} commit={commit} tags={tags} onChanged={onTagsChanged} />
+          </div>
+        )}
         <div className="max-h-[45%] shrink-0 overflow-hidden border-b border-line">
           <CommitDetail commit={commit} />
         </div>
