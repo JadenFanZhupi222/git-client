@@ -476,7 +476,12 @@ async fn create_tag(
 ) -> Result<(), IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.create_tag(&PathBuf::from(repo_path), &name, &commit_id, message.as_deref())
+        service.create_tag(
+            &PathBuf::from(repo_path),
+            &name,
+            &commit_id,
+            message.as_deref(),
+        )
     })
     .await
     .map_err(join_panic)?

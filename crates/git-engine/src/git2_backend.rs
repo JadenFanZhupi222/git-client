@@ -1678,7 +1678,8 @@ mod tests {
         // 轻量标签
         b.create_tag(&repo, "v1.0", &c1, None).unwrap();
         // 附注标签(带信息)
-        b.create_tag(&repo, "v1.1", &c1, Some("first release")).unwrap();
+        b.create_tag(&repo, "v1.1", &c1, Some("first release"))
+            .unwrap();
         // refs() 应能看到两个 tag,都指向 c1
         let tags: Vec<_> = b
             .refs(&repo)

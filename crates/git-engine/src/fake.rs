@@ -363,7 +363,10 @@ impl GitBackend for FakeBackend {
             ResetMode::Mixed => "mixed",
             ResetMode::Hard => "hard",
         };
-        self.tag_ops.lock().unwrap().push(format!("reset:{m}:{commit_id}"));
+        self.tag_ops
+            .lock()
+            .unwrap()
+            .push(format!("reset:{m}:{commit_id}"));
         Ok(())
     }
     fn ahead_behind(&self, _path: &Path) -> Result<Option<AheadBehind>, GitError> {

@@ -285,7 +285,8 @@ impl RepoService {
         if commit_id.trim().is_empty() {
             return Err(GitError::Backend("提交 ID 不能为空".into()));
         }
-        self.backend.create_tag(repo_path, name.trim(), commit_id, message)
+        self.backend
+            .create_tag(repo_path, name.trim(), commit_id, message)
     }
 
     /// 删除标签。name 空在本层拦截。
@@ -738,12 +739,18 @@ mod tests {
     fn tag_ops_forward_and_validate() {
         let fb = Arc::new(FakeBackend::default());
         let svc = RepoService::new(fb.clone());
-        svc.create_tag(Path::new("/r"), "v1.0", "abc123", None).unwrap();
-        svc.create_tag(Path::new("/r"), " v1.1 ", "def456", Some("release")).unwrap();
+        svc.create_tag(Path::new("/r"), "v1.0", "abc123", None)
+            .unwrap();
+        svc.create_tag(Path::new("/r"), " v1.1 ", "def456", Some("release"))
+            .unwrap();
         svc.delete_tag(Path::new("/r"), "v1.0").unwrap();
         assert_eq!(
             fb.tag_ops(),
-            vec!["create:v1.0@abc123:", "create:v1.1@def456:release", "delete:v1.0"]
+            vec![
+                "create:v1.0@abc123:",
+                "create:v1.1@def456:release",
+                "delete:v1.0"
+            ]
         );
         // 空名在 service 层拦截
         assert!(svc.create_tag(Path::new("/r"), "  ", "abc", None).is_err());
@@ -755,8 +762,10 @@ mod tests {
         use git_core::model::ResetMode;
         let fb = Arc::new(FakeBackend::default());
         let svc = RepoService::new(fb.clone());
-        svc.reset(Path::new("/r"), "abc123", ResetMode::Soft).unwrap();
-        svc.reset(Path::new("/r"), "def456", ResetMode::Hard).unwrap();
+        svc.reset(Path::new("/r"), "abc123", ResetMode::Soft)
+            .unwrap();
+        svc.reset(Path::new("/r"), "def456", ResetMode::Hard)
+            .unwrap();
         assert_eq!(fb.tag_ops(), vec!["reset:soft:abc123", "reset:hard:def456"]);
         // 空 id 拦截
         assert!(svc.reset(Path::new("/r"), " ", ResetMode::Mixed).is_err());
