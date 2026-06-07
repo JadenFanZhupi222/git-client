@@ -9,6 +9,11 @@ use std::collections::HashSet;
 ///   等价于 `git rev-list --remotes --not --branches`。
 ///
 /// 仓库无任何远程跟踪引用时两集合均空(无从对比)。
+///
+/// ⚠️ **语义边界**:基于「**全部**本地分支 vs **全部**远程跟踪分支」,而非「当前分支 vs 其
+/// upstream」。因此别的从没 push 的本地分支的独有提交也会进 `outgoing`。实践中图谱只渲染
+/// HEAD 可达提交,这些提交多数落在窗口外,表现通常正确;但合并过其它分支时可能误标。
+/// 如需严格「当前分支」语义,应改为 `HEAD --not --remotes`。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncCommits {
     pub outgoing: HashSet<String>,

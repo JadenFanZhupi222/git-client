@@ -51,6 +51,15 @@ fn spawn_err(e: std::io::Error) -> GitError {
     }
 }
 
+/// 数 git 输出里有几个文件冲突(以 "CONFLICT" 开头的行)。
+/// merge/rebase/cherry-pick/revert/pull/stash 冲突提示共用,给前端更友好的文件数。
+fn count_conflicts(stdout: &str) -> usize {
+    stdout
+        .lines()
+        .filter(|l| l.trim_start().starts_with("CONFLICT"))
+        .count()
+}
+
 /// git push 的人类摘要:push 把结果写 stderr,优先取它,空则回落 stdout。
 fn push_summary(stdout: &str, stderr: &str) -> String {
     let s = stderr.trim();
@@ -206,12 +215,7 @@ impl CliBackend {
         let combined = format!("{stdout}\n{stderr}").to_lowercase();
         let has = |s: &str| combined.contains(s);
         let err = if has("conflict") || has("automatic merge failed") || has("could not apply") {
-            // 数有几个文件冲突,给更友好的提示。
-            let files = stdout
-                .lines()
-                .filter(|l| l.trim_start().starts_with("CONFLICT"))
-                .count();
-            GitError::MergeConflict { files }
+            GitError::MergeConflict { files: count_conflicts(&stdout) }
         } else if has("no tracking information") || has("no upstream") {
             GitError::NoUpstream
         } else if has("authentication failed")
@@ -359,10 +363,8 @@ impl CliBackend {
     pub fn stash_save(&self, repo: &Path, message: Option<&str>) -> Result<(), GitError> {
         let mut cmd = Command::new("git");
         cmd.arg("-C").arg(repo).args(["stash", "push"]);
-        if let Some(m) = message {
-            if !m.trim().is_empty() {
-                cmd.arg("-m").arg(m);
-            }
+        if let Some(m) = message.filter(|m| !m.trim().is_empty()) {
+            cmd.arg("-m").arg(m);
         }
         let out = cmd.output().map_err(spawn_err)?;
         if !out.status.success() {
@@ -480,11 +482,7 @@ impl CliBackend {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let combined = format!("{stdout}\n{stderr}").to_lowercase();
         if combined.contains("conflict") || combined.contains("unmerged") || combined.contains("needs merge") {
-            let files = stdout
-                .lines()
-                .filter(|l| l.trim_start().starts_with("CONFLICT"))
-                .count();
-            return Err(GitError::MergeConflict { files });
+            return Err(GitError::MergeConflict { files: count_conflicts(&stdout) });
         }
         Err(GitError::Backend(stderr.trim().to_string()))
     }
@@ -507,11 +505,7 @@ impl CliBackend {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let combined = format!("{stdout}\n{stderr}").to_lowercase();
         if combined.contains("conflict") {
-            let files = stdout
-                .lines()
-                .filter(|l| l.trim_start().starts_with("CONFLICT"))
-                .count();
-            return Err(GitError::MergeConflict { files });
+            return Err(GitError::MergeConflict { files: count_conflicts(&stdout) });
         }
         Err(GitError::Backend(stderr.trim().to_string()))
     }

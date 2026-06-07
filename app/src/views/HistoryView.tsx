@@ -3,12 +3,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { cherryPick, revert, type CommitDto, type GraphRowDto, type FileChangeDto, type IpcError } from "../ipc";
 import { useGraph, useCommitSearch, useCommitFiles, useCommitDiff, useCurrentBranch, invalidateHistory, invalidateWorktree, qk } from "../lib/queries";
 import { CommitGraph } from "../components/CommitGraph";
+import { CommitLines } from "../components/CommitLines";
 import { CommitFileList } from "../components/CommitFileList";
 import { CommitDetail } from "../components/CommitDetail";
 import { DiffView } from "../components/DiffView";
 import { Resizer, useResizableWidth } from "../components/Resizer";
 import { useToast } from "../components/Toast";
-import { formatRelative } from "../lib/time";
 import { BranchIcon, CommitIcon, FileDiffIcon, SearchIcon, CloseIcon } from "../components/icons";
 
 const PAGE = 50;
@@ -50,11 +50,8 @@ export function HistoryView({ repo }: { repo: string }) {
   const diffQ = useCommitDiff(repo, selected?.id ?? null, selectedFile);
 
   const hasMore = rows.length === limit;
-  const error =
-    (graphQ.error as { message?: string } | null)?.message ??
-    (filesQ.error as { message?: string } | null)?.message ??
-    (diffQ.error as { message?: string } | null)?.message ??
-    null;
+  const errMsg = (e: unknown) => (e as IpcError | null)?.message ?? null;
+  const error = errMsg(graphQ.error) ?? errMsg(filesQ.error) ?? errMsg(diffQ.error);
 
   // 切仓库:重置分页、选择与搜索
   useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); setSearchInput(""); setQuery(""); }, [repo]);
@@ -241,10 +238,7 @@ function SearchList({
           >
             <span className="h-2 w-2 shrink-0 rounded-full bg-fg-subtle" />
             <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px] text-fg" title={c.summary}>{c.summary}</div>
-              <div className="truncate font-mono text-[11px] text-fg-muted">
-                {c.short_id} · {c.author_name} · {formatRelative(c.timestamp)}
-              </div>
+              <CommitLines commit={c} />
             </div>
           </div>
         );
