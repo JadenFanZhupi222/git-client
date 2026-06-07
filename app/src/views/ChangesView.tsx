@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  stageFile, unstageFile, stageHunk, unstageHunk, stageLines, commit, resolveOurs, resolveTheirs,
+  stageFile, unstageFile, stageHunk, unstageHunk, stageLines, commit, amendCommit,
+  getHeadCommit, resolveOurs, resolveTheirs,
   type FileEntryDto, type IpcError,
 } from "../ipc";
 import { useStatus, useWorkingDiff, useRepoState, invalidateWorktree, invalidateHistory, qk } from "../lib/queries";
@@ -38,6 +39,7 @@ export function ChangesView({ repo }: { repo: string }) {
   const status = statusQ.data;
   const repoState = useRepoState(repo).data ?? "clean";
   const [message, setMessage] = useState("");
+  const [amend, setAmend] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sel, setSel] = useState<{ path: string; staged: boolean } | null>(null);
   const listCol = useResizableWidth("changes.listW", 340, 220, 680);
@@ -50,10 +52,24 @@ export function ChangesView({ repo }: { repo: string }) {
   const conflicts = entries.filter((e) => e.state.toLowerCase() === "conflicted");
   const staged = entries.filter((e) => e.staged);
   const unstaged = entries.filter((e) => !e.staged && e.state.toLowerCase() !== "conflicted");
-  const canCommit = !busy && staged.length > 0 && conflicts.length === 0 && message.trim() !== "";
+  // 普通提交需有暂存;amend 可只改信息(允许无暂存)。两者都禁在冲突中、需有信息。
+  const canCommit =
+    !busy && conflicts.length === 0 && message.trim() !== "" && (amend || staged.length > 0);
 
-  // 切仓库清空选择
-  useEffect(() => { setSel(null); }, [repo]);
+  // 切仓库清空选择与 amend
+  useEffect(() => { setSel(null); setAmend(false); }, [repo]);
+
+  // 勾选 amend 且信息为空时,预填上次提交信息(方便在其基础上改)
+  async function toggleAmend(next: boolean) {
+    setAmend(next);
+    if (next && message.trim() === "") {
+      try {
+        const head = await getHeadCommit(repo);
+        const full = head.body ? `${head.summary}\n\n${head.body}` : head.summary;
+        setMessage(full);
+      } catch { /* 空仓库等:忽略,留空 */ }
+    }
+  }
 
   // status 变化后核对选中项(按 路径+暂存侧 匹配,同一文件可同时在两侧):
   // 当前侧还在 → 不动;本侧没了 → 跟随另一侧或清空。diff 由 query 自动重取。
@@ -86,9 +102,10 @@ export function ChangesView({ repo }: { repo: string }) {
   async function doCommit() {
     setBusy(true);
     try {
-      const sha = await commit(repo, message);
+      const sha = amend ? await amendCommit(repo, message) : await commit(repo, message);
       setMessage("");
-      toast({ kind: "success", title: `已提交 ${sha.slice(0, 7)}` });
+      setAmend(false);
+      toast({ kind: "success", title: `${amend ? "已修订" : "已提交"} ${sha.slice(0, 7)}` });
       invalidateWorktree(qc, repo);
       invalidateHistory(qc, repo);
     } catch (e) { toast({ kind: "error", title: (e as IpcError).message ?? String(e) }); }
@@ -249,15 +266,21 @@ export function ChangesView({ repo }: { repo: string }) {
             }}
           />
           <div className="mt-2 flex items-center justify-between">
-            <span className="text-xs text-fg-subtle">
-              {staged.length > 0 ? `${staged.length} 个改动待提交` : "暂存改动后可提交"}
-            </span>
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-fg-muted" title="用当前暂存改动修订最近一次提交(会改写历史,勾选后会预填上次信息)">
+              <input
+                type="checkbox"
+                checked={amend}
+                onChange={(e) => toggleAmend(e.target.checked)}
+                className="accent-accent"
+              />
+              修订上次提交
+            </label>
             <button
               className="flex items-center gap-1.5 rounded-md bg-done px-3.5 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
               disabled={!canCommit}
               onClick={doCommit}
             >
-              <CheckIcon width={14} height={14} /> 提交
+              <CheckIcon width={14} height={14} /> {amend ? "修订提交" : "提交"}
             </button>
           </div>
         </div>

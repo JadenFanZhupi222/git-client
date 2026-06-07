@@ -70,6 +70,11 @@ export async function commit(repoPath: string, message: string): Promise<string>
   return await invoke<string>("commit", { repoPath, message });
 }
 
+/** 修订最近一次提交。message 省略/空 → 保留原提交信息;否则替换。纳入当前暂存改动。 */
+export async function amendCommit(repoPath: string, message?: string): Promise<string> {
+  return await invoke<string>("amend_commit", { repoPath, message: message?.trim() ? message : null });
+}
+
 export interface FileChangeDto {
   path: string;
   status: string; // added | modified | deleted | renamed

@@ -1075,6 +1075,32 @@ impl GitBackend for Git2Backend {
             Err(e) => Err(GitError::Backend(e.to_string())),
         }
     }
+
+    fn amend_commit(&self, path: &Path, message: Option<&str>) -> Result<String, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        // 最近一次提交(空仓库无可修订)。
+        let last = match repo.head() {
+            Ok(h) => h
+                .peel_to_commit()
+                .map_err(|e| GitError::Backend(e.to_string()))?,
+            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => return Err(GitError::NoHead),
+            Err(e) => return Err(GitError::Backend(e.to_string())),
+        };
+        // 用当前暂存区的树替换(允许只改信息:树与原树相同也放行)。
+        let mut index = repo.index().map_err(|e| GitError::Backend(e.to_string()))?;
+        let tree_oid = index
+            .write_tree()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        let tree = repo
+            .find_tree(tree_oid)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        // message=None 保留原信息;committer 用 None 保留原 committer(简化)。
+        let oid = last
+            .amend(Some("HEAD"), None, None, None, message, Some(&tree))
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        Ok(oid.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -1204,6 +1230,40 @@ mod tests {
         // 全新仓库,index 为空
         let err = backend.commit(&repo, "empty").unwrap_err();
         assert!(matches!(err, GitError::NothingToCommit));
+    }
+
+    #[test]
+    fn amend_changes_message_and_includes_staged() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        b.commit(&repo, "original").unwrap();
+
+        // 仅改信息:不新增提交,summary 变化
+        b.amend_commit(&repo, Some("amended msg")).unwrap();
+        let log = b.log(&repo, 10, 0).unwrap();
+        assert_eq!(log.len(), 1, "amend 不应新增提交");
+        assert_eq!(log[0].summary, "amended msg");
+
+        // 暂存新文件后 amend(None 保留信息):新文件应进入该提交
+        stage(&repo, "b.txt", "2");
+        b.amend_commit(&repo, None).unwrap();
+        let head = &b.log(&repo, 1, 0).unwrap()[0];
+        assert_eq!(head.summary, "amended msg", "None 应保留上次信息");
+        let files = b.commit_files(&repo, &head.id).unwrap();
+        assert!(
+            files.iter().any(|f| f.path == "b.txt"),
+            "amend 应纳入新暂存文件"
+        );
+    }
+
+    #[test]
+    fn amend_on_empty_repo_errors() {
+        let (_tmp, repo) = init_repo();
+        assert!(matches!(
+            Git2Backend.amend_commit(&repo, Some("x")),
+            Err(GitError::NoHead)
+        ));
     }
 
     // ⚠️ 显式递增时间戳:避免同秒提交导致 Sort::TIME flaky。

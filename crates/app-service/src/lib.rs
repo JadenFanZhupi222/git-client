@@ -430,6 +430,18 @@ impl RepoService {
         }
         self.backend.commit(repo_path, message)
     }
+
+    /// 用例:修订最近一次提交。message=None 保留原信息;Some 则不能为空。
+    pub fn amend_commit(
+        &self,
+        repo_path: &Path,
+        message: Option<&str>,
+    ) -> Result<String, GitError> {
+        if message.is_some_and(|m| m.trim().is_empty()) {
+            return Err(GitError::EmptyCommitMessage);
+        }
+        self.backend.amend_commit(repo_path, message)
+    }
 }
 
 #[cfg(test)]
@@ -1031,5 +1043,26 @@ mod tests {
         let sha = service.commit(Path::new("/r"), "real msg").unwrap();
         assert!(!sha.is_empty());
         assert_eq!(fb.commit_messages(), vec!["real msg".to_string()]);
+    }
+
+    #[test]
+    fn amend_keeps_or_replaces_message_and_validates() {
+        let fb = Arc::new(FakeBackend::default());
+        let service = RepoService::new(fb.clone());
+        // None → 保留原信息
+        service.amend_commit(Path::new("/r"), None).unwrap();
+        // Some 非空 → 替换
+        service
+            .amend_commit(Path::new("/r"), Some("new msg"))
+            .unwrap();
+        assert_eq!(
+            fb.commit_messages(),
+            vec!["amend:<keep>".to_string(), "amend:new msg".to_string()]
+        );
+        // Some 空 → 拦截
+        assert!(matches!(
+            service.amend_commit(Path::new("/r"), Some("  ")),
+            Err(GitError::EmptyCommitMessage)
+        ));
     }
 }
