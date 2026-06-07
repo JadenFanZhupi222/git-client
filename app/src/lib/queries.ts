@@ -5,7 +5,7 @@
 import { useQuery, useQueryClient, keepPreviousData, type QueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import {
-  getStatus, getWorkingDiff, getCommitGraph, getCommitFiles, getCommitFileDiff,
+  getStatus, getWorkingDiff, getCommitGraph, searchCommits, getCommitFiles, getCommitFileDiff,
   getCurrentBranch, getAheadBehind, getRemotes, listBranches, stashList,
   getRepoState, readWorkingFile, blame, conflictSides,
   watchRepo, onRepoChanged,
@@ -27,6 +27,7 @@ export const qk = {
   fileText: (repo: string) => ["fileText", repo] as const,
   blame: (repo: string) => ["blame", repo] as const,
   conflictSides: (repo: string) => ["conflictSides", repo] as const,
+  search: (repo: string) => ["search", repo] as const,
 };
 
 // ---- 读 hooks ----
@@ -47,6 +48,17 @@ export function useGraph(repo: string, limit: number) {
     queryKey: [...qk.graph(repo), limit],
     queryFn: () => getCommitGraph(repo, limit),
     placeholderData: keepPreviousData, // 「加载更多」时保留旧行,不闪空
+  });
+}
+
+/** 提交搜索:query 为空时不发请求(enabled=false),结果为扁平列表。 */
+export function useCommitSearch(repo: string, query: string, limit: number) {
+  const q = query.trim();
+  return useQuery({
+    queryKey: [...qk.search(repo), q, limit],
+    queryFn: () => searchCommits(repo, q, limit),
+    enabled: !!repo && q.length > 0,
+    placeholderData: keepPreviousData, // 连续输入时不闪空
   });
 }
 

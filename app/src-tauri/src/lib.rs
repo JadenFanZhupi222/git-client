@@ -228,6 +228,21 @@ async fn get_commit_graph(repo_path: String, limit: usize) -> Result<Vec<GraphRo
 }
 
 #[tauri::command]
+async fn search_commits(
+    repo_path: String,
+    query: String,
+    limit: usize,
+) -> Result<Vec<CommitDto>, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.search_commits(&PathBuf::from(repo_path), &query, limit)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
 async fn get_current_branch(repo_path: String) -> Result<Option<String>, IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
@@ -607,6 +622,7 @@ pub fn run() {
             get_commit_file_diff,
             get_working_diff,
             get_commit_graph,
+            search_commits,
             get_current_branch,
             list_branches,
             get_ahead_behind,

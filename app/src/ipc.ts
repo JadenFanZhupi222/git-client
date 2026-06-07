@@ -332,6 +332,11 @@ export async function getCommitGraph(repoPath: string, limit: number): Promise<G
   return await invoke<GraphRowDto[]>("get_commit_graph", { repoPath, limit });
 }
 
+/** 搜索提交(匹配 message/作者/SHA 前缀,大小写不敏感),扁平列表;空 query 返回空。 */
+export async function searchCommits(repoPath: string, query: string, limit: number): Promise<CommitDto[]> {
+  return await invoke<CommitDto[]>("search_commits", { repoPath, query, limit });
+}
+
 // ── 文件监听 ──
 export type RepoChangeKind = "worktree" | "index" | "ref";
 
