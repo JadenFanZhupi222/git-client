@@ -1,6 +1,6 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, FileEntry, PullOutcome, PushOutcome, RepoState, StashEntry, Signature, SyncCommits,
+    FileDiff, FileEntry, PullOutcome, PushOutcome, RepoState, Signature, StashEntry, SyncCommits,
     WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
@@ -258,7 +258,13 @@ impl GitBackend for FakeBackend {
             .push((file.to_string(), hunk_index));
         Ok(())
     }
-    fn stage_lines(&self, _path: &Path, file: &str, hunk_index: usize, lines: &[usize]) -> Result<(), GitError> {
+    fn stage_lines(
+        &self,
+        _path: &Path,
+        file: &str,
+        hunk_index: usize,
+        lines: &[usize],
+    ) -> Result<(), GitError> {
         self.staged_hunks
             .lock()
             .unwrap()
@@ -272,7 +278,11 @@ impl GitBackend for FakeBackend {
         Ok(self.canned_refs.lock().unwrap().clone())
     }
     fn repo_state(&self, _path: &Path) -> Result<RepoState, GitError> {
-        Ok(self.canned_repo_state.lock().unwrap().unwrap_or(RepoState::Clean))
+        Ok(self
+            .canned_repo_state
+            .lock()
+            .unwrap()
+            .unwrap_or(RepoState::Clean))
     }
     fn blame(&self, _path: &Path, _file: &str) -> Result<Vec<BlameLine>, GitError> {
         Ok(Vec::new())
@@ -290,11 +300,17 @@ impl GitBackend for FakeBackend {
             }))
     }
     fn resolve_ours(&self, _path: &Path, file: &str) -> Result<(), GitError> {
-        self.conflict_ops.lock().unwrap().push(format!("ours:{file}"));
+        self.conflict_ops
+            .lock()
+            .unwrap()
+            .push(format!("ours:{file}"));
         Ok(())
     }
     fn resolve_theirs(&self, _path: &Path, file: &str) -> Result<(), GitError> {
-        self.conflict_ops.lock().unwrap().push(format!("theirs:{file}"));
+        self.conflict_ops
+            .lock()
+            .unwrap()
+            .push(format!("theirs:{file}"));
         Ok(())
     }
     fn continue_op(&self, _path: &Path) -> Result<(), GitError> {
@@ -306,11 +322,17 @@ impl GitBackend for FakeBackend {
         Ok(())
     }
     fn revert(&self, _path: &Path, commit_id: &str) -> Result<(), GitError> {
-        self.conflict_ops.lock().unwrap().push(format!("revert:{commit_id}"));
+        self.conflict_ops
+            .lock()
+            .unwrap()
+            .push(format!("revert:{commit_id}"));
         Ok(())
     }
     fn cherry_pick(&self, _path: &Path, commit_id: &str) -> Result<(), GitError> {
-        self.conflict_ops.lock().unwrap().push(format!("cherry-pick:{commit_id}"));
+        self.conflict_ops
+            .lock()
+            .unwrap()
+            .push(format!("cherry-pick:{commit_id}"));
         Ok(())
     }
     fn ahead_behind(&self, _path: &Path) -> Result<Option<AheadBehind>, GitError> {
@@ -323,18 +345,27 @@ impl GitBackend for FakeBackend {
         Ok(self.canned_sync_commits.lock().unwrap().clone())
     }
     fn set_upstream(&self, _path: &Path, upstream: &str) -> Result<(), GitError> {
-        self.upstreams_set.lock().unwrap().push(upstream.to_string());
+        self.upstreams_set
+            .lock()
+            .unwrap()
+            .push(upstream.to_string());
         Ok(())
     }
     fn stash_list(&self, _path: &Path) -> Result<Vec<StashEntry>, GitError> {
         Ok(self.canned_stashes.lock().unwrap().clone())
     }
     fn stash_save(&self, _path: &Path, message: Option<&str>) -> Result<(), GitError> {
-        self.stash_ops.lock().unwrap().push(format!("save:{}", message.unwrap_or("")));
+        self.stash_ops
+            .lock()
+            .unwrap()
+            .push(format!("save:{}", message.unwrap_or("")));
         Ok(())
     }
     fn stash_apply(&self, _path: &Path, index: usize) -> Result<(), GitError> {
-        self.stash_ops.lock().unwrap().push(format!("apply:{index}"));
+        self.stash_ops
+            .lock()
+            .unwrap()
+            .push(format!("apply:{index}"));
         Ok(())
     }
     fn stash_pop(&self, _path: &Path, index: usize) -> Result<(), GitError> {

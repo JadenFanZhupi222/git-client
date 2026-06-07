@@ -478,7 +478,9 @@ async fn write_resolved(repo_path: String, file: String, content: String) -> Res
         let repo = PathBuf::from(&repo_path);
         let target = repo.join(&file);
         let repo_c = repo.canonicalize().map_err(|e| write_err(e.to_string()))?;
-        let target_c = target.canonicalize().map_err(|e| write_err(e.to_string()))?;
+        let target_c = target
+            .canonicalize()
+            .map_err(|e| write_err(e.to_string()))?;
         if !target_c.starts_with(&repo_c) {
             return Err(write_err("路径越界".into()));
         }

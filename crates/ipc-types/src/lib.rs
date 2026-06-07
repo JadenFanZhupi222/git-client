@@ -180,7 +180,10 @@ pub struct StashDto {
 
 impl From<StashEntry> for StashDto {
     fn from(s: StashEntry) -> Self {
-        StashDto { index: s.index, message: s.message }
+        StashDto {
+            index: s.index,
+            message: s.message,
+        }
     }
 }
 

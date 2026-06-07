@@ -53,7 +53,9 @@ fn head_revwalk(repo: &git2::Repository) -> Result<Option<git2::Revwalk<'_>>, Gi
         Err(e) if e.code() == git2::ErrorCode::UnbornBranch => return Ok(None),
         Err(e) => return Err(GitError::Backend(e.to_string())),
     }
-    let mut walk = repo.revwalk().map_err(|e| GitError::Backend(e.to_string()))?;
+    let mut walk = repo
+        .revwalk()
+        .map_err(|e| GitError::Backend(e.to_string()))?;
     walk.set_sorting(git2::Sort::TIME)
         .map_err(|e| GitError::Backend(e.to_string()))?;
     walk.push_head()
@@ -83,9 +85,12 @@ fn file_diff_from(diff: &git2::Diff, file: &str) -> Result<FileDiff, GitError> {
             }
             Some(patch) => {
                 for h in 0..patch.num_hunks() {
-                    let (hunk, line_count) =
-                        patch.hunk(h).map_err(|e| GitError::Backend(e.to_string()))?;
-                    let header = String::from_utf8_lossy(hunk.header()).trim_end().to_string();
+                    let (hunk, line_count) = patch
+                        .hunk(h)
+                        .map_err(|e| GitError::Backend(e.to_string()))?;
+                    let header = String::from_utf8_lossy(hunk.header())
+                        .trim_end()
+                        .to_string();
                     let mut lines = Vec::with_capacity(line_count);
                     for l in 0..line_count {
                         let dl = patch
@@ -434,7 +439,9 @@ impl GitBackend for Git2Backend {
                 .map_err(|e| GitError::Backend(e.to_string()))?
             {
                 Some(patch) => {
-                    let (_ctx, adds, dels) = patch.line_stats().map_err(|e| GitError::Backend(e.to_string()))?;
+                    let (_ctx, adds, dels) = patch
+                        .line_stats()
+                        .map_err(|e| GitError::Backend(e.to_string()))?;
                     (adds, dels)
                 }
                 None => (0, 0),
@@ -470,7 +477,10 @@ impl GitBackend for Git2Backend {
             let (branch, _) = item.map_err(|e| GitError::Backend(e.to_string()))?;
             // is_head 借用了 branch,要在 name() 之前取(name() 也借用)。
             let is_head = branch.is_head();
-            if let Some(name) = branch.name().map_err(|e| GitError::Backend(e.to_string()))? {
+            if let Some(name) = branch
+                .name()
+                .map_err(|e| GitError::Backend(e.to_string()))?
+            {
                 out.push(BranchInfo {
                     name: name.to_string(),
                     is_head,
@@ -495,7 +505,9 @@ impl GitBackend for Git2Backend {
             let (branch, _) = item.map_err(|e| GitError::Backend(e.to_string()))?;
             let target = branch.get().target();
             if let (Some(name), Some(oid)) = (
-                branch.name().map_err(|e| GitError::Backend(e.to_string()))?,
+                branch
+                    .name()
+                    .map_err(|e| GitError::Backend(e.to_string()))?,
                 target,
             ) {
                 out.push(CommitRef {
@@ -514,7 +526,9 @@ impl GitBackend for Git2Backend {
             let (branch, _) = item.map_err(|e| GitError::Backend(e.to_string()))?;
             let target = branch.get().target();
             if let (Some(name), Some(oid)) = (
-                branch.name().map_err(|e| GitError::Backend(e.to_string()))?,
+                branch
+                    .name()
+                    .map_err(|e| GitError::Backend(e.to_string()))?,
                 target,
             ) {
                 // origin/HEAD 是符号引用,但保险起见也按名字过滤掉。
@@ -603,7 +617,9 @@ impl GitBackend for Git2Backend {
     fn remotes(&self, path: &Path) -> Result<Vec<String>, GitError> {
         let repo =
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
-        let arr = repo.remotes().map_err(|e| GitError::Backend(e.to_string()))?;
+        let arr = repo
+            .remotes()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
         Ok(arr.iter().flatten().map(|s| s.to_string()).collect())
     }
 
@@ -626,7 +642,9 @@ impl GitBackend for Git2Backend {
         // revwalk:遍历 `include` 可达、`hide` 不可达的提交,收集 SHA。
         // 等价于 `git rev-list <include> --not <hide>`。
         let collect = |include: &str, hide: &str| -> Result<HashSet<String>, GitError> {
-            let mut walk = repo.revwalk().map_err(|e| GitError::Backend(e.to_string()))?;
+            let mut walk = repo
+                .revwalk()
+                .map_err(|e| GitError::Backend(e.to_string()))?;
             walk.push_glob(include)
                 .map_err(|e| GitError::Backend(e.to_string()))?;
             walk.hide_glob(hide)
@@ -656,7 +674,8 @@ impl GitBackend for Git2Backend {
         let workdir = repo
             .workdir()
             .ok_or_else(|| GitError::Backend("裸仓库无工作区".into()))?;
-        let bytes = std::fs::read(workdir.join(file)).map_err(|e| GitError::Backend(e.to_string()))?;
+        let bytes =
+            std::fs::read(workdir.join(file)).map_err(|e| GitError::Backend(e.to_string()))?;
         let text = String::from_utf8_lossy(&bytes);
 
         let mut out = Vec::new();
@@ -671,7 +690,12 @@ impl GitBackend for Git2Backend {
                     } else {
                         let id = oid.to_string();
                         let short = id.chars().take(7).collect();
-                        (id, short, sig.name().unwrap_or("").to_string(), sig.when().seconds())
+                        (
+                            id,
+                            short,
+                            sig.name().unwrap_or("").to_string(),
+                            sig.when().seconds(),
+                        )
                     }
                 }
                 None => (String::new(), String::new(), String::new(), 0),
@@ -753,10 +777,7 @@ impl GitBackend for Git2Backend {
         if !head.is_branch() {
             return Err(GitError::Backend("当前为分离头,无法设置上游".into()));
         }
-        let name = head
-            .shorthand()
-            .ok_or(GitError::NoHead)?
-            .to_string();
+        let name = head.shorthand().ok_or(GitError::NoHead)?.to_string();
         let mut branch = repo
             .find_branch(&name, git2::BranchType::Local)
             .map_err(|e| GitError::Backend(e.to_string()))?;
@@ -881,7 +902,10 @@ impl GitBackend for Git2Backend {
         let diff = if staged {
             // 已暂存:HEAD 树 ↔ index。空仓库(无 HEAD)→ 与空树比。
             let head_tree = match repo.head() {
-                Ok(h) => Some(h.peel_to_tree().map_err(|e| GitError::Backend(e.to_string()))?),
+                Ok(h) => Some(
+                    h.peel_to_tree()
+                        .map_err(|e| GitError::Backend(e.to_string()))?,
+                ),
                 Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
                 Err(e) => return Err(GitError::Backend(e.to_string())),
             };
@@ -1363,11 +1387,13 @@ mod tests {
         g.reference("refs/remotes/origin/main", commit.id(), true, "arrange")
             .unwrap();
         // 轻量标签
-        g.reference("refs/tags/v1.0", commit.id(), true, "arrange").unwrap();
+        g.reference("refs/tags/v1.0", commit.id(), true, "arrange")
+            .unwrap();
 
         let refs = Git2Backend.refs(&repo).unwrap();
         assert!(
-            refs.iter().any(|r| r.kind == RefKind::Tag && r.name == "v1.0"),
+            refs.iter()
+                .any(|r| r.kind == RefKind::Tag && r.name == "v1.0"),
             "应含标签 v1.0"
         );
         assert!(
@@ -1503,9 +1529,7 @@ mod tests {
             "arrange",
         )
         .unwrap();
-        let mut local = g
-            .find_branch(&head_name, git2::BranchType::Local)
-            .unwrap();
+        let mut local = g.find_branch(&head_name, git2::BranchType::Local).unwrap();
         local
             .set_upstream(Some(&format!("origin/{head_name}")))
             .unwrap();
@@ -1567,9 +1591,17 @@ mod tests {
         let by_author = b.search_commits(&repo, "test", 10, &never).unwrap();
         assert_eq!(by_author.len(), 2, "两条都由 Test 提交");
         // 空 query → 空
-        assert!(b.search_commits(&repo, "  ", 10, &never).unwrap().is_empty());
+        assert!(
+            b.search_commits(&repo, "  ", 10, &never)
+                .unwrap()
+                .is_empty()
+        );
         // 无匹配 → 空
-        assert!(b.search_commits(&repo, "zzz-nope", 10, &never).unwrap().is_empty());
+        assert!(
+            b.search_commits(&repo, "zzz-nope", 10, &never)
+                .unwrap()
+                .is_empty()
+        );
         // 取消信号 → Cancelled
         let always = || true;
         assert!(matches!(
@@ -1610,11 +1642,23 @@ mod tests {
         let c1_commit = g.find_commit(git2::Oid::from_str(&c1).unwrap()).unwrap();
         let sig = git2::Signature::new("R", "r@e.local", &git2::Time::new(1500, 0)).unwrap();
         let incoming = g
-            .commit(None, &sig, &sig, "remote-only", &c1_commit.tree().unwrap(), &[&c1_commit])
+            .commit(
+                None,
+                &sig,
+                &sig,
+                "remote-only",
+                &c1_commit.tree().unwrap(),
+                &[&c1_commit],
+            )
             .unwrap()
             .to_string();
-        g.reference("refs/remotes/origin/feature", git2::Oid::from_str(&incoming).unwrap(), true, "arrange")
-            .unwrap();
+        g.reference(
+            "refs/remotes/origin/feature",
+            git2::Oid::from_str(&incoming).unwrap(),
+            true,
+            "arrange",
+        )
+        .unwrap();
 
         let sync = Git2Backend.sync_commits(&repo).unwrap();
         assert!(sync.outgoing.contains(&c2), "c2 本地独有 → 未 push");
@@ -1705,7 +1749,8 @@ mod tests {
         let (_tmp, repo) = init_repo();
         let g = git2::Repository::open(&repo).unwrap();
         g.remote("origin", "https://example.invalid/a.git").unwrap();
-        g.remote("upstream", "https://example.invalid/b.git").unwrap();
+        g.remote("upstream", "https://example.invalid/b.git")
+            .unwrap();
 
         let mut names = Git2Backend.remotes(&repo).unwrap();
         names.sort();
@@ -1769,7 +1814,12 @@ mod tests {
         commit_index(&repo, "c1", 1000);
 
         b.create_branch(&repo, "feature/new").unwrap();
-        let names: Vec<String> = b.branches(&repo).unwrap().into_iter().map(|x| x.name).collect();
+        let names: Vec<String> = b
+            .branches(&repo)
+            .unwrap()
+            .into_iter()
+            .map(|x| x.name)
+            .collect();
         assert!(names.contains(&"feature/new".to_string()));
         // 新建不切换:当前分支不变
         assert_ne!(b.current_branch(&repo).unwrap(), Some("feature/new".into()));
@@ -1796,7 +1846,12 @@ mod tests {
         b.create_branch(&repo, "tmp").unwrap();
 
         b.delete_branch(&repo, "tmp").unwrap();
-        let names: Vec<String> = b.branches(&repo).unwrap().into_iter().map(|x| x.name).collect();
+        let names: Vec<String> = b
+            .branches(&repo)
+            .unwrap()
+            .into_iter()
+            .map(|x| x.name)
+            .collect();
         assert!(!names.contains(&"tmp".to_string()));
     }
 
