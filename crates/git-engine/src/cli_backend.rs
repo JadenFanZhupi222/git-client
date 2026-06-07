@@ -457,6 +457,12 @@ impl CliBackend {
         self.run_op(repo, &["cherry-pick", commit_id])
     }
 
+    /// 回滚某提交(生成抵消其改动的新提交)。冲突 → MergeConflict(进入 reverting 中)。
+    /// 用 `--no-edit` 跳过提交信息编辑器。
+    pub fn revert(&self, repo: &Path, commit_id: &str) -> Result<(), GitError> {
+        self.run_op(repo, &["revert", "--no-edit", commit_id])
+    }
+
     /// 跑 continue/abort/cherry-pick 命令;GIT_EDITOR=true 防止弹编辑器卡住,冲突归 MergeConflict。
     fn run_op(&self, repo: &Path, args: &[&str]) -> Result<(), GitError> {
         let out = Command::new("git")
@@ -966,6 +972,45 @@ mod tests {
         git(repo.path(), &["commit", "-am", "cM"]);
         // 拣选 feature 的提交 → 同行冲突
         let err = CliBackend.cherry_pick(repo.path(), &sha).unwrap_err();
+        assert!(matches!(err, GitError::MergeConflict { .. }), "实际: {err:?}");
+    }
+
+    #[test]
+    fn revert_undoes_commit() {
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-b", "main", "."]);
+        git(repo.path(), &["config", "user.email", "t@e"]);
+        git(repo.path(), &["config", "user.name", "t"]);
+        std::fs::write(repo.path().join("a.txt"), "base\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+        // c2 加 g.txt
+        std::fs::write(repo.path().join("g.txt"), "added\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c2"]);
+        let sha = rev_parse(repo.path(), "HEAD");
+        // 回滚 c2 → g.txt 应消失,且生成新提交
+        CliBackend.revert(repo.path(), &sha).unwrap();
+        assert!(!repo.path().join("g.txt").exists(), "回滚后 g.txt 应被移除");
+        let log = Command::new("git").current_dir(repo.path())
+            .args(["log", "--oneline"]).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&log.stdout).lines().count(), 3, "应多出一条回滚提交");
+    }
+
+    #[test]
+    fn revert_conflict_reports_mergeconflict() {
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-b", "main", "."]);
+        git(repo.path(), &["config", "user.email", "t@e"]);
+        git(repo.path(), &["config", "user.name", "t"]);
+        std::fs::write(repo.path().join("f.txt"), "v1\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+        let c1 = rev_parse(repo.path(), "HEAD");
+        // c2 改同一行;回滚 c1 会与 c2 的改动冲突
+        std::fs::write(repo.path().join("f.txt"), "v2\n").unwrap();
+        git(repo.path(), &["commit", "-am", "c2"]);
+        let err = CliBackend.revert(repo.path(), &c1).unwrap_err();
         assert!(matches!(err, GitError::MergeConflict { .. }), "实际: {err:?}");
     }
 

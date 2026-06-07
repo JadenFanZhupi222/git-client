@@ -278,6 +278,10 @@ impl GitBackend for FakeBackend {
         self.conflict_ops.lock().unwrap().push("abort".into());
         Ok(())
     }
+    fn revert(&self, _path: &Path, commit_id: &str) -> Result<(), GitError> {
+        self.conflict_ops.lock().unwrap().push(format!("revert:{commit_id}"));
+        Ok(())
+    }
     fn cherry_pick(&self, _path: &Path, commit_id: &str) -> Result<(), GitError> {
         self.conflict_ops.lock().unwrap().push(format!("cherry-pick:{commit_id}"));
         Ok(())

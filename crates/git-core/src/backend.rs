@@ -94,6 +94,12 @@ pub trait GitBackend: Send + Sync {
         Err(GitError::Unsupported)
     }
 
+    /// 回滚(revert)指定提交:生成一个抵消其改动的新提交。冲突 → MergeConflict
+    /// (进入 reverting 中,可用 continue_op/abort_op)。默认 Unsupported。
+    fn revert(&self, _repo: &Path, _commit_id: &str) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+
     /// 当前分支相对上游的领先/落后数。无上游 / 分离头 / 空仓库 → None。
     fn ahead_behind(&self, repo: &Path) -> Result<Option<AheadBehind>, GitError>;
 
