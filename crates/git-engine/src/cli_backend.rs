@@ -7,8 +7,16 @@ use std::process::{Command, Stdio};
 /// 解析一行 `git stash list` 输出,如 "stash@{0}: WIP on main: ...."。
 fn parse_stash_line(line: &str) -> Option<StashEntry> {
     let (refpart, msg) = line.split_once(": ")?; // 只切第一个 ": ",message 保留其余冒号
-    let index = refpart.split_once('{')?.1.trim_end_matches('}').parse().ok()?;
-    Some(StashEntry { index, message: msg.to_string() })
+    let index = refpart
+        .split_once('{')?
+        .1
+        .trim_end_matches('}')
+        .parse()
+        .ok()?;
+    Some(StashEntry {
+        index,
+        message: msg.to_string(),
+    })
 }
 
 /// 从完整 unified diff 文本里抽出第 `index` 个 hunk,拼上文件头形成可单独 apply 的 patch。
@@ -118,9 +126,7 @@ impl CliBackend {
                     GitError::Backend(e.to_string())
                 }
             })?;
-        if remotes.status.success()
-            && String::from_utf8_lossy(&remotes.stdout).trim().is_empty()
-        {
+        if remotes.status.success() && String::from_utf8_lossy(&remotes.stdout).trim().is_empty() {
             return Err(GitError::NoRemote);
         }
 
@@ -215,7 +221,9 @@ impl CliBackend {
         let combined = format!("{stdout}\n{stderr}").to_lowercase();
         let has = |s: &str| combined.contains(s);
         let err = if has("conflict") || has("automatic merge failed") || has("could not apply") {
-            GitError::MergeConflict { files: count_conflicts(&stdout) }
+            GitError::MergeConflict {
+                files: count_conflicts(&stdout),
+            }
         } else if has("no tracking information") || has("no upstream") {
             GitError::NoUpstream
         } else if has("authentication failed")
@@ -481,8 +489,13 @@ impl CliBackend {
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
         let combined = format!("{stdout}\n{stderr}").to_lowercase();
-        if combined.contains("conflict") || combined.contains("unmerged") || combined.contains("needs merge") {
-            return Err(GitError::MergeConflict { files: count_conflicts(&stdout) });
+        if combined.contains("conflict")
+            || combined.contains("unmerged")
+            || combined.contains("needs merge")
+        {
+            return Err(GitError::MergeConflict {
+                files: count_conflicts(&stdout),
+            });
         }
         Err(GitError::Backend(stderr.trim().to_string()))
     }
@@ -505,7 +518,9 @@ impl CliBackend {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let combined = format!("{stdout}\n{stderr}").to_lowercase();
         if combined.contains("conflict") {
-            return Err(GitError::MergeConflict { files: count_conflicts(&stdout) });
+            return Err(GitError::MergeConflict {
+                files: count_conflicts(&stdout),
+            });
         }
         Err(GitError::Backend(stderr.trim().to_string()))
     }
@@ -657,7 +672,10 @@ mod tests {
             rev_parse(a.path(), "HEAD"),
             "pull 后 B 的 HEAD 应快进到远程最新"
         );
-        assert_eq!(std::fs::read_to_string(b.path().join("f.txt")).unwrap(), "v2");
+        assert_eq!(
+            std::fs::read_to_string(b.path().join("f.txt")).unwrap(),
+            "v2"
+        );
     }
 
     #[test]
@@ -721,8 +739,18 @@ mod tests {
         // B rebase pull → cB 重放到 cA 之上,线性无 merge
         CliBackend.pull(b.path(), None, true).unwrap();
         // trim_end 容忍 Windows autocrlf 把 \n 换成 \r\n。
-        assert_eq!(std::fs::read_to_string(b.path().join("f.txt")).unwrap().trim_end(), "from-A");
-        assert_eq!(std::fs::read_to_string(b.path().join("g.txt")).unwrap().trim_end(), "from-B");
+        assert_eq!(
+            std::fs::read_to_string(b.path().join("f.txt"))
+                .unwrap()
+                .trim_end(),
+            "from-A"
+        );
+        assert_eq!(
+            std::fs::read_to_string(b.path().join("g.txt"))
+                .unwrap()
+                .trim_end(),
+            "from-B"
+        );
         let merges = Command::new("git")
             .current_dir(b.path())
             .args(["rev-list", "--count", "--merges", "HEAD"])
@@ -858,7 +886,9 @@ mod tests {
         git(repo.path(), &["add", "."]);
         git(repo.path(), &["commit", "-m", "c1"]);
         // FIRST/LAST 互不为子串,避免断言时 "+LINE1" 误命中 "+LINE10"。
-        let modified = base.replace("line1\n", "FIRST\n").replace("line10\n", "LAST\n");
+        let modified = base
+            .replace("line1\n", "FIRST\n")
+            .replace("line10\n", "LAST\n");
         std::fs::write(repo.path().join("f.txt"), &modified).unwrap();
         repo
     }
@@ -966,7 +996,10 @@ mod tests {
         git(repo.path(), &["commit", "-am", "cM"]);
         // 拣选 feature 的提交 → 同行冲突
         let err = CliBackend.cherry_pick(repo.path(), &sha).unwrap_err();
-        assert!(matches!(err, GitError::MergeConflict { .. }), "实际: {err:?}");
+        assert!(
+            matches!(err, GitError::MergeConflict { .. }),
+            "实际: {err:?}"
+        );
     }
 
     #[test]
@@ -986,9 +1019,16 @@ mod tests {
         // 回滚 c2 → g.txt 应消失,且生成新提交
         CliBackend.revert(repo.path(), &sha).unwrap();
         assert!(!repo.path().join("g.txt").exists(), "回滚后 g.txt 应被移除");
-        let log = Command::new("git").current_dir(repo.path())
-            .args(["log", "--oneline"]).output().unwrap();
-        assert_eq!(String::from_utf8_lossy(&log.stdout).lines().count(), 3, "应多出一条回滚提交");
+        let log = Command::new("git")
+            .current_dir(repo.path())
+            .args(["log", "--oneline"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&log.stdout).lines().count(),
+            3,
+            "应多出一条回滚提交"
+        );
     }
 
     #[test]
@@ -1005,7 +1045,10 @@ mod tests {
         std::fs::write(repo.path().join("f.txt"), "v2\n").unwrap();
         git(repo.path(), &["commit", "-am", "c2"]);
         let err = CliBackend.revert(repo.path(), &c1).unwrap_err();
-        assert!(matches!(err, GitError::MergeConflict { .. }), "实际: {err:?}");
+        assert!(
+            matches!(err, GitError::MergeConflict { .. }),
+            "实际: {err:?}"
+        );
     }
 
     #[test]
@@ -1013,11 +1056,15 @@ mod tests {
         let repo = repo_in_merge_conflict();
         CliBackend.resolve_theirs(repo.path(), "f.txt").unwrap();
         assert_eq!(
-            std::fs::read_to_string(repo.path().join("f.txt")).unwrap().trim_end(),
+            std::fs::read_to_string(repo.path().join("f.txt"))
+                .unwrap()
+                .trim_end(),
             "other",
             "采用对方后内容应为 other"
         );
-        CliBackend.continue_op(repo.path(), RepoState::Merging).unwrap();
+        CliBackend
+            .continue_op(repo.path(), RepoState::Merging)
+            .unwrap();
         assert!(porcelain(repo.path()).is_empty(), "合并完成后工作区应干净");
     }
 
@@ -1026,7 +1073,9 @@ mod tests {
         let repo = repo_in_merge_conflict();
         CliBackend.resolve_ours(repo.path(), "f.txt").unwrap();
         assert_eq!(
-            std::fs::read_to_string(repo.path().join("f.txt")).unwrap().trim_end(),
+            std::fs::read_to_string(repo.path().join("f.txt"))
+                .unwrap()
+                .trim_end(),
             "main",
             "采用我方后内容应为 main"
         );
@@ -1035,16 +1084,25 @@ mod tests {
     #[test]
     fn continue_with_unresolved_conflict_errors() {
         let repo = repo_in_merge_conflict();
-        let err = CliBackend.continue_op(repo.path(), RepoState::Merging).unwrap_err();
-        assert!(matches!(err, GitError::MergeConflict { .. }), "实际: {err:?}");
+        let err = CliBackend
+            .continue_op(repo.path(), RepoState::Merging)
+            .unwrap_err();
+        assert!(
+            matches!(err, GitError::MergeConflict { .. }),
+            "实际: {err:?}"
+        );
     }
 
     #[test]
     fn abort_merge_restores_clean() {
         let repo = repo_in_merge_conflict();
-        CliBackend.abort_op(repo.path(), RepoState::Merging).unwrap();
+        CliBackend
+            .abort_op(repo.path(), RepoState::Merging)
+            .unwrap();
         assert_eq!(
-            std::fs::read_to_string(repo.path().join("f.txt")).unwrap().trim_end(),
+            std::fs::read_to_string(repo.path().join("f.txt"))
+                .unwrap()
+                .trim_end(),
             "main",
             "中止合并应回到我方版本"
         );
@@ -1056,15 +1114,29 @@ mod tests {
         let repo = repo_with_dirty_worktree();
         // 贮藏 → 工作区恢复干净,列表有一条
         CliBackend.stash_save(repo.path(), Some("wip")).unwrap();
-        assert_eq!(std::fs::read_to_string(repo.path().join("f.txt")).unwrap().trim_end(), "base");
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("f.txt"))
+                .unwrap()
+                .trim_end(),
+            "base"
+        );
         let list = CliBackend.stash_list(repo.path()).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].index, 0);
-        assert!(list[0].message.contains("wip"), "应含自定义信息,实际: {}", list[0].message);
+        assert!(
+            list[0].message.contains("wip"),
+            "应含自定义信息,实际: {}",
+            list[0].message
+        );
 
         // 弹出 → 改动回来,列表清空
         CliBackend.stash_pop(repo.path(), 0).unwrap();
-        assert_eq!(std::fs::read_to_string(repo.path().join("f.txt")).unwrap().trim_end(), "changed");
+        assert_eq!(
+            std::fs::read_to_string(repo.path().join("f.txt"))
+                .unwrap()
+                .trim_end(),
+            "changed"
+        );
         assert!(CliBackend.stash_list(repo.path()).unwrap().is_empty());
     }
 

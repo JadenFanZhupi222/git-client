@@ -161,7 +161,7 @@ pub fn layout(commits: &[Commit]) -> Vec<GraphRowDto> {
             color: node_color,
             top,
             bottom,
-            refs: Vec::new(), // 由 service 在布局后按 SHA 挂上引用。
+            refs: Vec::new(),    // 由 service 在布局后按 SHA 挂上引用。
             sync: String::new(), // 由 service 在布局后按未 push/未 pull 标记。
         });
     }
@@ -271,10 +271,7 @@ mod tests {
             .expect("m 应分叉出第二父分支")
             .color;
         let b_row = rows.iter().find(|r| r.commit.id == "b").unwrap();
-        assert_eq!(
-            b_row.color, b_branch_color,
-            "b 分支从诞生到此处应保持同色"
-        );
+        assert_eq!(b_row.color, b_branch_color, "b 分支从诞生到此处应保持同色");
         // b 并入主干时(b 行下半段)那条合并弧仍是 b 分支的颜色 —— 同色贯穿始终。
         assert!(
             b_row

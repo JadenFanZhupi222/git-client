@@ -52,7 +52,12 @@ impl RepoService {
     }
 
     /// 用例:暂存某文件的第 hunk_index 个未暂存改动块。
-    pub fn stage_hunk(&self, repo_path: &Path, file: &str, hunk_index: usize) -> Result<(), GitError> {
+    pub fn stage_hunk(
+        &self,
+        repo_path: &Path,
+        file: &str,
+        hunk_index: usize,
+    ) -> Result<(), GitError> {
         self.backend.stage_hunk(repo_path, file, hunk_index)
     }
 
@@ -104,7 +109,10 @@ impl RepoService {
         // 按目标 SHA 分组引用,然后挂到可见行上(指向窗口外提交的引用自然落空)。
         let mut by_sha: HashMap<String, Vec<RefDto>> = HashMap::new();
         for r in refs {
-            by_sha.entry(r.target.clone()).or_default().push(RefDto::from(r));
+            by_sha
+                .entry(r.target.clone())
+                .or_default()
+                .push(RefDto::from(r));
         }
         for row in &mut rows {
             if let Some(rs) = by_sha.remove(&row.commit.id) {
@@ -132,7 +140,9 @@ impl RepoService {
         if query.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let commits = self.backend.search_commits(repo_path, query, limit, cancelled)?;
+        let commits = self
+            .backend
+            .search_commits(repo_path, query, limit, cancelled)?;
         Ok(commits.into_iter().map(CommitDto::from).collect())
     }
 
@@ -181,7 +191,10 @@ impl RepoService {
 
     /// 用例:当前分支相对上游的领先/落后;无上游返回 None。
     pub fn ahead_behind(&self, repo_path: &Path) -> Result<Option<AheadBehindDto>, GitError> {
-        Ok(self.backend.ahead_behind(repo_path)?.map(AheadBehindDto::from))
+        Ok(self
+            .backend
+            .ahead_behind(repo_path)?
+            .map(AheadBehindDto::from))
     }
 
     /// 用例:列出远程名。
@@ -213,7 +226,12 @@ impl RepoService {
     }
     /// 用例:逐行 blame。
     pub fn blame(&self, repo_path: &Path, file: &str) -> Result<Vec<BlameLineDto>, GitError> {
-        Ok(self.backend.blame(repo_path, file)?.into_iter().map(BlameLineDto::from).collect())
+        Ok(self
+            .backend
+            .blame(repo_path, file)?
+            .into_iter()
+            .map(BlameLineDto::from)
+            .collect())
     }
     /// 用例:读冲突文件三方内容,供三栏合并编辑器渲染。
     pub fn conflict_sides(
@@ -255,7 +273,12 @@ impl RepoService {
 
     // ---- 贮藏 ----
     pub fn stash_list(&self, repo_path: &Path) -> Result<Vec<StashDto>, GitError> {
-        Ok(self.backend.stash_list(repo_path)?.into_iter().map(StashDto::from).collect())
+        Ok(self
+            .backend
+            .stash_list(repo_path)?
+            .into_iter()
+            .map(StashDto::from)
+            .collect())
     }
     pub fn stash_save(&self, repo_path: &Path, message: Option<&str>) -> Result<(), GitError> {
         self.backend.stash_save(repo_path, message)
@@ -444,7 +467,10 @@ mod tests {
             short_id: id.chars().take(7).collect(),
             summary: summary.into(),
             body: String::new(),
-            author: Signature { name: author.into(), email: format!("{author}@e") },
+            author: Signature {
+                name: author.into(),
+                email: format!("{author}@e"),
+            },
             timestamp: 0,
             parents: vec![],
         };
@@ -456,20 +482,32 @@ mod tests {
         let svc = RepoService::new(Arc::new(fb));
         let never = || false;
         // 大小写不敏感匹配 summary
-        let hits = svc.search_commits(Path::new("/r"), "login", 10, &never).unwrap();
+        let hits = svc
+            .search_commits(Path::new("/r"), "login", 10, &never)
+            .unwrap();
         assert_eq!(hits.len(), 2);
         // 按作者
-        let by_author = svc.search_commits(Path::new("/r"), "carol", 10, &never).unwrap();
+        let by_author = svc
+            .search_commits(Path::new("/r"), "carol", 10, &never)
+            .unwrap();
         assert_eq!(by_author.len(), 1);
         assert_eq!(by_author[0].id, "ccc333");
         // SHA 前缀
-        let by_sha = svc.search_commits(Path::new("/r"), "bbb", 10, &never).unwrap();
+        let by_sha = svc
+            .search_commits(Path::new("/r"), "bbb", 10, &never)
+            .unwrap();
         assert_eq!(by_sha.len(), 1);
         // limit 生效
-        let limited = svc.search_commits(Path::new("/r"), "login", 1, &never).unwrap();
+        let limited = svc
+            .search_commits(Path::new("/r"), "login", 1, &never)
+            .unwrap();
         assert_eq!(limited.len(), 1);
         // 空 query → 空
-        assert!(svc.search_commits(Path::new("/r"), "  ", 10, &never).unwrap().is_empty());
+        assert!(
+            svc.search_commits(Path::new("/r"), "  ", 10, &never)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -581,9 +619,15 @@ mod tests {
     #[test]
     fn ahead_behind_forwards_and_maps() {
         use git_core::model::AheadBehind;
-        let fb = FakeBackend::default().with_ahead_behind(AheadBehind { ahead: 2, behind: 3 });
+        let fb = FakeBackend::default().with_ahead_behind(AheadBehind {
+            ahead: 2,
+            behind: 3,
+        });
         let svc = RepoService::new(Arc::new(fb));
-        let ab = svc.ahead_behind(Path::new("/r")).unwrap().expect("应有结果");
+        let ab = svc
+            .ahead_behind(Path::new("/r"))
+            .unwrap()
+            .expect("应有结果");
         assert_eq!(ab.ahead, 2);
         assert_eq!(ab.behind, 3);
     }
@@ -598,7 +642,10 @@ mod tests {
     fn remotes_forwards() {
         let fb = FakeBackend::default().with_remotes(vec!["origin".into(), "upstream".into()]);
         let svc = RepoService::new(Arc::new(fb));
-        assert_eq!(svc.remotes(Path::new("/r")).unwrap(), vec!["origin", "upstream"]);
+        assert_eq!(
+            svc.remotes(Path::new("/r")).unwrap(),
+            vec!["origin", "upstream"]
+        );
     }
 
     #[test]
@@ -636,7 +683,14 @@ mod tests {
         svc.revert(Path::new("/r"), "def456").unwrap();
         assert_eq!(
             fb.conflict_ops(),
-            vec!["ours:a.txt", "theirs:b.txt", "continue", "abort", "cherry-pick:abc123", "revert:def456"]
+            vec![
+                "ours:a.txt",
+                "theirs:b.txt",
+                "continue",
+                "abort",
+                "cherry-pick:abc123",
+                "revert:def456"
+            ]
         );
         // 空 id 在 service 层拦截
         assert!(svc.revert(Path::new("/r"), "  ").is_err());
@@ -645,7 +699,10 @@ mod tests {
     #[test]
     fn stash_list_maps_dto() {
         use git_core::model::StashEntry;
-        let fb = FakeBackend::default().with_stashes(vec![StashEntry { index: 0, message: "wip".into() }]);
+        let fb = FakeBackend::default().with_stashes(vec![StashEntry {
+            index: 0,
+            message: "wip".into(),
+        }]);
         let svc = RepoService::new(Arc::new(fb));
         let list = svc.stash_list(Path::new("/r")).unwrap();
         assert_eq!(list.len(), 1);
@@ -699,7 +756,10 @@ mod tests {
         let svc = RepoService::new(fb.clone());
         svc.create_branch(Path::new("/r"), "feat/x", false).unwrap();
         assert_eq!(fb.created_branches(), vec!["feat/x".to_string()]);
-        assert!(fb.checked_out_branches().is_empty(), "checkout=false 不应切换");
+        assert!(
+            fb.checked_out_branches().is_empty(),
+            "checkout=false 不应切换"
+        );
     }
 
     #[test]
