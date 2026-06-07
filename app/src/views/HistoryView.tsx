@@ -7,6 +7,7 @@ import { CommitLines } from "../components/CommitLines";
 import { TagManager } from "../components/TagManager";
 import { ResetMenu } from "../components/ResetMenu";
 import { RebaseEditor } from "../components/RebaseEditor";
+import { CommitContextMenu } from "../components/CommitContextMenu";
 import { CommitFileList } from "../components/CommitFileList";
 import { CommitDetail } from "../components/CommitDetail";
 import { DiffView } from "../components/DiffView";
@@ -35,6 +36,7 @@ export function HistoryView({ repo }: { repo: string }) {
   const [searchInput, setSearchInput] = useState("");
   const [query, setQuery] = useState(""); // debounce 后的查询
   const [rebaseOpen, setRebaseOpen] = useState(false);
+  const [menu, setMenu] = useState<{ commit: CommitDto; x: number; y: number } | null>(null);
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -65,15 +67,15 @@ export function HistoryView({ repo }: { repo: string }) {
   const selIdx = selected ? rows.findIndex((r) => r.commit.id === selected.id) : -1;
   const rebaseCommits = selIdx >= 0 ? rows.slice(0, selIdx + 1).map((r) => r.commit).reverse() : [];
   const rebaseBase = selected ? (selected.parents[0] ?? null) : null;
-  const afterRebase = () => {
-    setRebaseOpen(false);
+  const refresh = () => {
     invalidateHistory(qc, repo);
     invalidateWorktree(qc, repo);
     qc.invalidateQueries({ queryKey: qk.repoState(repo) });
   };
+  const afterRebase = () => { setRebaseOpen(false); refresh(); };
 
   // 切仓库:重置分页、选择与搜索
-  useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); setSearchInput(""); setQuery(""); setRebaseOpen(false); }, [repo]);
+  useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); setSearchInput(""); setQuery(""); setRebaseOpen(false); setMenu(null); }, [repo]);
 
   function selectCommit(c: CommitDto) {
     setSelected(c);
@@ -132,6 +134,7 @@ export function HistoryView({ repo }: { repo: string }) {
         rows={rows}
         selectedId={selected?.id ?? null}
         onSelect={selectCommit}
+        onContext={(c, x, y) => setMenu({ commit: c, x, y })}
         onLoadMore={() => setLimit((l) => l + PAGE)}
         loading={graphQ.isFetching}
         firstLoad={graphQ.isLoading}
@@ -182,19 +185,34 @@ export function HistoryView({ repo }: { repo: string }) {
           onDone={afterRebase}
         />
       )}
+
+      {menu && (
+        <CommitContextMenu
+          repo={repo}
+          commit={menu.commit}
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          onCherryPick={() => doCherryPick(menu.commit)}
+          onRevert={() => doRevert(menu.commit)}
+          onRebase={() => setRebaseOpen(true)}
+          onChanged={refresh}
+        />
+      )}
     </div>
   );
 }
 
 /** 图谱列(含可拖拽宽度 + 提交搜索)。搜索时切扁平匹配列表,清空回到图谱。 */
 function GraphColumn({
-  branch, rows, selectedId, onSelect, onLoadMore, loading, firstLoad, hasMore, error,
+  branch, rows, selectedId, onSelect, onContext, onLoadMore, loading, firstLoad, hasMore, error,
   searchInput, onSearchChange, searching, searchResults, searchLoading,
 }: {
   branch: string | null;
   rows: GraphRowDto[];
   selectedId: string | null;
   onSelect: (c: CommitDto) => void;
+  onContext: (c: CommitDto, x: number, y: number) => void;
   onLoadMore: () => void;
   loading: boolean;
   firstLoad: boolean;
@@ -230,12 +248,13 @@ function GraphColumn({
         </div>
         {error && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{error}</p>}
         {searching ? (
-          <SearchList results={searchResults} loading={searchLoading} selectedId={selectedId} onSelect={onSelect} />
+          <SearchList results={searchResults} loading={searchLoading} selectedId={selectedId} onSelect={onSelect} onContext={onContext} />
         ) : (
           <CommitGraph
             rows={rows}
             selectedId={selectedId}
             onSelect={onSelect}
+            onContext={onContext}
             onLoadMore={onLoadMore}
             loading={firstLoad || loading}
             hasMore={hasMore}
@@ -249,12 +268,13 @@ function GraphColumn({
 
 /** 搜索结果:扁平提交列表(无泳道)。 */
 function SearchList({
-  results, loading, selectedId, onSelect,
+  results, loading, selectedId, onSelect, onContext,
 }: {
   results: CommitDto[];
   loading: boolean;
   selectedId: string | null;
   onSelect: (c: CommitDto) => void;
+  onContext: (c: CommitDto, x: number, y: number) => void;
 }) {
   if (loading && results.length === 0) {
     return <div className="p-3 text-xs text-fg-subtle">搜索中…</div>;
@@ -271,6 +291,7 @@ function SearchList({
           <div
             key={c.id}
             onClick={() => onSelect(c)}
+            onContextMenu={(e) => { e.preventDefault(); onSelect(c); onContext(c, e.clientX, e.clientY); }}
             className={`flex cursor-pointer items-center gap-2 border-l-2 px-3 py-2 transition-colors ${
               on ? "border-accent-emphasis bg-overlay" : "border-transparent hover:bg-elevated"
             }`}

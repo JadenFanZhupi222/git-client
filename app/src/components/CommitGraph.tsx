@@ -42,11 +42,12 @@ function RefBadges({ refs }: { refs: RefDto[] }) {
 }
 
 export function CommitGraph({
-  rows, selectedId, onSelect, onLoadMore, loading, hasMore,
+  rows, selectedId, onSelect, onContext, onLoadMore, loading, hasMore,
 }: {
   rows: GraphRowDto[];
   selectedId: string | null;
   onSelect: (c: CommitDto) => void;
+  onContext?: (c: CommitDto, x: number, y: number) => void;
   onLoadMore: () => void;
   loading: boolean;
   hasMore: boolean;
@@ -110,6 +111,7 @@ export function CommitGraph({
           <div
             key={r.commit.id}
             onClick={() => onSelect(r.commit)}
+            onContextMenu={(e) => { if (onContext) { e.preventDefault(); onSelect(r.commit); onContext(r.commit, e.clientX, e.clientY); } }}
             title={syncTip}
             className={`flex cursor-pointer items-stretch border-l-2 transition-colors ${
               on ? "border-accent-emphasis bg-overlay" : "border-transparent hover:bg-elevated"
