@@ -169,6 +169,17 @@ async fn commit(repo_path: String, message: String) -> Result<String, IpcError> 
 }
 
 #[tauri::command]
+async fn amend_commit(repo_path: String, message: Option<String>) -> Result<String, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.amend_commit(&PathBuf::from(repo_path), message.as_deref())
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
 async fn get_log(repo_path: String, limit: usize, skip: usize) -> Result<Vec<CommitDto>, IpcError> {
     tokio::task::spawn_blocking(move || {
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
@@ -717,6 +728,7 @@ pub fn run() {
             unstage_hunk,
             stage_lines,
             commit,
+            amend_commit,
             get_log,
             get_commit_files,
             get_commit_file_diff,

@@ -35,6 +35,9 @@ impl GitBackend for CompositeBackend {
     fn commit(&self, repo: &Path, message: &str) -> Result<String, GitError> {
         self.git2.commit(repo, message)
     }
+    fn amend_commit(&self, repo: &Path, message: Option<&str>) -> Result<String, GitError> {
+        self.git2.amend_commit(repo, message)
+    }
     fn log(&self, repo: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, GitError> {
         self.git2.log(repo, limit, skip)
     }

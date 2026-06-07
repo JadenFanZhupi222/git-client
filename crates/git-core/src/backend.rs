@@ -29,6 +29,12 @@ pub trait GitBackend: Send + Sync {
     /// 提交 index 内容,返回新 commit 的完整 SHA。
     fn commit(&self, repo: &Path, message: &str) -> Result<String, GitError>;
 
+    /// 修订(amend)最近一次提交:用当前暂存区的树替换它,`message` 为 None 则保留原信息。
+    /// 空仓库(无 HEAD)→ NoHead。默认 Unsupported。
+    fn amend_commit(&self, _repo: &Path, _message: Option<&str>) -> Result<String, GitError> {
+        Err(GitError::Unsupported)
+    }
+
     /// 提交历史,时间倒序(新→旧)。limit/skip 分页。
     fn log(&self, repo: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, GitError>;
 

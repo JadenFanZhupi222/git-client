@@ -200,6 +200,13 @@ impl GitBackend for FakeBackend {
         self.commits.lock().unwrap().push(message.to_string());
         Ok("fake000000000000000000000000000000000000".to_string())
     }
+    fn amend_commit(&self, _path: &Path, message: Option<&str>) -> Result<String, GitError> {
+        self.commits
+            .lock()
+            .unwrap()
+            .push(format!("amend:{}", message.unwrap_or("<keep>")));
+        Ok("fakeamend00000000000000000000000000000000".to_string())
+    }
 
     fn log(&self, _path: &Path, _limit: usize, _skip: usize) -> Result<Vec<Commit>, GitError> {
         Ok(self.canned_log.lock().unwrap().clone())
