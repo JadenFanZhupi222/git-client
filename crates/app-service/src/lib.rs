@@ -121,16 +121,18 @@ impl RepoService {
     }
 
     /// 用例:从 HEAD 搜索提交(匹配 message/作者/SHA),扁平列表。空 query 返回空。
+    /// `cancelled`:用户改搜索词时取消上一次遍历(见 GitBackend::search_commits)。
     pub fn search_commits(
         &self,
         repo_path: &Path,
         query: &str,
         limit: usize,
+        cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<CommitDto>, GitError> {
         if query.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let commits = self.backend.search_commits(repo_path, query, limit)?;
+        let commits = self.backend.search_commits(repo_path, query, limit, cancelled)?;
         Ok(commits.into_iter().map(CommitDto::from).collect())
     }
 
@@ -452,21 +454,22 @@ mod tests {
             mk("ccc333", "refactor utils", "carol"),
         ]);
         let svc = RepoService::new(Arc::new(fb));
+        let never = || false;
         // 大小写不敏感匹配 summary
-        let hits = svc.search_commits(Path::new("/r"), "login", 10).unwrap();
+        let hits = svc.search_commits(Path::new("/r"), "login", 10, &never).unwrap();
         assert_eq!(hits.len(), 2);
         // 按作者
-        let by_author = svc.search_commits(Path::new("/r"), "carol", 10).unwrap();
+        let by_author = svc.search_commits(Path::new("/r"), "carol", 10, &never).unwrap();
         assert_eq!(by_author.len(), 1);
         assert_eq!(by_author[0].id, "ccc333");
         // SHA 前缀
-        let by_sha = svc.search_commits(Path::new("/r"), "bbb", 10).unwrap();
+        let by_sha = svc.search_commits(Path::new("/r"), "bbb", 10, &never).unwrap();
         assert_eq!(by_sha.len(), 1);
         // limit 生效
-        let limited = svc.search_commits(Path::new("/r"), "login", 1).unwrap();
+        let limited = svc.search_commits(Path::new("/r"), "login", 1, &never).unwrap();
         assert_eq!(limited.len(), 1);
         // 空 query → 空
-        assert!(svc.search_commits(Path::new("/r"), "  ", 10).unwrap().is_empty());
+        assert!(svc.search_commits(Path::new("/r"), "  ", 10, &never).unwrap().is_empty());
     }
 
     #[test]
