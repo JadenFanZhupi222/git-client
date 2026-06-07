@@ -1,5 +1,5 @@
 import { type CommitDto, type GraphRowDto, type RefDto } from "../ipc";
-import { formatRelative } from "../lib/time";
+import { CommitLines } from "./CommitLines";
 
 const LANE_W = 16; // 每条 lane 的像素宽
 const ROW_H = 48; // 行高必须固定,否则跨行的连线对不齐
@@ -142,13 +142,7 @@ export function CommitGraph({
 
             {/* 提交信息 */}
             <div className="flex min-w-0 flex-1 flex-col justify-center pr-3">
-              <div className="flex items-center gap-1 overflow-hidden">
-                <RefBadges refs={r.refs} />
-                <span className="truncate text-[13px] text-fg" title={r.commit.summary}>{r.commit.summary}</span>
-              </div>
-              <div className="truncate font-mono text-[11px] text-fg-muted">
-                {r.commit.short_id} · {r.commit.author_name} · {formatRelative(r.commit.timestamp)}
-              </div>
+              <CommitLines commit={r.commit} badges={<RefBadges refs={r.refs} />} />
             </div>
           </div>
         );

@@ -43,6 +43,24 @@ fn build_commit(c: &git2::Commit) -> Commit {
     }
 }
 
+/// 建一个从 HEAD 出发、按时间倒序(新→旧)的 revwalk。
+/// 空仓库(unborn HEAD)→ Ok(None);调用方据此返回空结果。
+/// ⚠️ set_sorting 必须在 push_head 之前。log 与 search_commits 共用,避免漏改顺序。
+fn head_revwalk(repo: &git2::Repository) -> Result<Option<git2::Revwalk<'_>>, GitError> {
+    // 用 repo.head() 提前判断 unborn,避免 push_head 在不同 libgit2 版本上返回不一致的错误码。
+    match repo.head() {
+        Ok(_) => {}
+        Err(e) if e.code() == git2::ErrorCode::UnbornBranch => return Ok(None),
+        Err(e) => return Err(GitError::Backend(e.to_string())),
+    }
+    let mut walk = repo.revwalk().map_err(|e| GitError::Backend(e.to_string()))?;
+    walk.set_sorting(git2::Sort::TIME)
+        .map_err(|e| GitError::Backend(e.to_string()))?;
+    walk.push_head()
+        .map_err(|e| GitError::Backend(e.to_string()))?;
+    Ok(Some(walk))
+}
+
 /// 从一个 git2::Diff 里抽出指定文件的行级 FileDiff。
 /// commit_file_diff(树↔树)与 working_diff(工作区/index)共用,保证渲染一致。
 fn file_diff_from(diff: &git2::Diff, file: &str) -> Result<FileDiff, GitError> {
@@ -311,22 +329,9 @@ impl GitBackend for Git2Backend {
         let repo =
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
 
-        // ⚠️ 空仓库(unborn HEAD)时 repo.head() 返回 UnbornBranch 错误。
-        // 用 repo.head() 提前判断,避免 push_head 在不同 libgit2 版本上返回不一致的错误码。
-        match repo.head() {
-            Ok(_) => {} // 有 HEAD,继续走 revwalk
-            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => return Ok(Vec::new()),
-            Err(e) => return Err(GitError::Backend(e.to_string())),
-        }
-
-        let mut walk = repo
-            .revwalk()
-            .map_err(|e| GitError::Backend(e.to_string()))?;
-        // ⚠️ set_sorting 必须在 push_head 之前
-        walk.set_sorting(git2::Sort::TIME)
-            .map_err(|e| GitError::Backend(e.to_string()))?;
-        walk.push_head()
-            .map_err(|e| GitError::Backend(e.to_string()))?;
+        let Some(walk) = head_revwalk(&repo)? else {
+            return Ok(Vec::new()); // 空仓库
+        };
 
         // ⚠️ Revwalk 惰性:直接 skip/take,别先 collect 全部
         let mut out = Vec::new();
@@ -352,16 +357,9 @@ impl GitBackend for Git2Backend {
         }
         let repo =
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
-        // 空仓库(unborn HEAD)→ 无可搜。
-        match repo.head() {
-            Ok(_) => {}
-            Err(e) if e.code() == git2::ErrorCode::UnbornBranch => return Ok(Vec::new()),
-            Err(e) => return Err(GitError::Backend(e.to_string())),
-        }
-        let mut walk = repo.revwalk().map_err(|e| GitError::Backend(e.to_string()))?;
-        walk.set_sorting(git2::Sort::TIME)
-            .map_err(|e| GitError::Backend(e.to_string()))?;
-        walk.push_head().map_err(|e| GitError::Backend(e.to_string()))?;
+        let Some(walk) = head_revwalk(&repo)? else {
+            return Ok(Vec::new()); // 空仓库,无可搜
+        };
 
         // 惰性遍历整段历史,逐条匹配后收集,够 limit 即停 —— 不预先 collect。
         let mut out = Vec::new();
