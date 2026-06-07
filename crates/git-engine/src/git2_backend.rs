@@ -1,9 +1,10 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, DiffLine, DiffLineKind,
-    FileChange, FileDiff, FileEntry, FileState, Hunk, RefKind, RepoState, Signature,
+    FileChange, FileDiff, FileEntry, FileState, Hunk, RefKind, RepoState, Signature, SyncCommits,
     WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
+use std::collections::HashSet;
 use std::path::Path;
 
 /// git2 的 add_path/remove_path 要求"仓库根相对路径"。
@@ -555,6 +556,46 @@ impl GitBackend for Git2Backend {
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
         let arr = repo.remotes().map_err(|e| GitError::Backend(e.to_string()))?;
         Ok(arr.iter().flatten().map(|s| s.to_string()).collect())
+    }
+
+    fn sync_commits(&self, path: &Path) -> Result<SyncCommits, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+
+        // 没有任何「实指向」的远程跟踪分支(全新仓库 / 从没 fetch/push 过)时无从对比,
+        // 返回空集合 —— 否则会把整段历史都标成「未 push」,满屏空心圈,无意义。
+        // origin/HEAD 是符号引用(target() 为 None),自然不计入。
+        let has_remote_tracking = repo
+            .branches(Some(git2::BranchType::Remote))
+            .map_err(|e| GitError::Backend(e.to_string()))?
+            .flatten()
+            .any(|(b, _)| b.get().target().is_some());
+        if !has_remote_tracking {
+            return Ok(SyncCommits::default());
+        }
+
+        // revwalk:遍历 `include` 可达、`hide` 不可达的提交,收集 SHA。
+        // 等价于 `git rev-list <include> --not <hide>`。
+        let collect = |include: &str, hide: &str| -> Result<HashSet<String>, GitError> {
+            let mut walk = repo.revwalk().map_err(|e| GitError::Backend(e.to_string()))?;
+            walk.push_glob(include)
+                .map_err(|e| GitError::Backend(e.to_string()))?;
+            walk.hide_glob(hide)
+                .map_err(|e| GitError::Backend(e.to_string()))?;
+            let mut set = HashSet::new();
+            for oid in walk {
+                let oid = oid.map_err(|e| GitError::Backend(e.to_string()))?;
+                set.insert(oid.to_string());
+            }
+            Ok(set)
+        };
+
+        Ok(SyncCommits {
+            // 本地分支独有 = 已 commit 未 push。
+            outgoing: collect("refs/heads/*", "refs/remotes/*")?,
+            // 远程跟踪分支独有 = 已 fetch 未 pull/merge。
+            incoming: collect("refs/remotes/*", "refs/heads/*")?,
+        })
     }
 
     fn blame(&self, path: &Path, file: &str) -> Result<Vec<BlameLine>, GitError> {
@@ -1453,6 +1494,51 @@ mod tests {
         let ab = Git2Backend.ahead_behind(&repo).unwrap();
         assert!(ab.is_some(), "设上游后应能计算 ahead/behind");
         assert_eq!(ab.unwrap().ahead, 0);
+    }
+
+    #[test]
+    fn sync_commits_empty_without_remote_tracking() {
+        let (_tmp, repo) = init_repo();
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        let sync = Git2Backend.sync_commits(&repo).unwrap();
+        assert!(sync.outgoing.is_empty(), "无远程跟踪引用 → 不标未push");
+        assert!(sync.incoming.is_empty(), "无远程跟踪引用 → 不标未pull");
+    }
+
+    #[test]
+    fn sync_commits_splits_outgoing_and_incoming() {
+        let (_tmp, repo) = init_repo();
+        stage(&repo, "a.txt", "1");
+        let c1 = commit_index(&repo, "c1", 1000);
+        stage(&repo, "a.txt", "2");
+        let c2 = commit_index(&repo, "c2", 2000);
+
+        let g = git2::Repository::open(&repo).unwrap();
+        let head_name = g.head().unwrap().shorthand().unwrap().to_string();
+        // 远程跟踪 origin/<head> 停在 c1 → 本地的 c2 是「未 push」。
+        g.reference(
+            &format!("refs/remotes/origin/{head_name}"),
+            git2::Oid::from_str(&c1).unwrap(),
+            true,
+            "arrange",
+        )
+        .unwrap();
+        // 在 c1 上再造一条只存在于远程的提交(不更新 HEAD) → 「未 pull」。
+        let c1_commit = g.find_commit(git2::Oid::from_str(&c1).unwrap()).unwrap();
+        let sig = git2::Signature::new("R", "r@e.local", &git2::Time::new(1500, 0)).unwrap();
+        let incoming = g
+            .commit(None, &sig, &sig, "remote-only", &c1_commit.tree().unwrap(), &[&c1_commit])
+            .unwrap()
+            .to_string();
+        g.reference("refs/remotes/origin/feature", git2::Oid::from_str(&incoming).unwrap(), true, "arrange")
+            .unwrap();
+
+        let sync = Git2Backend.sync_commits(&repo).unwrap();
+        assert!(sync.outgoing.contains(&c2), "c2 本地独有 → 未 push");
+        assert!(!sync.outgoing.contains(&c1), "c1 远程也有 → 不算未 push");
+        assert!(sync.incoming.contains(&incoming), "远程独有提交 → 未 pull");
+        assert!(!sync.incoming.contains(&c2), "c2 不应算未 pull");
     }
 
     #[test]

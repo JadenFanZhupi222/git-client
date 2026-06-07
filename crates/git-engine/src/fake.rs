@@ -1,6 +1,6 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, FileEntry, PullOutcome, PushOutcome, RepoState, StashEntry, Signature,
+    FileDiff, FileEntry, PullOutcome, PushOutcome, RepoState, StashEntry, Signature, SyncCommits,
     WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
@@ -23,6 +23,7 @@ pub struct FakeBackend {
     canned_branches: Mutex<Vec<BranchInfo>>,
     canned_refs: Mutex<Vec<CommitRef>>,
     canned_ahead_behind: Mutex<Option<AheadBehind>>,
+    canned_sync_commits: Mutex<SyncCommits>,
     canned_remotes: Mutex<Vec<String>>,
     checked_out: Mutex<Vec<String>>,
     created: Mutex<Vec<String>>,
@@ -85,6 +86,10 @@ impl FakeBackend {
     }
     pub fn with_ahead_behind(self, ab: AheadBehind) -> Self {
         *self.canned_ahead_behind.lock().unwrap() = Some(ab);
+        self
+    }
+    pub fn with_sync_commits(self, sync: SyncCommits) -> Self {
+        *self.canned_sync_commits.lock().unwrap() = sync;
         self
     }
     pub fn with_remotes(self, remotes: Vec<String>) -> Self {
@@ -282,6 +287,9 @@ impl GitBackend for FakeBackend {
     }
     fn remotes(&self, _path: &Path) -> Result<Vec<String>, GitError> {
         Ok(self.canned_remotes.lock().unwrap().clone())
+    }
+    fn sync_commits(&self, _path: &Path) -> Result<SyncCommits, GitError> {
+        Ok(self.canned_sync_commits.lock().unwrap().clone())
     }
     fn set_upstream(&self, _path: &Path, upstream: &str) -> Result<(), GitError> {
         self.upstreams_set.lock().unwrap().push(upstream.to_string());

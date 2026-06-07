@@ -286,6 +286,8 @@ pub struct GraphRowDto {
     pub bottom: Vec<GraphSegDto>,
     /// 指向本行提交的引用(分支/远程/HEAD);多数行为空。
     pub refs: Vec<RefDto>,
+    /// 同步标记:"" 普通 | "outgoing" 已 commit 未 push | "incoming" 已 fetch 未 pull。
+    pub sync: String,
 }
 
 /// 行级 diff 的一行 DTO。kind:context | add | del。

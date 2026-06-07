@@ -1,4 +1,19 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+
+/// 本地与远程跟踪分支的提交差集,供图谱标记「未 push / 未 pull」用。
+///
+/// - `outgoing`:本地分支可达、但所有远程跟踪分支都不可达的提交 SHA = **已 commit 未 push**。
+///   等价于 `git rev-list --branches --not --remotes`。
+/// - `incoming`:远程跟踪分支可达、但本地分支都不可达的提交 SHA = **已 fetch 未 pull/merge**。
+///   等价于 `git rev-list --remotes --not --branches`。
+///
+/// 仓库无任何远程跟踪引用时两集合均空(无从对比)。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SyncCommits {
+    pub outgoing: HashSet<String>,
+    pub incoming: HashSet<String>,
+}
 
 /// 本地分支信息(阶段 2a 最小集:名字 + 是否当前)。
 /// 后续切片会扩展 upstream / ahead-behind 等字段。

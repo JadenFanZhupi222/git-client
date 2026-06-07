@@ -97,15 +97,30 @@ export function CommitGraph({
       {rows.map((r) => {
         const on = selectedId === r.commit.id;
         const isHead = r.refs.some((x) => x.kind === "head");
+        // 同步状态:未 push=绿 / 未 pull=蓝(与状态栏 SyncBadge 的 ↑绿↓蓝 一致)。
+        const syncColor =
+          r.sync === "outgoing" ? "var(--color-success)"
+          : r.sync === "incoming" ? "var(--color-accent)"
+          : null;
+        const syncTip =
+          r.sync === "outgoing" ? "已提交,尚未 push 到远程"
+          : r.sync === "incoming" ? "已 fetch,尚未 pull/合并到本地"
+          : undefined;
         return (
           <div
             key={r.commit.id}
             onClick={() => onSelect(r.commit)}
+            title={syncTip}
             className={`flex cursor-pointer items-stretch border-l-2 transition-colors ${
               on ? "border-accent-emphasis bg-overlay" : "border-transparent hover:bg-elevated"
             }`}
             style={{ height: ROW_H }}
           >
+            {/* 左侧同步色条:未 push/未 pull 的提交在行首画一条细竖条,一眼成组识别 */}
+            <div
+              className="w-[3px] shrink-0 self-stretch"
+              style={{ background: syncColor ?? "transparent" }}
+            />
             {/* 图谱泳道 */}
             <svg width={gutterW} height={ROW_H} className="shrink-0" style={{ minWidth: gutterW }}>
               {r.top.map((s, j) => (
@@ -118,10 +133,11 @@ export function CommitGraph({
               ))}
               {/* 光晕:用画布色描边把节点背后的泳道线「挖空」,圆点更干净 */}
               <circle cx={cx(r.column)} cy={ROW_H / 2} r={6.5} fill="var(--color-canvas)" />
+              {/* 节点:已同步=实心(泳道色);未 push/未 pull=空心环(同步色),仿 JetBrains */}
               <circle cx={cx(r.column)} cy={ROW_H / 2} r={4.5}
-                fill={laneColor(r.color)}
-                stroke={isHead ? "var(--color-accent)" : "transparent"}
-                strokeWidth={isHead ? 2.5 : 0} />
+                fill={syncColor ? "var(--color-canvas)" : laneColor(r.color)}
+                stroke={syncColor ?? (isHead ? "var(--color-accent)" : "transparent")}
+                strokeWidth={syncColor ? 2.5 : isHead ? 2.5 : 0} />
             </svg>
 
             {/* 提交信息 */}

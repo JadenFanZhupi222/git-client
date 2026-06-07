@@ -98,6 +98,7 @@ impl RepoService {
     ) -> Result<Vec<GraphRowDto>, GitError> {
         let commits = self.backend.log(repo_path, limit, 0)?;
         let refs = self.backend.refs(repo_path)?;
+        let sync = self.backend.sync_commits(repo_path)?;
         let mut rows = crate::graph::layout(&commits);
 
         // 按目标 SHA 分组引用,然后挂到可见行上(指向窗口外提交的引用自然落空)。
@@ -108,6 +109,12 @@ impl RepoService {
         for row in &mut rows {
             if let Some(rs) = by_sha.remove(&row.commit.id) {
                 row.refs = rs;
+            }
+            // 未 push / 未 pull 标记(两集合互斥;outgoing 优先无歧义)。
+            if sync.outgoing.contains(&row.commit.id) {
+                row.sync = "outgoing".to_string();
+            } else if sync.incoming.contains(&row.commit.id) {
+                row.sync = "incoming".to_string();
             }
         }
         Ok(rows)
@@ -403,6 +410,43 @@ mod tests {
         assert_eq!(rows[1].refs.len(), 1);
         assert_eq!(rows[1].refs[0].kind, "remote");
         assert_eq!(rows[1].refs[0].name, "origin/main");
+    }
+
+    #[test]
+    fn commit_graph_marks_outgoing_and_incoming() {
+        use git_core::model::{Commit, Signature, SyncCommits};
+        use std::collections::HashSet;
+        let mk = |id: &str, parents: Vec<&str>| Commit {
+            id: id.into(),
+            short_id: id.into(),
+            summary: "s".into(),
+            body: String::new(),
+            author: Signature {
+                name: "n".into(),
+                email: "e".into(),
+            },
+            timestamp: 0,
+            parents: parents.iter().map(|s| s.to_string()).collect(),
+        };
+        // 历史:a(未push)→ b(已同步)→ c(已同步);另有 d 仅在远程(未pull)。
+        let fb = FakeBackend::default()
+            .with_log(vec![
+                mk("a", vec!["b"]),
+                mk("b", vec!["c"]),
+                mk("c", vec![]),
+                mk("d", vec!["b"]),
+            ])
+            .with_sync_commits(SyncCommits {
+                outgoing: HashSet::from(["a".to_string()]),
+                incoming: HashSet::from(["d".to_string()]),
+            });
+        let svc = RepoService::new(Arc::new(fb));
+        let rows = svc.commit_graph(Path::new("/r"), 10).unwrap();
+        let by_id = |id: &str| rows.iter().find(|r| r.commit.id == id).unwrap();
+        assert_eq!(by_id("a").sync, "outgoing");
+        assert_eq!(by_id("d").sync, "incoming");
+        assert_eq!(by_id("b").sync, "");
+        assert_eq!(by_id("c").sync, "");
     }
 
     #[test]
