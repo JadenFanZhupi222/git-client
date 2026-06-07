@@ -87,6 +87,9 @@ impl GitBackend for CompositeBackend {
     fn cherry_pick(&self, repo: &Path, commit_id: &str) -> Result<(), GitError> {
         self.cli.cherry_pick(repo, commit_id)
     }
+    fn revert(&self, repo: &Path, commit_id: &str) -> Result<(), GitError> {
+        self.cli.revert(repo, commit_id)
+    }
     fn ahead_behind(&self, repo: &Path) -> Result<Option<AheadBehind>, GitError> {
         self.git2.ahead_behind(repo)
     }

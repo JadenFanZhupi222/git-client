@@ -229,6 +229,14 @@ impl RepoService {
         self.backend.cherry_pick(repo_path, commit_id)
     }
 
+    /// 回滚某提交(生成抵消其改动的新提交)。
+    pub fn revert(&self, repo_path: &Path, commit_id: &str) -> Result<(), GitError> {
+        if commit_id.trim().is_empty() {
+            return Err(GitError::Backend("提交 ID 不能为空".into()));
+        }
+        self.backend.revert(repo_path, commit_id)
+    }
+
     // ---- 贮藏 ----
     pub fn stash_list(&self, repo_path: &Path) -> Result<Vec<StashDto>, GitError> {
         Ok(self.backend.stash_list(repo_path)?.into_iter().map(StashDto::from).collect())
@@ -573,10 +581,13 @@ mod tests {
         svc.continue_op(Path::new("/r")).unwrap();
         svc.abort_op(Path::new("/r")).unwrap();
         svc.cherry_pick(Path::new("/r"), "abc123").unwrap();
+        svc.revert(Path::new("/r"), "def456").unwrap();
         assert_eq!(
             fb.conflict_ops(),
-            vec!["ours:a.txt", "theirs:b.txt", "continue", "abort", "cherry-pick:abc123"]
+            vec!["ours:a.txt", "theirs:b.txt", "continue", "abort", "cherry-pick:abc123", "revert:def456"]
         );
+        // 空 id 在 service 层拦截
+        assert!(svc.revert(Path::new("/r"), "  ").is_err());
     }
 
     #[test]

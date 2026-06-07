@@ -235,6 +235,11 @@ export async function cherryPick(repoPath: string, commitId: string): Promise<vo
   await invoke("cherry_pick", { repoPath, commitId });
 }
 
+/** 回滚某提交(生成抵消其改动的新提交)。冲突抛 MERGE_CONFLICT(进入 reverting 中)。 */
+export async function revert(repoPath: string, commitId: string): Promise<void> {
+  await invoke("revert", { repoPath, commitId });
+}
+
 // ── 贮藏(stash) ──
 export interface StashDto {
   index: number;

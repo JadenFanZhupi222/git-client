@@ -429,6 +429,17 @@ async fn cherry_pick(repo_path: String, commit_id: String) -> Result<(), IpcErro
     .map_err(to_ipc)
 }
 
+#[tauri::command]
+async fn revert(repo_path: String, commit_id: String) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.revert(&PathBuf::from(repo_path), &commit_id)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
 /// 写入冲突解决后的内容并标记已解决(写文件 + git add)。防目录穿越。
 #[tauri::command]
 async fn write_resolved(repo_path: String, file: String, content: String) -> Result<(), IpcError> {
@@ -613,6 +624,7 @@ pub fn run() {
             continue_op,
             abort_op,
             cherry_pick,
+            revert,
             blame,
             conflict_sides,
             read_working_file,
