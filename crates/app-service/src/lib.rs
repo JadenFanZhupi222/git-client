@@ -296,6 +296,19 @@ impl RepoService {
         self.backend.delete_tag(repo_path, name.trim())
     }
 
+    /// 把当前分支 HEAD 重置到指定提交。Hard 会丢弃未提交改动(由 UI 二次确认)。
+    pub fn reset(
+        &self,
+        repo_path: &Path,
+        commit_id: &str,
+        mode: git_core::model::ResetMode,
+    ) -> Result<(), GitError> {
+        if commit_id.trim().is_empty() {
+            return Err(GitError::Backend("提交 ID 不能为空".into()));
+        }
+        self.backend.reset(repo_path, commit_id, mode)
+    }
+
     // ---- 贮藏 ----
     pub fn stash_list(&self, repo_path: &Path) -> Result<Vec<StashDto>, GitError> {
         Ok(self
@@ -735,6 +748,18 @@ mod tests {
         // 空名在 service 层拦截
         assert!(svc.create_tag(Path::new("/r"), "  ", "abc", None).is_err());
         assert!(svc.delete_tag(Path::new("/r"), "").is_err());
+    }
+
+    #[test]
+    fn reset_forwards_mode_and_validates() {
+        use git_core::model::ResetMode;
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.reset(Path::new("/r"), "abc123", ResetMode::Soft).unwrap();
+        svc.reset(Path::new("/r"), "def456", ResetMode::Hard).unwrap();
+        assert_eq!(fb.tag_ops(), vec!["reset:soft:abc123", "reset:hard:def456"]);
+        // 空 id 拦截
+        assert!(svc.reset(Path::new("/r"), " ", ResetMode::Mixed).is_err());
     }
 
     #[test]

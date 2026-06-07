@@ -250,6 +250,12 @@ export async function deleteTag(repoPath: string, name: string): Promise<void> {
   await invoke("delete_tag", { repoPath, name });
 }
 
+export type ResetMode = "soft" | "mixed" | "hard";
+/** 把当前分支 HEAD 重置到某提交。hard 会丢弃未提交改动(UI 须二次确认)。 */
+export async function resetTo(repoPath: string, commitId: string, mode: ResetMode): Promise<void> {
+  await invoke("reset", { repoPath, commitId, mode });
+}
+
 // ── 贮藏(stash) ──
 export interface StashDto {
   index: number;

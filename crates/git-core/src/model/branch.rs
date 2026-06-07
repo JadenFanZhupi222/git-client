@@ -1,6 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+/// reset 的三种模式,决定把 HEAD 移到目标提交时如何处理暂存区与工作区。
+/// - `Soft`:只移动 HEAD,暂存区与工作区都保留(原 HEAD 的改动变为已暂存)。
+/// - `Mixed`(git 默认):移动 HEAD + 重置暂存区,保留工作区(改动变为未暂存)。
+/// - `Hard`:移动 HEAD + 重置暂存区 + 重置工作区(**丢弃未提交改动**,破坏性)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResetMode {
+    Soft,
+    Mixed,
+    Hard,
+}
+
 /// 本地与远程跟踪分支的提交差集,供图谱标记「未 push / 未 pull」用。
 ///
 /// - `outgoing`:本地分支可达、但所有远程跟踪分支都不可达的提交 SHA = **已 commit 未 push**。
