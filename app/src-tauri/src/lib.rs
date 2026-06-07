@@ -541,6 +541,46 @@ async fn delete_tag(repo_path: String, name: String) -> Result<(), IpcError> {
     .map_err(to_ipc)
 }
 
+/// 交互式 rebase 的单步入参(前端传来的 JSON)。
+#[derive(serde::Deserialize)]
+struct RebaseStepInput {
+    sha: String,
+    action: String,
+    message: Option<String>,
+}
+
+#[tauri::command]
+async fn interactive_rebase(
+    repo_path: String,
+    base: Option<String>,
+    steps: Vec<RebaseStepInput>,
+) -> Result<(), IpcError> {
+    use git_core::model::{RebaseAction, RebaseStep};
+    let mut domain = Vec::with_capacity(steps.len());
+    for s in steps {
+        let action = match s.action.as_str() {
+            "pick" => RebaseAction::Pick,
+            "reword" => RebaseAction::Reword(s.message.unwrap_or_default()),
+            "squash" => RebaseAction::Squash(s.message.unwrap_or_default()),
+            "fixup" => RebaseAction::Fixup,
+            "drop" => RebaseAction::Drop,
+            other => {
+                return Err(to_ipc(git_core::GitError::Backend(format!(
+                    "未知 rebase 操作: {other}"
+                ))));
+            }
+        };
+        domain.push(RebaseStep { sha: s.sha, action });
+    }
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.interactive_rebase(&PathBuf::from(repo_path), base.as_deref(), &domain)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
 #[tauri::command]
 async fn reset(repo_path: String, commit_id: String, mode: String) -> Result<(), IpcError> {
     use git_core::model::ResetMode;
@@ -758,6 +798,7 @@ pub fn run() {
             create_tag,
             delete_tag,
             reset,
+            interactive_rebase,
             blame,
             conflict_sides,
             read_working_file,

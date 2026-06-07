@@ -1,7 +1,7 @@
 use crate::error::GitError;
 use crate::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, PullOutcome, PushOutcome, RepoState, ResetMode, StashEntry, SyncCommits,
+    FileDiff, PullOutcome, PushOutcome, RebaseStep, RepoState, ResetMode, StashEntry, SyncCommits,
     WorkingTreeStatus,
 };
 use std::path::Path;
@@ -164,6 +164,18 @@ pub trait GitBackend: Send + Sync {
     /// 把当前分支 HEAD 重置到指定提交。mode 决定是否一并重置暂存区/工作区
     /// (Hard 会丢弃未提交改动)。默认 Unsupported。
     fn reset(&self, _repo: &Path, _commit_id: &str, _mode: ResetMode) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+
+    /// 交互式 rebase。`base` 为最旧提交的父(None → --root);`steps` 按 oldest→newest
+    /// 描述每个提交的操作。冲突 → MergeConflict(进入 rebasing 中,可 continue/abort)。
+    /// 默认 Unsupported。
+    fn interactive_rebase(
+        &self,
+        _repo: &Path,
+        _base: Option<&str>,
+        _steps: &[RebaseStep],
+    ) -> Result<(), GitError> {
         Err(GitError::Unsupported)
     }
 

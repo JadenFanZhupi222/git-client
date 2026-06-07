@@ -1,8 +1,14 @@
 use git_core::GitError;
-use git_core::model::{FetchOutcome, PullOutcome, PushOutcome, RepoState, StashEntry};
+use git_core::model::{
+    FetchOutcome, PullOutcome, PushOutcome, RebaseAction, RebaseStep, RepoState, StashEntry,
+};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// 进程内单调计数,给临时文件起唯一名(避免并发 rebase 撞名)。
+static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// 解析一行 `git stash list` 输出,如 "stash@{0}: WIP on main: ...."。
 fn parse_stash_line(line: &str) -> Option<StashEntry> {
@@ -471,6 +477,110 @@ impl CliBackend {
     /// 用 `--no-edit` 跳过提交信息编辑器。
     pub fn revert(&self, repo: &Path, commit_id: &str) -> Result<(), GitError> {
         self.run_op(repo, &["revert", "--no-edit", commit_id])
+    }
+
+    /// 交互式 rebase(全程非交互)。base=最旧提交的父(None→--root);steps 为 oldest→newest。
+    ///
+    /// 实现:① 把生成的 todo 写临时文件,经 GIT_SEQUENCE_EDITOR=`cp <todo>` 注入;
+    /// ② 改信息(reword/squash)用 todo 里的 `exec git commit --amend -F <msg>` 行,不弹编辑器;
+    /// ③ GIT_EDITOR=true 兜底。冲突 → MergeConflict(进入 rebasing 中,复用 continue/abort)。
+    pub fn interactive_rebase(
+        &self,
+        repo: &Path,
+        base: Option<&str>,
+        steps: &[RebaseStep],
+    ) -> Result<(), GitError> {
+        // 给每个需要新信息的步骤写一个 msg 临时文件,并生成 todo 行。
+        let mut tmp_files: Vec<PathBuf> = Vec::new();
+        let mut write_msg = |content: &str| -> Result<String, GitError> {
+            let seq = TEMP_SEQ.fetch_add(1, Ordering::SeqCst);
+            let p = std::env::temp_dir().join(format!(
+                "git-client-rebase-msg-{}-{}.txt",
+                std::process::id(),
+                seq
+            ));
+            std::fs::write(&p, content).map_err(|e| GitError::Backend(e.to_string()))?;
+            let fwd = p.to_string_lossy().replace('\\', "/");
+            tmp_files.push(p);
+            Ok(fwd)
+        };
+
+        let mut todo = String::new();
+        for step in steps {
+            match &step.action {
+                RebaseAction::Pick => {
+                    todo.push_str(&format!("pick {}\n", step.sha));
+                }
+                RebaseAction::Reword(msg) => {
+                    let f = write_msg(msg)?;
+                    todo.push_str(&format!("pick {}\n", step.sha));
+                    todo.push_str(&format!("exec git commit --amend -F \"{f}\"\n"));
+                }
+                RebaseAction::Fixup => {
+                    todo.push_str(&format!("fixup {}\n", step.sha));
+                }
+                RebaseAction::Squash(msg) => {
+                    let f = write_msg(msg)?;
+                    // fixup 并入前一个(丢本信息),再 exec 把合并后的信息设为我们准备的内容。
+                    todo.push_str(&format!("fixup {}\n", step.sha));
+                    todo.push_str(&format!("exec git commit --amend -F \"{f}\"\n"));
+                }
+                RebaseAction::Drop => { /* 不输出该行 = 丢弃 */ }
+            }
+        }
+
+        // 写 todo 临时文件。
+        let seq = TEMP_SEQ.fetch_add(1, Ordering::SeqCst);
+        let todo_path = std::env::temp_dir().join(format!(
+            "git-client-rebase-todo-{}-{}.txt",
+            std::process::id(),
+            seq
+        ));
+        std::fs::write(&todo_path, &todo).map_err(|e| GitError::Backend(e.to_string()))?;
+        tmp_files.push(todo_path.clone());
+        let todo_fwd = todo_path.to_string_lossy().replace('\\', "/");
+
+        // GIT_SEQUENCE_EDITOR 把我们的 todo 覆盖进去;git 会在命令后追加 todo 文件路径,
+        // 故等价于 `cp "<我们的 todo>" <git-rebase-todo>`(Git 自带 sh/cp)。
+        let seq_editor = format!("cp \"{todo_fwd}\"");
+
+        let mut cmd = Command::new("git");
+        cmd.arg("-C").arg(repo).arg("rebase").arg("-i");
+        match base {
+            Some(b) if !b.trim().is_empty() => {
+                cmd.arg(b);
+            }
+            _ => {
+                cmd.arg("--root");
+            }
+        }
+        let out = cmd
+            .env("GIT_SEQUENCE_EDITOR", &seq_editor)
+            .env("GIT_EDITOR", "true")
+            .output()
+            .map_err(spawn_err);
+
+        // 尽力清理临时文件(失败无害)。
+        for p in &tmp_files {
+            let _ = std::fs::remove_file(p);
+        }
+
+        let out = out?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let combined = format!("{stdout}\n{stderr}").to_lowercase();
+        if combined.contains("conflict")
+            || combined.contains("could not apply")
+            || combined.contains("needs merge")
+        {
+            return Err(GitError::MergeConflict {
+                files: count_conflicts(&stdout),
+            });
+        }
+        Err(GitError::Backend(stderr.trim().to_string()))
     }
 
     /// 跑 continue/abort/cherry-pick 命令;GIT_EDITOR=true 防止弹编辑器卡住,冲突归 MergeConflict。
@@ -1000,6 +1110,89 @@ mod tests {
             matches!(err, GitError::MergeConflict { .. }),
             "实际: {err:?}"
         );
+    }
+
+    /// 建一个 3 提交、各改不同文件的仓库,返回 (tmp, c1, c2, c3 的 SHA)。
+    fn repo_three_commits() -> (tempfile::TempDir, String, String, String) {
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-b", "main", "."]);
+        git(repo.path(), &["config", "user.email", "t@e"]);
+        git(repo.path(), &["config", "user.name", "t"]);
+        std::fs::write(repo.path().join("a.txt"), "1\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+        let c1 = rev_parse(repo.path(), "HEAD");
+        std::fs::write(repo.path().join("b.txt"), "2\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c2"]);
+        let c2 = rev_parse(repo.path(), "HEAD");
+        std::fs::write(repo.path().join("c.txt"), "3\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c3"]);
+        let c3 = rev_parse(repo.path(), "HEAD");
+        (repo, c1, c2, c3)
+    }
+
+    fn log_subjects(repo: &Path) -> Vec<String> {
+        let out = Command::new("git")
+            .current_dir(repo)
+            .args(["log", "--format=%s"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|s| s.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn interactive_rebase_reword_and_fixup() {
+        let (repo, c1, c2, c3) = repo_three_commits();
+        // base=c1;c2 改信息,c3 并入 c2(fixup)
+        let steps = vec![
+            RebaseStep {
+                sha: c2.clone(),
+                action: RebaseAction::Reword("c2 reworded".into()),
+            },
+            RebaseStep {
+                sha: c3.clone(),
+                action: RebaseAction::Fixup,
+            },
+        ];
+        CliBackend
+            .interactive_rebase(repo.path(), Some(&c1), &steps)
+            .unwrap();
+        // 结果:c1 + 1 个合并提交(信息 = c2 reworded),且含 b.txt 与 c.txt
+        let subs = log_subjects(repo.path());
+        assert_eq!(subs, vec!["c2 reworded".to_string(), "c1".to_string()]);
+        assert!(repo.path().join("b.txt").exists());
+        assert!(repo.path().join("c.txt").exists(), "fixup 应保留 c3 的改动");
+    }
+
+    #[test]
+    fn interactive_rebase_drop_and_reorder() {
+        let (repo, c1, c2, c3) = repo_three_commits();
+        // base=c1;丢弃 c2、保留 c3 → 历史变 c1, c3(b.txt 消失)
+        let steps = vec![
+            RebaseStep {
+                sha: c2.clone(),
+                action: RebaseAction::Drop,
+            },
+            RebaseStep {
+                sha: c3.clone(),
+                action: RebaseAction::Pick,
+            },
+        ];
+        CliBackend
+            .interactive_rebase(repo.path(), Some(&c1), &steps)
+            .unwrap();
+        let subs = log_subjects(repo.path());
+        assert_eq!(subs, vec!["c3".to_string(), "c1".to_string()]);
+        assert!(
+            !repo.path().join("b.txt").exists(),
+            "c2 被 drop,b.txt 应消失"
+        );
+        assert!(repo.path().join("c.txt").exists());
     }
 
     #[test]

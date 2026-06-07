@@ -2,7 +2,7 @@ use crate::cli_backend::CliBackend;
 use crate::git2_backend::Git2Backend;
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, PullOutcome, PushOutcome, RepoState, ResetMode, StashEntry, SyncCommits,
+    FileDiff, PullOutcome, PushOutcome, RebaseStep, RepoState, ResetMode, StashEntry, SyncCommits,
     WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
@@ -134,6 +134,14 @@ impl GitBackend for CompositeBackend {
     }
     fn reset(&self, repo: &Path, commit_id: &str, mode: ResetMode) -> Result<(), GitError> {
         self.git2.reset(repo, commit_id, mode)
+    }
+    fn interactive_rebase(
+        &self,
+        repo: &Path,
+        base: Option<&str>,
+        steps: &[RebaseStep],
+    ) -> Result<(), GitError> {
+        self.cli.interactive_rebase(repo, base, steps)
     }
     fn ahead_behind(&self, repo: &Path) -> Result<Option<AheadBehind>, GitError> {
         self.git2.ahead_behind(repo)
