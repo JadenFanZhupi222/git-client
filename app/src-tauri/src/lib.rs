@@ -48,6 +48,8 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         NothingToUndo => ("NOTHING_TO_UNDO", false),
         NothingToRedo => ("NOTHING_TO_REDO", false),
         UncommittedChanges { .. } => ("UNCOMMITTED_CHANGES", true),
+        FileTooLarge { .. } => ("FILE_TOO_LARGE", true),
+        BinaryFile => ("BINARY_FILE", true),
         Unsupported => ("UNSUPPORTED", false),
         Backend(_) => ("BACKEND", true),
     };

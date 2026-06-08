@@ -73,6 +73,12 @@ pub enum GitError {
     #[error("有 {count} 处未提交改动,撤销该操作会还原工作区并丢失它们,请先提交或贮藏")]
     UncommittedChanges { count: usize },
 
+    #[error("文件过大,已跳过(超过 {limit} 字节)")]
+    FileTooLarge { limit: usize },
+
+    #[error("二进制文件,无法逐行显示")]
+    BinaryFile,
+
     #[error("该后端不支持此操作")]
     Unsupported,
 

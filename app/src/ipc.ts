@@ -333,6 +333,7 @@ export interface HunkDto {
 export interface FileDiffDto {
   path: string;
   is_binary: boolean;
+  too_large: boolean;
   hunks: HunkDto[];
 }
 
