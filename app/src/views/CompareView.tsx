@@ -13,6 +13,8 @@ function RevSelect({ value, onChange, label, names }: {
 }) {
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} className={PICK} title={label} aria-label={label}>
+      {/* value 为空时显示占位项,避免空状态被首个分支「冒充」(选中显示项不触发 change)。 */}
+      {!value && <option value="" disabled>选择分支…</option>}
       {/* 当前值若不在候选里(如填了 SHA),仍展示出来 */}
       {value && !names.includes(value) && <option value={value}>{value}</option>}
       {names.map((n) => <option key={n} value={n}>{n}</option>)}
@@ -33,16 +35,15 @@ export function CompareView({ repo }: { repo: string }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
 
-  // 默认两端都设为当前分支(用户改 from 即可看与某分支的差异)
+  // 两端默认 = 当前分支;切仓库 / 切分支时复位。
+  // ⚠️ 必须是单个 effect:之前拆成「默认」+「切仓库清空」两个,挂载时清空 effect
+  // 后执行,把默认值抹成空 → 下拉框显示分支但 state 为空 → enabled=false 不发起比较
+  //(表现为"首次进入空、要把两个分支都重选一遍")。合并后顺序无歧义。
   useEffect(() => {
     const cur = curQ.data ?? "";
-    if (cur) {
-      setFrom((p) => p || cur);
-      setTo((p) => p || cur);
-    }
-  }, [curQ.data]);
-  // 切仓库重置
-  useEffect(() => { setFrom(""); setTo(""); }, [repo]);
+    setFrom(cur);
+    setTo(cur);
+  }, [repo, curQ.data]);
 
   // 计数仅用于工具栏文案;与 ComparePanel 同 key,React Query 复用缓存不重复请求。
   const files = useCompareFiles(repo, from, to).data ?? [];
