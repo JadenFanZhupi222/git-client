@@ -75,7 +75,10 @@ ARCHITECTURE.md 自己把 **actor + 缓存 + 取消** 称为本项目的"成败�
   Esc 关闭。命令注册:视图切换、选/切仓库、主题、Fetch/Pull(合并|变基)/Push、
   撤销/重做、操作日志;不可用项灰显不可执行。纯逻辑(模糊匹配+排序)在 `app/src/lib/commands.ts`
   +12 vitest;UI 在 `app/src/components/CommandPalette.tsx`。纯前端,合入 main。
-- **M3.2 全局键盘导航**:列表 j/k、回车进入、各视图统一快捷键。
+- ✅ **M3.2 列表键盘导航(提交列表)**:历史视图提交列表 j/k/↑↓/g/G 移动选中,
+  选中即驱动详情/diff;图谱(虚拟列表)scrollToIndex(auto)、搜索列表 scrollIntoView(nearest)
+  自动滚进可视区;输入态/组合键不拦截。纯逻辑 `app/src/lib/listNav.ts`(navTarget,8 vitest)。
+  合入 main。**待续:文件列表也接键盘需「聚焦哪个面板」模型(j/k 双列表会抢键)。**
 - **M3.3 模糊跳转**:分支/文件/提交统一 ⌘K 入口(现有 BranchSwitcher 升级,
   或在命令面板里加「跳转到分支/文件/提交」二级模式)。
 - **M3.4 拖拽**(较重,放后):拖提交到分支 = cherry-pick / reset;rebase 列表拖拽重排。

@@ -15,7 +15,11 @@
     App 顶栏加可发现的「⌘K」按钮。纯前端、后端零改动。
     **真机待验**:⌘K 打开/关闭、输入过滤高亮、↑↓/回车/Esc、各命令执行(切视图/Fetch/撤销等),
     不可用项(未开仓库时)灰显。需 `pnpm -C app tauri dev` 整段重启(无 Rust 改动,纯前端 HMR 即可)。
-  - 待做:M3.2 全局列表键盘导航(j/k+回车)、M3.3 分支/文件/提交模糊跳转、M3.4 拖拽。
+  - ✅ **M3.2 提交列表键盘导航**(已合 main):历史视图提交列表 j/k/↑↓/g/G 移动选中→驱动详情/diff;
+    选中行自动滚进可视区(图谱虚拟列表 scrollToIndex(auto) / 搜索列表 scrollIntoView(nearest));
+    输入态与 ⌘/Ctrl/Alt 组合键不拦截。纯逻辑 `app/src/lib/listNav.ts`(navTarget + useListKeyboardNav,8 vitest)。
+  - 待做:M3.2 续(文件列表键盘导航——需「聚焦哪个面板」模型,避免 j/k 被两个列表同时抢)、
+    M3.3 分支/文件/提交模糊跳转、M3.4 拖拽。
 
 ## 已完成(本里程碑 M2「Fearless」)
 
