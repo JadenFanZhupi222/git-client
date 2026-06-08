@@ -6,7 +6,7 @@ use git_core::{GitBackend, GitError};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
     FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto,
-    ReflogEntryDto, StashDto, StatusDto,
+    ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -244,6 +244,17 @@ impl RepoService {
     ) -> Result<FileDiffDto, GitError> {
         let diff = self.backend.working_diff(repo_path, file, staged)?;
         Ok(FileDiffDto::from(diff))
+    }
+
+    /// 用例:某提交的签名验证状态(GPG/SSH)。
+    pub fn commit_signature(
+        &self,
+        repo_path: &Path,
+        commit_id: &str,
+    ) -> Result<SignatureInfoDto, GitError> {
+        Ok(SignatureInfoDto::from(
+            self.backend.commit_signature(repo_path, commit_id)?,
+        ))
     }
 
     /// 用例:当前 HEAD 分支短名;分离头/空仓库返回 None。
@@ -779,6 +790,19 @@ mod tests {
         let svc = RepoService::new(Arc::new(fb));
         let dtos = svc.commit_files(Path::new("/r"), "x").unwrap();
         assert_eq!(dtos[0].status, "modified");
+    }
+
+    #[test]
+    fn commit_signature_maps_dto() {
+        use git_core::model::{SignatureInfo, SignatureStatus};
+        let fb = FakeBackend::default().with_signature(SignatureInfo {
+            status: SignatureStatus::Good,
+            signer: "Alice".into(),
+        });
+        let svc = RepoService::new(Arc::new(fb));
+        let dto = svc.commit_signature(Path::new("/r"), "x").unwrap();
+        assert_eq!(dto.status, "good");
+        assert_eq!(dto.signer, "Alice");
     }
 
     #[test]

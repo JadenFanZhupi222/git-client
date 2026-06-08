@@ -535,7 +535,7 @@ function MidColumn({
           </div>
         )}
         <div className="max-h-[45%] shrink-0 overflow-hidden border-b border-line">
-          <CommitDetail commit={commit} />
+          <CommitDetail repo={repo} commit={commit} />
         </div>
         <ColumnHead icon={<FileDiffIcon width={13} height={13} />}>改动文件{commit && ` (${list.length})`}</ColumnHead>
         <div className="min-h-0 flex-1 overflow-hidden">

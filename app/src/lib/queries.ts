@@ -6,7 +6,7 @@ import { useQuery, useQueryClient, keepPreviousData, type QueryClient } from "@t
 import { useEffect } from "react";
 import {
   getStatus, getWorkingDiff, getCommitGraph, searchCommits, getReflog, getCommitFiles, getCommitFileDiff,
-  compareFiles, compareFileDiff,
+  getCommitSignature, compareFiles, compareFileDiff,
   getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
   getRepoState, readWorkingFile, blame, conflictSides, undoState, opLog,
   watchRepo, onRepoChanged,
@@ -19,6 +19,7 @@ export const qk = {
   graph: (repo: string) => ["graph", repo] as const,
   commitFiles: (repo: string) => ["commitFiles", repo] as const,
   commitDiff: (repo: string) => ["commitDiff", repo] as const,
+  commitSignature: (repo: string) => ["commitSignature", repo] as const,
   currentBranch: (repo: string) => ["currentBranch", repo] as const,
   aheadBehind: (repo: string) => ["aheadBehind", repo] as const,
   remotes: (repo: string) => ["remotes", repo] as const,
@@ -101,6 +102,14 @@ export function useCommitFiles(repo: string, commitId: string | null) {
     queryKey: [...qk.commitFiles(repo), commitId ?? ""],
     queryFn: () => getCommitFiles(repo, commitId!),
     enabled: !!commitId,
+  });
+}
+
+export function useCommitSignature(repo: string, commitId: string | null) {
+  return useQuery({
+    queryKey: [...qk.commitSignature(repo), commitId ?? ""],
+    queryFn: () => getCommitSignature(repo, commitId!),
+    enabled: !!repo && !!commitId,
   });
 }
 

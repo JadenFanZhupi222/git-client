@@ -90,6 +90,16 @@ export async function getCommitFiles(repoPath: string, commitId: string): Promis
   return await invoke<FileChangeDto[]>("get_commit_files", { repoPath, commitId });
 }
 
+/** 提交签名状态。status: "none" | "good" | "unverified" | "bad"。 */
+export interface SignatureInfoDto {
+  status: string;
+  signer: string;
+}
+
+export async function getCommitSignature(repoPath: string, commitId: string): Promise<SignatureInfoDto> {
+  return await invoke<SignatureInfoDto>("get_commit_signature", { repoPath, commitId });
+}
+
 export async function getCurrentBranch(repoPath: string): Promise<string | null> {
   return await invoke<string | null>("get_current_branch", { repoPath });
 }

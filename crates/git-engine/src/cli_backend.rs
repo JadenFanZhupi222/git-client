@@ -1,6 +1,7 @@
 use git_core::GitError;
 use git_core::model::{
-    FetchOutcome, PullOutcome, PushOutcome, RebaseAction, RebaseStep, RepoState, StashEntry,
+    FetchOutcome, PullOutcome, PushOutcome, RebaseAction, RebaseStep, RepoState, SignatureInfo,
+    SignatureStatus, StashEntry,
 };
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -479,6 +480,48 @@ impl CliBackend {
         self.run_op(repo, &["revert", "--no-edit", commit_id])
     }
 
+    /// 读某提交的签名状态:`git show -s --format=%G?<NUL>%GS`。
+    /// `%G?` 是状态码,`%GS` 是签名者;用 NUL 分隔避免签名者名里的换行/空格干扰。
+    pub fn commit_signature(
+        &self,
+        repo: &Path,
+        commit_id: &str,
+    ) -> Result<SignatureInfo, GitError> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["show", "-s", "--format=%G?%x00%GS", commit_id])
+            .output()
+            .map_err(spawn_err)?;
+        if !out.status.success() {
+            return Err(GitError::Backend(
+                String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            ));
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let line = stdout.lines().next().unwrap_or("");
+        let mut parts = line.splitn(2, '\0');
+        let code = parts.next().unwrap_or("").trim();
+        let signer = parts.next().unwrap_or("").trim();
+        let status = match code.chars().next() {
+            Some('G') => SignatureStatus::Good,
+            Some('B') => SignatureStatus::Bad,
+            // U 未知有效性 / X 过期 / Y 密钥过期 / R 吊销 / E 无法校验 → 都归「有签名但未完全可信」
+            Some('U') | Some('X') | Some('Y') | Some('R') | Some('E') => {
+                SignatureStatus::Unverified
+            }
+            _ => SignatureStatus::None, // 'N' 或空
+        };
+        Ok(SignatureInfo {
+            status,
+            signer: if status == SignatureStatus::None {
+                String::new()
+            } else {
+                signer.to_string()
+            },
+        })
+    }
+
     /// 交互式 rebase(全程非交互)。base=最旧提交的父(None→--root);steps 为 oldest→newest。
     ///
     /// 实现:① 把生成的 todo 写临时文件,经 GIT_SEQUENCE_EDITOR=`cp <todo>` 注入;
@@ -696,6 +739,24 @@ mod tests {
             .unwrap();
         assert!(out.status.success(), "rev-parse {spec} 失败");
         String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn commit_signature_unsigned_is_none() {
+        // 未签名提交:%G? = N → SignatureStatus::None,签名者空。
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-b", "main", "."]);
+        git(repo.path(), &["config", "user.email", "t@e"]);
+        git(repo.path(), &["config", "user.name", "t"]);
+        git(repo.path(), &["config", "commit.gpgsign", "false"]);
+        std::fs::write(repo.path().join("f.txt"), "x").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+        let sha = rev_parse(repo.path(), "HEAD");
+
+        let sig = CliBackend.commit_signature(repo.path(), &sha).unwrap();
+        assert_eq!(sig.status, SignatureStatus::None);
+        assert!(sig.signer.is_empty());
     }
 
     #[test]

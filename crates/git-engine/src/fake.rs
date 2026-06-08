@@ -1,8 +1,8 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     FetchOutcome, FileChange, FileDiff, FileEntry, PullOutcome, PushOutcome, RebaseAction,
-    RebaseStep, ReflogEntry, RepoState, ResetMode, Signature, StashEntry, SyncCommits,
-    WorkingTreeStatus,
+    RebaseStep, ReflogEntry, RepoState, ResetMode, Signature, SignatureInfo, StashEntry,
+    SyncCommits, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -21,6 +21,7 @@ pub struct FakeBackend {
     canned_commit_files: Mutex<Vec<FileChange>>,
     canned_branch: Mutex<Option<String>>,
     canned_file_diff: Mutex<FileDiff>,
+    canned_signature: Mutex<SignatureInfo>,
     canned_branches: Mutex<Vec<BranchInfo>>,
     canned_refs: Mutex<Vec<CommitRef>>,
     canned_ahead_behind: Mutex<Option<AheadBehind>>,
@@ -85,6 +86,10 @@ impl FakeBackend {
     }
     pub fn with_branch(self, branch: Option<String>) -> Self {
         *self.canned_branch.lock().unwrap() = branch;
+        self
+    }
+    pub fn with_signature(self, sig: SignatureInfo) -> Self {
+        *self.canned_signature.lock().unwrap() = sig;
         self
     }
     pub fn with_file_diff(self, diff: FileDiff) -> Self {
@@ -421,6 +426,9 @@ impl GitBackend for FakeBackend {
         }
         *self.blame_calls.lock().unwrap() += 1;
         Ok(Vec::new())
+    }
+    fn commit_signature(&self, _path: &Path, _commit_id: &str) -> Result<SignatureInfo, GitError> {
+        Ok(self.canned_signature.lock().unwrap().clone())
     }
     fn conflict_sides(&self, _path: &Path, _file: &str) -> Result<ConflictSides, GitError> {
         Ok(self

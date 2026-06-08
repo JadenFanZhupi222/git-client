@@ -6,6 +6,7 @@ mod diff;
 mod reflog;
 mod remote;
 mod repo_state;
+mod signature;
 mod stash;
 mod status;
 
@@ -20,5 +21,6 @@ pub use diff::{DiffLine, DiffLineKind, FileChange, FileDiff, Hunk};
 pub use reflog::ReflogEntry;
 pub use remote::{FetchOutcome, PullOutcome, PushOutcome};
 pub use repo_state::RepoState;
+pub use signature::{SignatureInfo, SignatureStatus};
 pub use stash::StashEntry;
 pub use status::{FileEntry, FileState, WorkingTreeStatus};
