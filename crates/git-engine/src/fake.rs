@@ -1,7 +1,7 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, FileEntry, PullOutcome, PushOutcome, RebaseAction, RebaseStep, RepoState, ResetMode,
-    Signature, StashEntry, SyncCommits, WorkingTreeStatus,
+    FileDiff, FileEntry, PullOutcome, PushOutcome, RebaseAction, RebaseStep, ReflogEntry,
+    RepoState, ResetMode, Signature, StashEntry, SyncCommits, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -44,6 +44,7 @@ pub struct FakeBackend {
     canned_conflict_sides: Mutex<Option<ConflictSides>>,
     tag_ops: Mutex<Vec<String>>,
     rebase_ops: Mutex<Vec<String>>,
+    canned_reflog: Mutex<Vec<ReflogEntry>>,
 }
 
 impl FakeBackend {
@@ -96,6 +97,10 @@ impl FakeBackend {
     }
     pub fn with_remotes(self, remotes: Vec<String>) -> Self {
         *self.canned_remotes.lock().unwrap() = remotes;
+        self
+    }
+    pub fn with_reflog(self, entries: Vec<ReflogEntry>) -> Self {
+        *self.canned_reflog.lock().unwrap() = entries;
         self
     }
     /// 断言用:记录被 checkout 的分支名(按调用顺序)。
@@ -214,6 +219,16 @@ impl GitBackend for FakeBackend {
 
     fn log(&self, _path: &Path, _limit: usize, _skip: usize) -> Result<Vec<Commit>, GitError> {
         Ok(self.canned_log.lock().unwrap().clone())
+    }
+    fn reflog(&self, _path: &Path, limit: usize) -> Result<Vec<ReflogEntry>, GitError> {
+        Ok(self
+            .canned_reflog
+            .lock()
+            .unwrap()
+            .iter()
+            .take(limit)
+            .cloned()
+            .collect())
     }
     fn search_commits(
         &self,

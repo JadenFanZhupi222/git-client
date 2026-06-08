@@ -7,6 +7,7 @@ import { CommitLines } from "../components/CommitLines";
 import { TagManager } from "../components/TagManager";
 import { ResetMenu } from "../components/ResetMenu";
 import { RebaseEditor } from "../components/RebaseEditor";
+import { ReflogPanel } from "../components/ReflogPanel";
 import { CommitContextMenu } from "../components/CommitContextMenu";
 import { CommitFileList } from "../components/CommitFileList";
 import { CommitDetail } from "../components/CommitDetail";
@@ -36,6 +37,7 @@ export function HistoryView({ repo }: { repo: string }) {
   const [searchInput, setSearchInput] = useState("");
   const [query, setQuery] = useState(""); // debounce 后的查询
   const [rebaseOpen, setRebaseOpen] = useState(false);
+  const [reflogOpen, setReflogOpen] = useState(false);
   const [menu, setMenu] = useState<{ commit: CommitDto; x: number; y: number } | null>(null);
   const qc = useQueryClient();
   const toast = useToast();
@@ -145,6 +147,7 @@ export function HistoryView({ repo }: { repo: string }) {
         searching={searching}
         searchResults={searchQ.data ?? []}
         searchLoading={searchQ.isFetching}
+        onOpenReflog={() => setReflogOpen(true)}
       />
 
       {/* 中间列:提交详情(上)+ 改动文件(下) */}
@@ -186,6 +189,18 @@ export function HistoryView({ repo }: { repo: string }) {
         />
       )}
 
+      {reflogOpen && (
+        <ReflogPanel
+          repo={repo}
+          onClose={() => setReflogOpen(false)}
+          onReset={() => {
+            invalidateHistory(qc, repo);
+            invalidateWorktree(qc, repo);
+            qc.invalidateQueries({ queryKey: qk.repoState(repo) });
+          }}
+        />
+      )}
+
       {menu && (
         <CommitContextMenu
           repo={repo}
@@ -206,7 +221,7 @@ export function HistoryView({ repo }: { repo: string }) {
 /** 图谱列(含可拖拽宽度 + 提交搜索)。搜索时切扁平匹配列表,清空回到图谱。 */
 function GraphColumn({
   branch, rows, selectedId, onSelect, onContext, onLoadMore, loading, firstLoad, hasMore, error,
-  searchInput, onSearchChange, searching, searchResults, searchLoading,
+  searchInput, onSearchChange, searching, searchResults, searchLoading, onOpenReflog,
 }: {
   branch: string | null;
   rows: GraphRowDto[];
@@ -223,6 +238,7 @@ function GraphColumn({
   searching: boolean;
   searchResults: CommitDto[];
   searchLoading: boolean;
+  onOpenReflog: () => void;
 }) {
   const col = useResizableWidth("history.graphW", 320, 220, 640);
   return (
@@ -230,6 +246,13 @@ function GraphColumn({
       <div className="flex shrink-0 flex-col overflow-hidden" style={{ width: col.w }}>
         <ColumnHead icon={<BranchIcon width={13} height={13} />}>
           {branch ? <span className="font-mono normal-case tracking-normal text-fg">{branch}</span> : "提交历史"}
+          <button
+            onClick={onOpenReflog}
+            title="查看 reflog(HEAD 移动历史 / 找回丢失提交)"
+            className="ml-auto rounded border border-line-strong bg-elevated px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
+          >
+            Reflog
+          </button>
         </ColumnHead>
         {/* 搜索框:按 message / 作者 / SHA 过滤 */}
         <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-2.5 py-1.5">
@@ -334,7 +357,7 @@ function MidColumn({
           <span>提交详情</span>
           {commit && (
             <div className="ml-auto flex items-center gap-1">
-              <ResetMenu repo={repo} commit={commit} onDone={onResetDone} />
+              <ResetMenu repo={repo} commitId={commit.id} label={commit.short_id} onDone={onResetDone} />
               {onCherryPick && (
                 <button
                   onClick={onCherryPick}

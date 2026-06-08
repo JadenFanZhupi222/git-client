@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { resetTo, type CommitDto, type ResetMode, type IpcError } from "../ipc";
+import { resetTo, type ResetMode, type IpcError } from "../ipc";
 import { useToast } from "./Toast";
 
 const MODES: { mode: ResetMode; label: string; desc: string; danger?: boolean }[] = [
@@ -8,13 +8,15 @@ const MODES: { mode: ResetMode; label: string; desc: string; danger?: boolean }[
   { mode: "hard", label: "Hard", desc: "丢弃所有未提交改动", danger: true },
 ];
 
-/** 把当前分支重置到选中提交。下拉选模式;Hard 破坏性,内联二次确认。
+/** 把当前分支重置到 commitId(提交 / reflog 条目皆可)。下拉选模式;
+ *  Hard 破坏性,内联二次确认。label 为短 SHA,用于提示文案。
  *  onDone 让上层失效工作区/历史/状态。 */
 export function ResetMenu({
-  repo, commit, onDone,
+  repo, commitId, label, onDone,
 }: {
   repo: string;
-  commit: CommitDto;
+  commitId: string;
+  label: string;
   onDone: () => void;
 }) {
   const toast = useToast();
@@ -30,9 +32,9 @@ export function ResetMenu({
   async function run(mode: ResetMode) {
     setBusy(true);
     try {
-      await resetTo(repo, commit.id, mode);
+      await resetTo(repo, commitId, mode);
       onDone();
-      toast({ kind: "success", title: `已 ${mode} reset 到 ${commit.short_id}` });
+      toast({ kind: "success", title: `已 ${mode} reset 到 ${label}` });
       close();
     } catch (e) {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });

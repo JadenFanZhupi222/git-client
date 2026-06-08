@@ -5,8 +5,8 @@
 use git_core::{GitBackend, GitError};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDto, CommitDto, ConflictSidesDto, FetchResultDto,
-    FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto, StashDto,
-    StatusDto,
+    FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto,
+    StashDto, StatusDto,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -144,6 +144,16 @@ impl RepoService {
             .backend
             .search_commits(repo_path, query, limit, cancelled)?;
         Ok(commits.into_iter().map(CommitDto::from).collect())
+    }
+
+    /// 用例:HEAD 的 reflog(最近在前,最多 limit 条)。供"找回丢失提交"。
+    pub fn reflog(&self, repo_path: &Path, limit: usize) -> Result<Vec<ReflogEntryDto>, GitError> {
+        Ok(self
+            .backend
+            .reflog(repo_path, limit)?
+            .into_iter()
+            .map(ReflogEntryDto::from)
+            .collect())
     }
 
     /// 用例:某提交改动的文件列表。
@@ -506,6 +516,29 @@ mod tests {
         let dtos = svc.log(Path::new("/r"), 10, 0).unwrap();
         assert_eq!(dtos.len(), 1);
         assert_eq!(dtos[0].summary, "hi");
+    }
+
+    #[test]
+    fn reflog_returns_entry_dtos_capped_by_limit() {
+        use git_core::model::{ReflogEntry, Signature};
+        let mk = |i: usize, oid: &str| ReflogEntry {
+            index: i,
+            selector: format!("HEAD@{{{i}}}"),
+            new_oid: oid.into(),
+            new_short: oid.chars().take(7).collect(),
+            message: "commit: x".into(),
+            committer: Signature {
+                name: "n".into(),
+                email: "e".into(),
+            },
+            timestamp: 0,
+        };
+        let fb = FakeBackend::default().with_reflog(vec![mk(0, "aaaaaaa0"), mk(1, "bbbbbbb1")]);
+        let svc = RepoService::new(Arc::new(fb));
+        let dtos = svc.reflog(Path::new("/r"), 1).unwrap();
+        assert_eq!(dtos.len(), 1, "limit 应被透传给后端裁剪");
+        assert_eq!(dtos[0].selector, "HEAD@{0}");
+        assert_eq!(dtos[0].new_oid, "aaaaaaa0");
     }
 
     #[test]

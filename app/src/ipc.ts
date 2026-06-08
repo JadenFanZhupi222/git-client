@@ -381,6 +381,22 @@ export async function getCommitGraph(repoPath: string, limit: number): Promise<G
 }
 
 /** 搜索提交(匹配 message/作者/SHA 前缀,大小写不敏感),扁平列表;空 query 返回空。 */
+// ── reflog(HEAD 移动历史 / 后悔药)──
+export interface ReflogEntryDto {
+  index: number;
+  selector: string;   // "HEAD@{0}"
+  new_oid: string;    // 该步后 HEAD 指向的提交(reset 目标)
+  new_short: string;
+  message: string;    // "commit: ..." / "reset: moving to ..." / "checkout: ..."
+  committer_name: string;
+  timestamp: number;
+}
+
+/** HEAD 的 reflog,最近在前,最多 limit 条。用于找回被 reset/rebase 丢弃的提交。 */
+export async function getReflog(repoPath: string, limit: number): Promise<ReflogEntryDto[]> {
+  return await invoke<ReflogEntryDto[]>("get_reflog", { repoPath, limit });
+}
+
 export async function searchCommits(repoPath: string, query: string, limit: number): Promise<CommitDto[]> {
   return await invoke<CommitDto[]>("search_commits", { repoPath, query, limit });
 }

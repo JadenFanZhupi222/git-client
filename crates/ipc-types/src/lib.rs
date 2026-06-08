@@ -5,7 +5,7 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, DiffLine, DiffLineKind,
     FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk, PullOutcome, PushOutcome,
-    RefKind, StashEntry, WorkingTreeStatus,
+    RefKind, ReflogEntry, StashEntry, WorkingTreeStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -35,6 +35,32 @@ impl From<Commit> for CommitDto {
             author_email: c.author.email,
             timestamp: c.timestamp,
             parents: c.parents,
+        }
+    }
+}
+
+/// 一条 reflog 记录 DTO。`new_oid` 是"重置回这一步"时 reset 的目标提交。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReflogEntryDto {
+    pub index: usize,
+    pub selector: String,
+    pub new_oid: String,
+    pub new_short: String,
+    pub message: String,
+    pub committer_name: String,
+    pub timestamp: i64,
+}
+
+impl From<ReflogEntry> for ReflogEntryDto {
+    fn from(e: ReflogEntry) -> Self {
+        ReflogEntryDto {
+            index: e.index,
+            selector: e.selector,
+            new_oid: e.new_oid,
+            new_short: e.new_short,
+            message: e.message,
+            committer_name: e.committer.name,
+            timestamp: e.timestamp,
         }
     }
 }
@@ -368,6 +394,27 @@ mod tests {
         assert_eq!(dto.status, "deleted");
         assert_eq!(dto.additions, 0);
         assert_eq!(dto.deletions, 5);
+    }
+
+    #[test]
+    fn maps_reflog_entry_to_dto() {
+        use git_core::model::{ReflogEntry, Signature};
+        let dto = ReflogEntryDto::from(ReflogEntry {
+            index: 0,
+            selector: "HEAD@{0}".into(),
+            new_oid: "abcdef1234567890".into(),
+            new_short: "abcdef1".into(),
+            message: "commit: hello".into(),
+            committer: Signature {
+                name: "Tester".into(),
+                email: "t@e".into(),
+            },
+            timestamp: 42,
+        });
+        assert_eq!(dto.selector, "HEAD@{0}");
+        assert_eq!(dto.new_short, "abcdef1");
+        assert_eq!(dto.committer_name, "Tester");
+        assert_eq!(dto.timestamp, 42);
     }
 
     #[test]

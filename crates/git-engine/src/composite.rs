@@ -2,8 +2,8 @@ use crate::cli_backend::CliBackend;
 use crate::git2_backend::Git2Backend;
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, PullOutcome, PushOutcome, RebaseStep, RepoState, ResetMode, StashEntry, SyncCommits,
-    WorkingTreeStatus,
+    FileDiff, PullOutcome, PushOutcome, RebaseStep, ReflogEntry, RepoState, ResetMode, StashEntry,
+    SyncCommits, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -49,6 +49,9 @@ impl GitBackend for CompositeBackend {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<Commit>, GitError> {
         self.git2.search_commits(repo, query, limit, cancelled)
+    }
+    fn reflog(&self, repo: &Path, limit: usize) -> Result<Vec<ReflogEntry>, GitError> {
+        self.git2.reflog(repo, limit)
     }
     fn commit_files(&self, repo: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError> {
         self.git2.commit_files(repo, commit_id)
