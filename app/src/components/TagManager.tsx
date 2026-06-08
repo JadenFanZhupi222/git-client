@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { createTag, deleteTag, type CommitDto, type IpcError } from "../ipc";
 import { useToast } from "./Toast";
+import { Button } from "./ui/Button";
 import { CloseIcon } from "./icons";
 
 /** 选中提交的标签管理:展示已有标签(可删,二次确认)+ 新建标签(名 + 可选附注信息)。
@@ -96,13 +97,15 @@ export function TagManager({
           <button onClick={() => setAdding(false)} className="text-[11px] text-fg-muted hover:underline">取消</button>
         </span>
       ) : (
-        <button
+        <Button
+          variant="secondary"
+          size="chip"
           onClick={() => setAdding(true)}
           title="在此提交上打标签"
-          className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
+          className="normal-case tracking-normal"
         >
           + Tag
-        </button>
+        </Button>
       )}
     </div>
   );

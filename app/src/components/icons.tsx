@@ -28,6 +28,31 @@ export const RefreshIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+// 撤销:逆时针回转箭头(arrow-uturn-left 风格)。
+export const UndoIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M2.5 6.5h7.5a3.5 3.5 0 0 1 0 7H6" />
+    <path d="M5 3.5 2 6.5l3 3" />
+  </svg>
+);
+
+// 重做:UndoIcon 的水平镜像(arrow-uturn-right 风格)。
+export const RedoIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M13.5 6.5H6a3.5 3.5 0 0 0 0 7h4" />
+    <path d="M11 3.5l3 3-3 3" />
+  </svg>
+);
+
+// 操作日志:带回拨箭头的时钟(history 风格)。
+export const HistoryIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M2.6 8a5.4 5.4 0 1 1 1.6 3.8" />
+    <path d="M2.5 11.5V8.7h2.7" />
+    <path d="M8 5.2V8l2 1.3" />
+  </svg>
+);
+
 export const BranchIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
     <circle cx="4" cy="3.5" r="1.5" />

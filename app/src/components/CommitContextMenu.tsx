@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { createTag, resetTo, type CommitDto, type ResetMode, type IpcError } from "../ipc";
 import { useToast } from "./Toast";
+import { Button } from "./ui/Button";
 
 /** 提交右键上下文菜单。cherry-pick/revert/变基 复用上层处理(带各自的失效/toast);
  *  reset/tag/复制 SHA 自包含。onChanged 让上层失效历史/工作区/状态。 */
 export function CommitContextMenu({
   repo, commit, x, y, onClose, onCherryPick, onRevert, onRebase, onChanged,
+  selectedShort, onCompareWithSelected,
 }: {
   repo: string;
   commit: CommitDto;
@@ -16,6 +18,9 @@ export function CommitContextMenu({
   onRevert: () => void;
   onRebase: () => void;
   onChanged: () => void;
+  /** 已选中的另一提交短 SHA(用于「与选中提交比较」文案);无则不显示该项。 */
+  selectedShort?: string;
+  onCompareWithSelected?: () => void;
 }) {
   const toast = useToast();
   const [view, setView] = useState<"main" | "reset" | "resetHard" | "tag">("main");
@@ -88,6 +93,11 @@ export function CommitContextMenu({
             <button className={item} onClick={() => { onClose(); onCherryPick(); }}>Cherry-pick 到当前分支</button>
             <button className={item} onClick={() => { onClose(); onRevert(); }}>Revert 此提交</button>
             <button className={item} onClick={() => { onClose(); onRebase(); }}>从此交互式变基</button>
+            {onCompareWithSelected && (
+              <button className={item} onClick={() => { onClose(); onCompareWithSelected(); }}>
+                与选中提交 {selectedShort} 比较
+              </button>
+            )}
             <button className={item} onClick={() => setView("reset")}>Reset 到此 ▸</button>
             <button className={item} onClick={() => setView("tag")}>打标签…</button>
             <div className="my-1 border-t border-line" />
@@ -108,7 +118,7 @@ export function CommitContextMenu({
           <div className="px-3 py-2 text-[11px]">
             <p className="mb-1.5 text-danger">Hard reset 会丢弃未提交改动,确认?</p>
             <div className="flex gap-2">
-              <button disabled={busy} onClick={() => doReset("hard")} className="rounded border border-danger/50 px-2 py-0.5 text-danger hover:bg-danger/15 disabled:opacity-40">确认</button>
+              <Button variant="danger" size="chip" disabled={busy} onClick={() => doReset("hard")}>确认</Button>
               <button onClick={() => setView("reset")} className="text-fg-muted hover:underline">取消</button>
             </div>
           </div>
@@ -125,7 +135,7 @@ export function CommitContextMenu({
               placeholder="标签名"
               className="mt-1 w-full rounded border border-line-strong bg-canvas px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none"
             />
-            <button disabled={busy || !tagName.trim()} onClick={doTag} className="mt-1 w-full rounded bg-accent px-2 py-1 text-xs font-medium text-white hover:opacity-90 disabled:opacity-40">创建标签</button>
+            <Button variant="primary" size="sm" disabled={busy || !tagName.trim()} onClick={doTag} className="mt-1 w-full">创建标签</Button>
           </div>
         )}
       </div>

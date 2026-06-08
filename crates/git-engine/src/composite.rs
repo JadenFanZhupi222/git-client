@@ -2,8 +2,8 @@ use crate::cli_backend::CliBackend;
 use crate::git2_backend::Git2Backend;
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, PullOutcome, PushOutcome, RebaseStep, RepoState, ResetMode, StashEntry, SyncCommits,
-    WorkingTreeStatus,
+    FileDiff, PullOutcome, PushOutcome, RebaseStep, ReflogEntry, RepoState, ResetMode, StashEntry,
+    SyncCommits, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -38,8 +38,14 @@ impl GitBackend for CompositeBackend {
     fn amend_commit(&self, repo: &Path, message: Option<&str>) -> Result<String, GitError> {
         self.git2.amend_commit(repo, message)
     }
-    fn log(&self, repo: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, GitError> {
-        self.git2.log(repo, limit, skip)
+    fn log(
+        &self,
+        repo: &Path,
+        limit: usize,
+        skip: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Commit>, GitError> {
+        self.git2.log(repo, limit, skip, cancelled)
     }
     fn search_commits(
         &self,
@@ -49,6 +55,9 @@ impl GitBackend for CompositeBackend {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<Commit>, GitError> {
         self.git2.search_commits(repo, query, limit, cancelled)
+    }
+    fn reflog(&self, repo: &Path, limit: usize) -> Result<Vec<ReflogEntry>, GitError> {
+        self.git2.reflog(repo, limit)
     }
     fn commit_files(&self, repo: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError> {
         self.git2.commit_files(repo, commit_id)
@@ -93,8 +102,13 @@ impl GitBackend for CompositeBackend {
     fn repo_state(&self, repo: &Path) -> Result<RepoState, GitError> {
         self.git2.repo_state(repo)
     }
-    fn blame(&self, repo: &Path, file: &str) -> Result<Vec<BlameLine>, GitError> {
-        self.git2.blame(repo, file)
+    fn blame(
+        &self,
+        repo: &Path,
+        file: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<BlameLine>, GitError> {
+        self.git2.blame(repo, file, cancelled)
     }
     fn conflict_sides(&self, repo: &Path, file: &str) -> Result<ConflictSides, GitError> {
         self.git2.conflict_sides(repo, file)
@@ -163,6 +177,13 @@ impl GitBackend for CompositeBackend {
     }
     fn delete_branch(&self, repo: &Path, name: &str) -> Result<(), GitError> {
         self.git2.delete_branch(repo, name)
+    }
+    fn branch_delete_impact(
+        &self,
+        repo: &Path,
+        name: &str,
+    ) -> Result<git_core::model::BranchDeleteImpact, GitError> {
+        self.git2.branch_delete_impact(repo, name)
     }
 
     // 网络操作走 CLI 后端。

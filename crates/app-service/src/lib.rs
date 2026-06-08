@@ -4,16 +4,20 @@
 
 use git_core::{GitBackend, GitError};
 use ipc_types::{
-    AheadBehindDto, BlameLineDto, BranchDto, CommitDto, ConflictSidesDto, FetchResultDto,
-    FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto, StashDto,
-    StatusDto,
+    AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
+    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto,
+    ReflogEntryDto, StashDto, StatusDto,
 };
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 pub mod graph;
+pub mod repo_context;
+pub mod undo_nav;
 pub mod watcher;
+
+pub use repo_context::{RepoContext, RepoRegistry};
 
 /// 仓库服务。生产版本里它会演化成第 4 部分讲的 RepoActor(独占状态 + 消息驱动)。
 /// 阶段 0 先用最简单的形式跑通分层。
@@ -88,25 +92,50 @@ impl RepoService {
         repo_path: &Path,
         limit: usize,
         skip: usize,
+        cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<CommitDto>, GitError> {
-        let commits = self.backend.log(repo_path, limit, skip)?;
+        let commits = self.backend.log(repo_path, limit, skip, cancelled)?;
         Ok(commits.into_iter().map(CommitDto::from).collect())
     }
 
     /// 用例:提交图谱。取 HEAD 起 limit 条提交,算 lane 布局后返回。
-    /// 从头(skip=0)整段计算,保证泳道一致。再把引用(分支/远程/HEAD)
-    /// 按 SHA 挂到对应行,供前端渲染标签。
+    /// 从头(skip=0)整段计算 = `commit_graph_page` 从空状态起。
     pub fn commit_graph(
         &self,
         repo_path: &Path,
         limit: usize,
+        cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<GraphRowDto>, GitError> {
-        let commits = self.backend.log(repo_path, limit, 0)?;
+        let mut state = crate::graph::LayoutState::default();
+        self.commit_graph_page(repo_path, 0, limit, &mut state, cancelled)
+    }
+
+    /// 用例:续算图谱尾段。从 HEAD 跳过 `skip` 条、再取 `take` 条,用 `state`
+    /// 续算泳道(并把 state 推进到末尾),给这批新行挂上引用 / 未 push 未 pull 标记。
+    /// 供 RepoContext 增量「加载更多」:已缓存前缀不重算,只算新尾段(O(可见))。
+    pub fn commit_graph_page(
+        &self,
+        repo_path: &Path,
+        skip: usize,
+        take: usize,
+        state: &mut crate::graph::LayoutState,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<GraphRowDto>, GitError> {
+        let commits = self.backend.log(repo_path, take, skip, cancelled)?;
         let refs = self.backend.refs(repo_path)?;
         let sync = self.backend.sync_commits(repo_path)?;
-        let mut rows = crate::graph::layout(&commits);
+        let mut rows = crate::graph::layout_into(&commits, state);
+        Self::attach_refs_sync(&mut rows, refs, sync);
+        Ok(rows)
+    }
 
-        // 按目标 SHA 分组引用,然后挂到可见行上(指向窗口外提交的引用自然落空)。
+    /// 给一批图谱行挂引用(按 SHA 分组)+ 未 push/未 pull 标记。指向这批行之外提交的
+    /// 引用自然落空(留给它真正所在的那批行)。
+    fn attach_refs_sync(
+        rows: &mut [GraphRowDto],
+        refs: Vec<git_core::model::CommitRef>,
+        sync: git_core::model::SyncCommits,
+    ) {
         let mut by_sha: HashMap<String, Vec<RefDto>> = HashMap::new();
         for r in refs {
             by_sha
@@ -114,7 +143,7 @@ impl RepoService {
                 .or_default()
                 .push(RefDto::from(r));
         }
-        for row in &mut rows {
+        for row in rows.iter_mut() {
             if let Some(rs) = by_sha.remove(&row.commit.id) {
                 row.refs = rs;
             }
@@ -125,7 +154,6 @@ impl RepoService {
                 row.sync = "incoming".to_string();
             }
         }
-        Ok(rows)
     }
 
     /// 用例:从 HEAD 搜索提交(匹配 message/作者/SHA),扁平列表。空 query 返回空。
@@ -144,6 +172,16 @@ impl RepoService {
             .backend
             .search_commits(repo_path, query, limit, cancelled)?;
         Ok(commits.into_iter().map(CommitDto::from).collect())
+    }
+
+    /// 用例:HEAD 的 reflog(最近在前,最多 limit 条)。供"找回丢失提交"。
+    pub fn reflog(&self, repo_path: &Path, limit: usize) -> Result<Vec<ReflogEntryDto>, GitError> {
+        Ok(self
+            .backend
+            .reflog(repo_path, limit)?
+            .into_iter()
+            .map(ReflogEntryDto::from)
+            .collect())
     }
 
     /// 用例:某提交改动的文件列表。
@@ -265,10 +303,15 @@ impl RepoService {
         .to_string())
     }
     /// 用例:逐行 blame。
-    pub fn blame(&self, repo_path: &Path, file: &str) -> Result<Vec<BlameLineDto>, GitError> {
+    pub fn blame(
+        &self,
+        repo_path: &Path,
+        file: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<BlameLineDto>, GitError> {
         Ok(self
             .backend
-            .blame(repo_path, file)?
+            .blame(repo_path, file, cancelled)?
             .into_iter()
             .map(BlameLineDto::from)
             .collect())
@@ -430,6 +473,20 @@ impl RepoService {
         self.backend.delete_branch(repo_path, name)
     }
 
+    /// 用例:删某分支的影响预览(会丢多少提交)。供删除前二次确认。
+    pub fn branch_delete_impact(
+        &self,
+        repo_path: &Path,
+        name: &str,
+    ) -> Result<BranchDeleteImpactDto, GitError> {
+        if name.trim().is_empty() {
+            return Err(GitError::InvalidBranchName);
+        }
+        Ok(BranchDeleteImpactDto::from(
+            self.backend.branch_delete_impact(repo_path, name)?,
+        ))
+    }
+
     /// 用例:从远程 fetch。remote=None 用默认远程。
     pub fn fetch(
         &self,
@@ -503,9 +560,32 @@ mod tests {
     fn log_returns_commit_dtos() {
         let fb = FakeBackend::default().with_log(vec![fake_commit("hi")]);
         let svc = RepoService::new(Arc::new(fb));
-        let dtos = svc.log(Path::new("/r"), 10, 0).unwrap();
+        let dtos = svc.log(Path::new("/r"), 10, 0, &|| false).unwrap();
         assert_eq!(dtos.len(), 1);
         assert_eq!(dtos[0].summary, "hi");
+    }
+
+    #[test]
+    fn reflog_returns_entry_dtos_capped_by_limit() {
+        use git_core::model::{ReflogEntry, Signature};
+        let mk = |i: usize, oid: &str| ReflogEntry {
+            index: i,
+            selector: format!("HEAD@{{{i}}}"),
+            new_oid: oid.into(),
+            new_short: oid.chars().take(7).collect(),
+            message: "commit: x".into(),
+            committer: Signature {
+                name: "n".into(),
+                email: "e".into(),
+            },
+            timestamp: 0,
+        };
+        let fb = FakeBackend::default().with_reflog(vec![mk(0, "aaaaaaa0"), mk(1, "bbbbbbb1")]);
+        let svc = RepoService::new(Arc::new(fb));
+        let dtos = svc.reflog(Path::new("/r"), 1).unwrap();
+        assert_eq!(dtos.len(), 1, "limit 应被透传给后端裁剪");
+        assert_eq!(dtos[0].selector, "HEAD@{0}");
+        assert_eq!(dtos[0].new_oid, "aaaaaaa0");
     }
 
     #[test]
@@ -525,7 +605,7 @@ mod tests {
         };
         let fb = FakeBackend::default().with_log(vec![mk("a", vec!["b"]), mk("b", vec![])]);
         let svc = RepoService::new(Arc::new(fb));
-        let rows = svc.commit_graph(Path::new("/r"), 10).unwrap();
+        let rows = svc.commit_graph(Path::new("/r"), 10, &|| false).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].commit.id, "a");
         assert_eq!(rows[0].commit.parents, vec!["b".to_string()]);
@@ -562,7 +642,7 @@ mod tests {
                 },
             ]);
         let svc = RepoService::new(Arc::new(fb));
-        let rows = svc.commit_graph(Path::new("/r"), 10).unwrap();
+        let rows = svc.commit_graph(Path::new("/r"), 10, &|| false).unwrap();
         // a 行挂 HEAD(kind=head, name=main)
         assert_eq!(rows[0].commit.id, "a");
         assert_eq!(rows[0].refs.len(), 1);
@@ -654,7 +734,7 @@ mod tests {
                 incoming: HashSet::from(["d".to_string()]),
             });
         let svc = RepoService::new(Arc::new(fb));
-        let rows = svc.commit_graph(Path::new("/r"), 10).unwrap();
+        let rows = svc.commit_graph(Path::new("/r"), 10, &|| false).unwrap();
         let by_id = |id: &str| rows.iter().find(|r| r.commit.id == id).unwrap();
         assert_eq!(by_id("a").sync, "outgoing");
         assert_eq!(by_id("d").sync, "incoming");
@@ -1019,6 +1099,24 @@ mod tests {
         let svc = RepoService::new(fb.clone());
         svc.delete_branch(Path::new("/r"), "old").unwrap();
         assert_eq!(fb.deleted_branches(), vec!["old".to_string()]);
+    }
+
+    #[test]
+    fn branch_delete_impact_maps_dto_and_validates() {
+        use git_core::model::BranchDeleteImpact;
+        let fb = FakeBackend::default().with_branch_delete_impact(BranchDeleteImpact {
+            unmerged_commits: 3,
+            sample_summaries: vec!["feat: x".into(), "fix: y".into()],
+        });
+        let svc = RepoService::new(Arc::new(fb));
+        let dto = svc.branch_delete_impact(Path::new("/r"), "feat").unwrap();
+        assert_eq!(dto.unmerged_commits, 3);
+        assert_eq!(dto.sample_summaries, vec!["feat: x", "fix: y"]);
+        // 空名拦截
+        assert!(matches!(
+            svc.branch_delete_impact(Path::new("/r"), " "),
+            Err(GitError::InvalidBranchName)
+        ));
     }
 
     #[test]

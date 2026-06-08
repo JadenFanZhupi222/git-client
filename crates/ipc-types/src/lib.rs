@@ -3,9 +3,9 @@
 //! 让前后端类型在编译期对齐。阶段 0 先保持简单。
 
 use git_core::model::{
-    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, DiffLine, DiffLineKind,
-    FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk, PullOutcome, PushOutcome,
-    RefKind, StashEntry, WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
+    DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk,
+    PullOutcome, PushOutcome, RefKind, ReflogEntry, StashEntry, WorkingTreeStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +37,75 @@ impl From<Commit> for CommitDto {
             parents: c.parents,
         }
     }
+}
+
+/// 一条 reflog 记录 DTO。`new_oid` 是"重置回这一步"时 reset 的目标提交。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReflogEntryDto {
+    pub index: usize,
+    pub selector: String,
+    pub new_oid: String,
+    pub new_short: String,
+    pub message: String,
+    pub committer_name: String,
+    pub timestamp: i64,
+}
+
+impl From<ReflogEntry> for ReflogEntryDto {
+    fn from(e: ReflogEntry) -> Self {
+        ReflogEntryDto {
+            index: e.index,
+            selector: e.selector,
+            new_oid: e.new_oid,
+            new_short: e.new_short,
+            message: e.message,
+            committer_name: e.committer.name,
+            timestamp: e.timestamp,
+        }
+    }
+}
+
+/// 一步 Undo / Redo 的描述:`label`=操作中文名,`target_short`=移动后 HEAD 的短 SHA。
+/// 既用于 `undo`/`redo` 的返回(已执行),也用于 [`UndoStateDto`] 里描述「下一步能做什么」。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoStepDto {
+    /// 操作的中文名,如 "提交"、"重置(reset)"。
+    pub label: String,
+    /// 这一步移动后 HEAD 指向的提交短 SHA(供 toast/tooltip 显示"回到 abc1234")。
+    pub target_short: String,
+    /// 这一步用的还原语义:`true` = 忠实还原了工作区(reset --hard,撤销 reset/cherry-pick 等),
+    /// `false` = 只动 HEAD、内容回暂存区(reset --soft,撤销提交)。仅用于 toast 文案精确化。
+    pub worktree_restored: bool,
+}
+
+/// 撤销/重做的当前可用性。驱动顶栏「撤销」「重做」两个按钮的显隐与文案。
+/// `None` = 该方向无可用项(按钮不显);来自 `RepoContext` 内的操作时间线 + 光标。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoStateDto {
+    /// 后退一步(撤销最近一次操作)。
+    pub can_undo: Option<UndoStepDto>,
+    /// 前进一步(重做刚撤销的操作)。
+    pub can_redo: Option<UndoStepDto>,
+}
+
+/// 操作日志的一项:本工具做过的一次写操作的落点。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpLogEntryDto {
+    /// 操作中文名,如 "提交"、"cherry-pick";时间线基点为 "起点"。
+    pub label: String,
+    /// 该操作后 HEAD 的短 SHA。
+    pub target_short: String,
+    /// Unix 时间戳(秒),供「几分钟前」显示。
+    pub timestamp: i64,
+}
+
+/// 操作日志面板数据:本会话写操作时间线(oldest→newest)+ 当前光标位置。
+/// 点击第 i 项 = goto(i),沿时间线 reset --soft 跳过去。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpLogDto {
+    pub entries: Vec<OpLogEntryDto>,
+    /// 当前 HEAD 所在的项下标(高亮「现在在哪」)。
+    pub current: usize,
 }
 
 /// 跨 IPC 边界的错误:带错误码(前端做逻辑分支)+ 友好信息 + 是否可重试。
@@ -199,6 +268,22 @@ impl From<BranchInfo> for BranchDto {
         BranchDto {
             name: b.name,
             is_head: b.is_head,
+        }
+    }
+}
+
+/// 删分支影响预览 DTO:`unmerged_commits`>0 时前端做强危险二次确认。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BranchDeleteImpactDto {
+    pub unmerged_commits: usize,
+    pub sample_summaries: Vec<String>,
+}
+
+impl From<BranchDeleteImpact> for BranchDeleteImpactDto {
+    fn from(i: BranchDeleteImpact) -> Self {
+        BranchDeleteImpactDto {
+            unmerged_commits: i.unmerged_commits,
+            sample_summaries: i.sample_summaries,
         }
     }
 }
@@ -368,6 +453,27 @@ mod tests {
         assert_eq!(dto.status, "deleted");
         assert_eq!(dto.additions, 0);
         assert_eq!(dto.deletions, 5);
+    }
+
+    #[test]
+    fn maps_reflog_entry_to_dto() {
+        use git_core::model::{ReflogEntry, Signature};
+        let dto = ReflogEntryDto::from(ReflogEntry {
+            index: 0,
+            selector: "HEAD@{0}".into(),
+            new_oid: "abcdef1234567890".into(),
+            new_short: "abcdef1".into(),
+            message: "commit: hello".into(),
+            committer: Signature {
+                name: "Tester".into(),
+                email: "t@e".into(),
+            },
+            timestamp: 42,
+        });
+        assert_eq!(dto.selector, "HEAD@{0}");
+        assert_eq!(dto.new_short, "abcdef1");
+        assert_eq!(dto.committer_name, "Tester");
+        assert_eq!(dto.timestamp, 42);
     }
 
     #[test]

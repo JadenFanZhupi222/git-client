@@ -1,8 +1,8 @@
 use crate::error::GitError;
 use crate::model::{
-    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, PullOutcome, PushOutcome, RebaseStep, RepoState, ResetMode, StashEntry, SyncCommits,
-    WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
+    FetchOutcome, FileChange, FileDiff, PullOutcome, PushOutcome, RebaseStep, ReflogEntry,
+    RepoState, ResetMode, StashEntry, SyncCommits, WorkingTreeStatus,
 };
 use std::path::Path;
 
@@ -36,7 +36,22 @@ pub trait GitBackend: Send + Sync {
     }
 
     /// 提交历史,时间倒序(新→旧)。limit/skip 分页。
-    fn log(&self, repo: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, GitError>;
+    /// `cancelled`:遍历时定期回调,返回 true 则尽快中断并返回 `GitError::Cancelled`
+    ///(上层在用户快速切分支/切 tab 时取消上一次,避免占满阻塞线程池)。
+    fn log(
+        &self,
+        repo: &Path,
+        limit: usize,
+        skip: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Commit>, GitError>;
+
+    /// HEAD 的 reflog(最近在前),最多 limit 条。无 reflog(如刚 init 的空仓库)→ 空。
+    /// 每条的 `new_oid` 即该步后 HEAD 指向的提交,可作为 reset 的目标(找回丢失提交)。
+    /// 默认 Unsupported。
+    fn reflog(&self, _repo: &Path, _limit: usize) -> Result<Vec<ReflogEntry>, GitError> {
+        Err(GitError::Unsupported)
+    }
 
     /// 从 HEAD 搜索提交(时间倒序),大小写不敏感匹配 summary/body/作者名/邮箱/SHA 前缀。
     /// 最多返回 limit 条。空 query / 不支持 → 空。默认 Unsupported。
@@ -105,7 +120,13 @@ pub trait GitBackend: Send + Sync {
     fn repo_state(&self, repo: &Path) -> Result<RepoState, GitError>;
 
     /// 逐行 blame:返回 `file`(仓库根相对路径)每行最后修改的提交信息。
-    fn blame(&self, repo: &Path, file: &str) -> Result<Vec<BlameLine>, GitError>;
+    /// `cancelled`:大文件 blame 较重,定期回调返回 true 则中断并返回 `GitError::Cancelled`。
+    fn blame(
+        &self,
+        repo: &Path,
+        file: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<BlameLine>, GitError>;
 
     // ---- 冲突解决:整文件采用一边走 CLI;默认 Unsupported ----
 
@@ -226,6 +247,16 @@ pub trait GitBackend: Send + Sync {
 
     /// 删除本地分支。不能删除当前所在分支。
     fn delete_branch(&self, repo: &Path, name: &str) -> Result<(), GitError>;
+
+    /// 删除某分支前的影响预览:有多少提交只在它上面、删后会丢。供二次确认。
+    /// 默认返回空(0 影响),不实现图计算的后端不阻塞删除流程。
+    fn branch_delete_impact(
+        &self,
+        _repo: &Path,
+        _name: &str,
+    ) -> Result<BranchDeleteImpact, GitError> {
+        Ok(BranchDeleteImpact::default())
+    }
 
     /// 从远程拉取更新(更新远程跟踪分支,不改工作区/当前分支)。
     /// remote = None 时用 git 默认远程(通常当前分支的 upstream / origin)。

@@ -4,6 +4,8 @@
 pub mod backend;
 pub mod error;
 pub mod model;
+pub mod undo;
 
 pub use backend::GitBackend;
 pub use error::GitError;
+pub use undo::{UndoKind, classify_undoable, undoable_op_label};

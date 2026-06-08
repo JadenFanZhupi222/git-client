@@ -1,7 +1,8 @@
 use git_core::model::{
-    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, FileEntry, PullOutcome, PushOutcome, RebaseAction, RebaseStep, RepoState, ResetMode,
-    Signature, StashEntry, SyncCommits, WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
+    FetchOutcome, FileChange, FileDiff, FileEntry, PullOutcome, PushOutcome, RebaseAction,
+    RebaseStep, ReflogEntry, RepoState, ResetMode, Signature, StashEntry, SyncCommits,
+    WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -44,6 +45,18 @@ pub struct FakeBackend {
     canned_conflict_sides: Mutex<Option<ConflictSides>>,
     tag_ops: Mutex<Vec<String>>,
     rebase_ops: Mutex<Vec<String>>,
+    canned_reflog: Mutex<Vec<ReflogEntry>>,
+    canned_branch_delete_impact: Mutex<BranchDeleteImpact>,
+    // 可移动的 HEAD oid:Some 时 head_commit 返回它;reset 会把它设到目标。
+    // 供 RepoContext 的 Undo/Redo 时间线测试模拟 HEAD 真实移动。
+    head_oid: Mutex<Option<String>>,
+    // 读路径调用计数:供缓存测试断言「命中不打后端 / 失效后重打」。
+    status_calls: Mutex<u32>,
+    log_calls: Mutex<u32>,
+    commit_file_diff_calls: Mutex<u32>,
+    working_diff_calls: Mutex<u32>,
+    blame_calls: Mutex<u32>,
+    refs_calls: Mutex<u32>,
 }
 
 impl FakeBackend {
@@ -98,6 +111,30 @@ impl FakeBackend {
         *self.canned_remotes.lock().unwrap() = remotes;
         self
     }
+    pub fn with_reflog(self, entries: Vec<ReflogEntry>) -> Self {
+        *self.canned_reflog.lock().unwrap() = entries;
+        self
+    }
+    /// 预置某次「删分支影响预览」的返回。供二次确认 / 未合并安全网测试。
+    pub fn with_branch_delete_impact(self, impact: BranchDeleteImpact) -> Self {
+        *self.canned_branch_delete_impact.lock().unwrap() = impact;
+        self
+    }
+    /// 链式预置 status 条目(可与 with_head / with_reflog 组合)。供「撤销前脏工作区护栏」测试:
+    /// 非空 entries 即代表工作区有未提交改动,hard 还原应被拒绝。
+    pub fn with_status_entries(self, entries: Vec<FileEntry>) -> Self {
+        *self.canned_status.lock().unwrap() = entries;
+        self
+    }
+    /// 预置可移动 HEAD 的初始 oid(之后 reset 会改它)。供 Undo/Redo 时间线测试。
+    pub fn with_head(self, oid: &str) -> Self {
+        *self.head_oid.lock().unwrap() = Some(oid.to_string());
+        self
+    }
+    /// 断言用:当前(可能被 reset 移动过的)HEAD oid。
+    pub fn head_oid(&self) -> Option<String> {
+        self.head_oid.lock().unwrap().clone()
+    }
     /// 断言用:记录被 checkout 的分支名(按调用顺序)。
     pub fn checked_out_branches(&self) -> Vec<String> {
         self.checked_out.lock().unwrap().clone()
@@ -128,6 +165,24 @@ impl FakeBackend {
     }
     pub fn push_call_count(&self) -> u32 {
         *self.push_calls.lock().unwrap()
+    }
+    pub fn status_call_count(&self) -> u32 {
+        *self.status_calls.lock().unwrap()
+    }
+    pub fn log_call_count(&self) -> u32 {
+        *self.log_calls.lock().unwrap()
+    }
+    pub fn commit_file_diff_call_count(&self) -> u32 {
+        *self.commit_file_diff_calls.lock().unwrap()
+    }
+    pub fn working_diff_call_count(&self) -> u32 {
+        *self.working_diff_calls.lock().unwrap()
+    }
+    pub fn blame_call_count(&self) -> u32 {
+        *self.blame_calls.lock().unwrap()
+    }
+    pub fn refs_call_count(&self) -> u32 {
+        *self.refs_calls.lock().unwrap()
     }
     pub fn staged_hunks(&self) -> Vec<(String, usize)> {
         self.staged_hunks.lock().unwrap().clone()
@@ -170,9 +225,15 @@ impl GitBackend for FakeBackend {
     }
 
     fn head_commit(&self, _path: &Path) -> Result<Commit, GitError> {
+        let id = self
+            .head_oid
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| "0123456789abcdef0123456789abcdef01234567".into());
         Ok(Commit {
-            id: "0123456789abcdef0123456789abcdef01234567".into(),
-            short_id: "0123456".into(),
+            short_id: id.chars().take(7).collect(),
+            id,
             summary: "这是来自 FakeBackend 的假提交".into(),
             body: String::new(),
             author: Signature {
@@ -185,6 +246,7 @@ impl GitBackend for FakeBackend {
     }
 
     fn status(&self, _path: &Path) -> Result<WorkingTreeStatus, GitError> {
+        *self.status_calls.lock().unwrap() += 1;
         Ok(WorkingTreeStatus {
             entries: self.canned_status.lock().unwrap().clone(),
         })
@@ -212,8 +274,37 @@ impl GitBackend for FakeBackend {
         Ok("fakeamend00000000000000000000000000000000".to_string())
     }
 
-    fn log(&self, _path: &Path, _limit: usize, _skip: usize) -> Result<Vec<Commit>, GitError> {
-        Ok(self.canned_log.lock().unwrap().clone())
+    fn log(
+        &self,
+        _path: &Path,
+        limit: usize,
+        skip: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Commit>, GitError> {
+        if cancelled() {
+            return Err(GitError::Cancelled);
+        }
+        *self.log_calls.lock().unwrap() += 1;
+        // 尊重 skip/limit,使增量分页(commit_graph_page)在测试里可被真实驱动。
+        Ok(self
+            .canned_log
+            .lock()
+            .unwrap()
+            .iter()
+            .skip(skip)
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+    fn reflog(&self, _path: &Path, limit: usize) -> Result<Vec<ReflogEntry>, GitError> {
+        Ok(self
+            .canned_reflog
+            .lock()
+            .unwrap()
+            .iter()
+            .take(limit)
+            .cloned()
+            .collect())
     }
     fn search_commits(
         &self,
@@ -271,9 +362,11 @@ impl GitBackend for FakeBackend {
         _commit_id: &str,
         _file: &str,
     ) -> Result<FileDiff, GitError> {
+        *self.commit_file_diff_calls.lock().unwrap() += 1;
         Ok(self.canned_file_diff.lock().unwrap().clone())
     }
     fn working_diff(&self, _path: &Path, _file: &str, _staged: bool) -> Result<FileDiff, GitError> {
+        *self.working_diff_calls.lock().unwrap() += 1;
         Ok(self.canned_file_diff.lock().unwrap().clone())
     }
     fn stage_hunk(&self, _path: &Path, file: &str, hunk_index: usize) -> Result<(), GitError> {
@@ -307,6 +400,7 @@ impl GitBackend for FakeBackend {
         Ok(self.canned_branches.lock().unwrap().clone())
     }
     fn refs(&self, _path: &Path) -> Result<Vec<CommitRef>, GitError> {
+        *self.refs_calls.lock().unwrap() += 1;
         Ok(self.canned_refs.lock().unwrap().clone())
     }
     fn repo_state(&self, _path: &Path) -> Result<RepoState, GitError> {
@@ -316,7 +410,16 @@ impl GitBackend for FakeBackend {
             .unwrap()
             .unwrap_or(RepoState::Clean))
     }
-    fn blame(&self, _path: &Path, _file: &str) -> Result<Vec<BlameLine>, GitError> {
+    fn blame(
+        &self,
+        _path: &Path,
+        _file: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<BlameLine>, GitError> {
+        if cancelled() {
+            return Err(GitError::Cancelled);
+        }
+        *self.blame_calls.lock().unwrap() += 1;
         Ok(Vec::new())
     }
     fn conflict_sides(&self, _path: &Path, _file: &str) -> Result<ConflictSides, GitError> {
@@ -395,6 +498,8 @@ impl GitBackend for FakeBackend {
             .lock()
             .unwrap()
             .push(format!("reset:{m}:{commit_id}"));
+        // 模拟 reset 移动 HEAD 到目标(供 Undo/Redo 时间线测试)。
+        *self.head_oid.lock().unwrap() = Some(commit_id.to_string());
         Ok(())
     }
     fn interactive_rebase(
@@ -469,6 +574,13 @@ impl GitBackend for FakeBackend {
     fn delete_branch(&self, _path: &Path, name: &str) -> Result<(), GitError> {
         self.deleted.lock().unwrap().push(name.to_string());
         Ok(())
+    }
+    fn branch_delete_impact(
+        &self,
+        _path: &Path,
+        _name: &str,
+    ) -> Result<BranchDeleteImpact, GitError> {
+        Ok(self.canned_branch_delete_impact.lock().unwrap().clone())
     }
     fn fetch(&self, _path: &Path, remote: Option<&str>) -> Result<FetchOutcome, GitError> {
         *self.fetch_calls.lock().unwrap() += 1;
@@ -551,7 +663,7 @@ mod tests {
                 deletions: 0,
             }])
             .with_branch(Some("main".into()));
-        assert_eq!(fb.log(Path::new("/r"), 10, 0).unwrap().len(), 1);
+        assert_eq!(fb.log(Path::new("/r"), 10, 0, &|| false).unwrap().len(), 1);
         assert_eq!(fb.commit_files(Path::new("/r"), "x").unwrap()[0].path, "a");
         assert_eq!(
             fb.current_branch(Path::new("/r")).unwrap(),

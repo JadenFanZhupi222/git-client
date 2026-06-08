@@ -50,32 +50,40 @@ export function DiffView({
 
   return (
     <div className="fade-in flex-1 overflow-auto font-mono text-[12px] leading-5">
-      {diff.hunks.map((h, hi) => {
+      {/* min-w-max:整个 diff 体宽 = 最长行(全短行时则铺满视口);内部各行 min-w-full
+          都按这个统一宽度对齐 → 横向滚动时增删背景行行齐平、铺满到最长行,不再露白/参差。 */}
+      <div className="min-w-max">
+        {diff.hunks.map((h, hi) => {
         const selCount = h.lines.filter((_, li) => selected.has(`${hi}:${li}`)).length;
         return (
         <div key={hi}>
-          <div className="group flex select-none items-center gap-2 bg-overlay px-3 py-0.5 text-[11px] text-accent/80">
+          <div className="group flex min-w-full select-none items-center gap-2 bg-overlay px-3 py-0.5 text-[11px] text-accent/80">
             <span className="truncate">{h.header}</span>
-            {lineStage && selCount > 0 && (
-              <button
-                disabled={lineStage.disabled}
-                onClick={() => {
-                  const lines = h.lines.map((_, li) => li).filter((li) => selected.has(`${hi}:${li}`));
-                  lineStage.onStage(hi, lines);
-                }}
-                className="ml-auto shrink-0 rounded border border-accent bg-accent/15 px-1.5 py-px text-[10px] text-accent transition-colors hover:bg-accent/25 disabled:opacity-40"
-              >
-                暂存选中行 ({selCount})
-              </button>
-            )}
-            {hunkAction && (
-              <button
-                disabled={hunkAction.disabled}
-                onClick={() => hunkAction.onAct(hi)}
-                className={`shrink-0 rounded border border-line-strong bg-elevated px-1.5 py-px text-[10px] text-fg-muted opacity-0 transition-colors hover:border-accent hover:bg-overlay hover:text-accent group-hover:opacity-100 disabled:opacity-40 ${lineStage && selCount > 0 ? "" : "ml-auto"}`}
-              >
-                {hunkAction.label}
-              </button>
+            {((lineStage && selCount > 0) || hunkAction) && (
+              // sticky right-3:diff 体很宽时,动作按钮仍钉在右侧视口边、不随横向滚动跑掉。
+              <div className="sticky right-3 ml-auto flex shrink-0 items-center gap-2">
+                {lineStage && selCount > 0 && (
+                  <button
+                    disabled={lineStage.disabled}
+                    onClick={() => {
+                      const lines = h.lines.map((_, li) => li).filter((li) => selected.has(`${hi}:${li}`));
+                      lineStage.onStage(hi, lines);
+                    }}
+                    className="shrink-0 rounded border border-accent bg-accent/15 px-1.5 py-px text-[10px] text-accent transition-colors hover:bg-accent/25 disabled:opacity-40"
+                  >
+                    暂存选中行 ({selCount})
+                  </button>
+                )}
+                {hunkAction && (
+                  <button
+                    disabled={hunkAction.disabled}
+                    onClick={() => hunkAction.onAct(hi)}
+                    className="shrink-0 rounded border border-line-strong bg-elevated px-1.5 py-px text-[10px] text-fg-muted opacity-0 transition-colors hover:border-accent hover:bg-overlay hover:text-accent group-hover:opacity-100 disabled:opacity-40"
+                  >
+                    {hunkAction.label}
+                  </button>
+                )}
+              </div>
             )}
           </div>
           {h.lines.map((l, li) => {
@@ -91,7 +99,8 @@ export function DiffView({
               <div
                 key={li}
                 onClick={selectable ? () => toggle(key) : undefined}
-                className={`flex ${rowBg} ${selectable ? "cursor-pointer" : ""} ${on ? "ring-1 ring-inset ring-accent/60" : ""}`}
+                // min-w-full:行宽 = 外层 min-w-max 体宽(= 最长行),所有行齐平铺满。
+                className={`flex min-w-full ${rowBg} ${selectable ? "cursor-pointer" : ""} ${on ? "ring-1 ring-inset ring-accent/60" : ""}`}
               >
                 {lineStage && (
                   <span className="w-4 shrink-0 select-none text-center text-[10px] text-accent">
@@ -107,7 +116,8 @@ export function DiffView({
           })}
         </div>
         );
-      })}
+        })}
+      </div>
     </div>
   );
 }

@@ -6,13 +6,15 @@ import { HistoryView } from "./views/HistoryView";
 import { CompareView } from "./views/CompareView";
 import { BlameView } from "./views/BlameView";
 import { useQueryClient } from "@tanstack/react-query";
-import { setUpstream, fetchRemote, pullRemote, pushRemote, type IpcError } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon } from "./components/icons";
+import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, type IpcError } from "./ipc";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
 import { StashMenu } from "./components/StashMenu";
+import { OpLogPanel } from "./components/OpLogPanel";
 import { useToast } from "./components/Toast";
-import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, invalidateHistory, qk } from "./lib/queries";
+import { Button } from "./components/ui/Button";
+import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
 import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
 
 /** 把 git fetch 的原始摘要提炼成简洁细节:优先取 "->" 更新行。 */
@@ -35,6 +37,8 @@ export default function App() {
   const [selectedRemote, setSelectedRemote] = useState<string | null>(null);
   const [remoteMenu, setRemoteMenu] = useState(false);
   const [upMenu, setUpMenu] = useState(false);
+  const [undoing, setUndoing] = useState(false);
+  const [opLogOpen, setOpLogOpen] = useState(false);
   const toast = useToast();
   const qc = useQueryClient();
 
@@ -43,8 +47,11 @@ export default function App() {
   const branch = useCurrentBranch(repo ?? "").data ?? null;
   const sync = useAheadBehind(repo ?? "").data ?? null;
   const remotes = useRemotes(repo ?? "").data ?? [];
+  const undoState = useUndoState(repo ?? "").data ?? null;
+  const canUndo = undoState?.can_undo ?? null;
+  const canRedo = undoState?.can_redo ?? null;
 
-  const busy = fetching || pulling || pushing;
+  const busy = fetching || pulling || pushing || undoing;
   // 同步提示:落后 → 建议 Pull;领先 → 建议 Push(无上游时 sync 为 null,不提示)
   const canPull = !!sync && sync.behind > 0;
   const canPush = !!sync && sync.ahead > 0;
@@ -130,6 +137,30 @@ export default function App() {
     }
   }
 
+  // 撤销/重做共用:沿操作时间线移动 HEAD(reset --soft),成功后刷新历史 + 工作区。
+  async function doNav(dir: "undo" | "redo") {
+    if (!repo) return;
+    setUndoing(true);
+    try {
+      const info = await (dir === "undo" ? undo(repo) : redo(repo));
+      const where = dir === "undo" ? "回到" : "前进到";
+      // soft(撤销提交)内容回暂存区;hard(撤销 reset 等)已忠实还原工作区。
+      const effect = info.worktree_restored ? "工作区已还原到该状态" : "改动回到暂存区";
+      toast({
+        kind: "success",
+        title: `${dir === "undo" ? "已撤销" : "已重做"}:${info.label}`,
+        detail: `HEAD ${where} ${info.target_short},${effect}`,
+      });
+    } catch (e) {
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+    } finally {
+      setUndoing(false);
+      // 动了 HEAD + 暂存区:历史(含可否再撤销/重做)与工作区都要刷新。
+      invalidateHistory(qc, repo);
+      invalidateWorktree(qc, repo);
+    }
+  }
+
   async function pickRepo() {
     const dir = await open({ directory: true, title: "选择一个 git 仓库" });
     if (typeof dir === "string") setRepo(dir);
@@ -186,6 +217,36 @@ export default function App() {
                   )}
                 </div>
               )}
+              {canUndo && (
+                <button
+                  onClick={() => doNav("undo")}
+                  disabled={busy}
+                  title={`撤销刚才的「${canUndo.label}」(回到 ${canUndo.target_short};${canUndo.worktree_restored ? "还原工作区,有未提交改动会先拦下" : "改动回暂存区,不丢工作区"})`}
+                  className="flex items-center gap-1.5 rounded-md border border-accent/60 bg-accent/10 px-2.5 py-1 text-xs text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+                >
+                  {undoing ? <SpinnerIcon width={13} height={13} /> : <UndoIcon width={13} height={13} />}
+                  {`撤销${canUndo.label}`}
+                </button>
+              )}
+              {canRedo && (
+                <button
+                  onClick={() => doNav("redo")}
+                  disabled={busy}
+                  title={`重做「${canRedo.label}」(前进到 ${canRedo.target_short})`}
+                  className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle disabled:opacity-50"
+                >
+                  <RedoIcon width={13} height={13} />
+                  {`重做${canRedo.label}`}
+                </button>
+              )}
+              <button
+                onClick={() => setOpLogOpen(true)}
+                title="操作日志(本会话写操作时间线,可点回跳)"
+                aria-label="操作日志"
+                className="grid h-7 w-7 place-items-center rounded-md border border-line-strong bg-elevated text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle"
+              >
+                <HistoryIcon width={14} height={14} />
+              </button>
               <button
                 onClick={doFetch}
                 disabled={busy}
@@ -338,6 +399,17 @@ export default function App() {
           </span>
         </footer>
       )}
+
+      {repo && opLogOpen && (
+        <OpLogPanel
+          repo={repo}
+          onClose={() => setOpLogOpen(false)}
+          onJumped={() => {
+            invalidateHistory(qc, repo);
+            invalidateWorktree(qc, repo);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -391,12 +463,9 @@ function EmptyState({ onPick }: { onPick: () => void }) {
         <p className="text-base font-medium text-fg">还没有打开仓库</p>
         <p className="mt-1 text-sm text-fg-muted">选择一个本地 git 仓库开始工作。</p>
       </div>
-      <button
-        onClick={onPick}
-        className="rounded-md bg-done px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
-      >
+      <Button variant="commit" size="md" onClick={onPick}>
         选择仓库
-      </button>
+      </Button>
     </div>
   );
 }

@@ -5,10 +5,10 @@
 import { useQuery, useQueryClient, keepPreviousData, type QueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import {
-  getStatus, getWorkingDiff, getCommitGraph, searchCommits, getCommitFiles, getCommitFileDiff,
+  getStatus, getWorkingDiff, getCommitGraph, searchCommits, getReflog, getCommitFiles, getCommitFileDiff,
   compareFiles, compareFileDiff,
   getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
-  getRepoState, readWorkingFile, blame, conflictSides,
+  getRepoState, readWorkingFile, blame, conflictSides, undoState, opLog,
   watchRepo, onRepoChanged,
 } from "../ipc";
 
@@ -29,9 +29,12 @@ export const qk = {
   blame: (repo: string) => ["blame", repo] as const,
   conflictSides: (repo: string) => ["conflictSides", repo] as const,
   search: (repo: string) => ["search", repo] as const,
+  reflog: (repo: string) => ["reflog", repo] as const,
   compareFiles: (repo: string) => ["compareFiles", repo] as const,
   compareDiff: (repo: string) => ["compareDiff", repo] as const,
   refs: (repo: string) => ["refs", repo] as const,
+  undoState: (repo: string) => ["undoState", repo] as const,
+  opLog: (repo: string) => ["opLog", repo] as const,
 };
 
 // ---- 读 hooks ----
@@ -63,6 +66,15 @@ export function useCommitSearch(repo: string, query: string, limit: number) {
     queryFn: () => searchCommits(repo, q, limit),
     enabled: !!repo && q.length > 0,
     placeholderData: keepPreviousData, // 连续输入时不闪空
+  });
+}
+
+/** HEAD 的 reflog;enabled 控制按需取(仅面板打开时拉)。 */
+export function useReflog(repo: string, limit: number, enabled: boolean) {
+  return useQuery({
+    queryKey: [...qk.reflog(repo), limit],
+    queryFn: () => getReflog(repo, limit),
+    enabled: enabled && !!repo,
   });
 }
 
@@ -102,6 +114,16 @@ export function useCommitDiff(repo: string, commitId: string | null, file: strin
 
 export function useCurrentBranch(repo: string) {
   return useQuery({ queryKey: qk.currentBranch(repo), queryFn: () => getCurrentBranch(repo), enabled: !!repo });
+}
+
+/** 撤销/重做的当前可用性。随历史变化失效;驱动顶栏「撤销」「重做」按钮。 */
+export function useUndoState(repo: string) {
+  return useQuery({ queryKey: qk.undoState(repo), queryFn: () => undoState(repo), enabled: !!repo });
+}
+
+/** 操作日志(本会话写操作时间线)。随历史变化失效。`enabled` 控制是否拉(面板打开才拉)。 */
+export function useOpLog(repo: string, enabled: boolean) {
+  return useQuery({ queryKey: qk.opLog(repo), queryFn: () => opLog(repo), enabled: enabled && !!repo });
 }
 
 export function useAheadBehind(repo: string) {
@@ -168,6 +190,8 @@ export function invalidateHistory(qc: QueryClient, repo: string) {
   qc.invalidateQueries({ queryKey: qk.branches(repo) });
   qc.invalidateQueries({ queryKey: qk.currentBranch(repo) });
   qc.invalidateQueries({ queryKey: qk.aheadBehind(repo) });
+  qc.invalidateQueries({ queryKey: qk.undoState(repo) }); // HEAD 动了 → 重算可否撤销/重做
+  qc.invalidateQueries({ queryKey: qk.opLog(repo) }); // 操作日志(光标/新条目)也刷新
 }
 
 // ---- 一处监听文件变化 → 失效对应查询(取代各 view 的订阅+重载)----

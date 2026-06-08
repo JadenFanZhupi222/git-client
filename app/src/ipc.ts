@@ -145,6 +145,16 @@ export async function deleteBranch(repoPath: string, name: string): Promise<void
   await invoke("delete_branch", { repoPath, name });
 }
 
+export interface BranchDeleteImpactDto {
+  unmerged_commits: number;     // 删后会丢的提交数(0=安全)
+  sample_summaries: string[];   // 这些提交的摘要样本
+}
+
+/** 删某分支前的影响预览(会丢多少提交)。供二次确认。 */
+export async function branchDeleteImpact(repoPath: string, name: string): Promise<BranchDeleteImpactDto> {
+  return await invoke<BranchDeleteImpactDto>("branch_delete_impact", { repoPath, name });
+}
+
 // ── 远程(阶段 2d-1) ──
 export interface FetchResultDto {
   remote: string;
@@ -381,6 +391,71 @@ export async function getCommitGraph(repoPath: string, limit: number): Promise<G
 }
 
 /** 搜索提交(匹配 message/作者/SHA 前缀,大小写不敏感),扁平列表;空 query 返回空。 */
+// ── reflog(HEAD 移动历史 / 后悔药)──
+export interface ReflogEntryDto {
+  index: number;
+  selector: string;   // "HEAD@{0}"
+  new_oid: string;    // 该步后 HEAD 指向的提交(reset 目标)
+  new_short: string;
+  message: string;    // "commit: ..." / "reset: moving to ..." / "checkout: ..."
+  committer_name: string;
+  timestamp: number;
+}
+
+/** HEAD 的 reflog,最近在前,最多 limit 条。用于找回被 reset/rebase 丢弃的提交。 */
+export async function getReflog(repoPath: string, limit: number): Promise<ReflogEntryDto[]> {
+  return await invoke<ReflogEntryDto[]>("get_reflog", { repoPath, limit });
+}
+
+// ── 多级 Undo/Redo(操作时间线 + 光标,reset --soft,永不丢工作区)──
+export interface UndoStepDto {
+  label: string;             // 操作中文名,如 "提交"、"重置(reset)"
+  target_short: string;      // 这一步移动后 HEAD 的短 SHA
+  worktree_restored: boolean; // true=还原了工作区(hard,撤销 reset 等);false=内容回暂存区(soft,撤销提交)
+}
+
+export interface UndoStateDto {
+  can_undo: UndoStepDto | null; // 后退一步(撤销),null=不可
+  can_redo: UndoStepDto | null; // 前进一步(重做),null=不可
+}
+
+/** 撤销/重做的当前可用性(只读),驱动顶栏按钮的显隐与文案。 */
+export async function undoState(repoPath: string): Promise<UndoStateDto> {
+  return await invoke<UndoStateDto>("undo_state", { repoPath });
+}
+
+/** 撤销一步:沿时间线后退,reset --soft。改动回暂存区,不丢工作区。 */
+export async function undo(repoPath: string): Promise<UndoStepDto> {
+  return await invoke<UndoStepDto>("undo", { repoPath });
+}
+
+/** 重做一步:沿时间线前进,reset --soft。 */
+export async function redo(repoPath: string): Promise<UndoStepDto> {
+  return await invoke<UndoStepDto>("redo", { repoPath });
+}
+
+// ── 操作日志(本会话写操作时间线)──
+export interface OpLogEntryDto {
+  label: string;        // 操作中文名;基点为 "起点"
+  target_short: string; // 该操作后 HEAD 短 SHA
+  timestamp: number;    // Unix 秒
+}
+
+export interface OpLogDto {
+  entries: OpLogEntryDto[]; // oldest→newest
+  current: number;          // 当前 HEAD 所在项下标
+}
+
+/** 操作日志:本工具本会话做过的写操作时间线 + 当前光标。 */
+export async function opLog(repoPath: string): Promise<OpLogDto> {
+  return await invoke<OpLogDto>("op_log", { repoPath });
+}
+
+/** 跳到操作日志第 index 项(reset --soft 过去)。 */
+export async function opGoto(repoPath: string, index: number): Promise<UndoStepDto> {
+  return await invoke<UndoStepDto>("op_goto", { repoPath, index });
+}
+
 export async function searchCommits(repoPath: string, query: string, limit: number): Promise<CommitDto[]> {
   return await invoke<CommitDto[]>("search_commits", { repoPath, query, limit });
 }

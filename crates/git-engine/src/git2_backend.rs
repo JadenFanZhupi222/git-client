@@ -1,7 +1,7 @@
 use git_core::model::{
-    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, DiffLine, DiffLineKind,
-    FileChange, FileDiff, FileEntry, FileState, Hunk, RefKind, RepoState, ResetMode, Signature,
-    SyncCommits, WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
+    DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry, FileState, Hunk, RefKind, ReflogEntry,
+    RepoState, ResetMode, Signature, SyncCommits, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::collections::HashSet;
@@ -380,7 +380,13 @@ impl GitBackend for Git2Backend {
         Ok(())
     }
 
-    fn log(&self, path: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, GitError> {
+    fn log(
+        &self,
+        path: &Path,
+        limit: usize,
+        skip: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Commit>, GitError> {
         let repo =
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
 
@@ -389,8 +395,12 @@ impl GitBackend for Git2Backend {
         };
 
         // ⚠️ Revwalk 惰性:直接 skip/take,别先 collect 全部
+        // 大仓库历史很长:每条检查取消信号,被取代的旧请求尽快放手。
         let mut out = Vec::new();
         for oid in walk.skip(skip).take(limit) {
+            if cancelled() {
+                return Err(GitError::Cancelled);
+            }
             let oid = oid.map_err(|e| GitError::Backend(e.to_string()))?;
             let commit = repo
                 .find_commit(oid)
@@ -440,6 +450,32 @@ impl GitBackend for Git2Backend {
                     break;
                 }
             }
+        }
+        Ok(out)
+    }
+    fn reflog(&self, path: &Path, limit: usize) -> Result<Vec<ReflogEntry>, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        // 刚 init、尚无任何 HEAD 移动的仓库没有 reflog → 当作空,不报错。
+        let Ok(reflog) = repo.reflog("HEAD") else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::new();
+        for (i, e) in reflog.iter().enumerate().take(limit) {
+            let new_oid = e.id_new().to_string();
+            let committer = e.committer();
+            out.push(ReflogEntry {
+                index: i,
+                selector: format!("HEAD@{{{i}}}"),
+                new_short: new_oid.chars().take(7).collect(),
+                new_oid,
+                message: e.message().unwrap_or("").to_string(),
+                committer: Signature {
+                    name: committer.name().unwrap_or("").to_string(),
+                    email: committer.email().unwrap_or("").to_string(),
+                },
+                timestamp: committer.when().seconds(),
+            });
         }
         Ok(out)
     }
@@ -774,7 +810,16 @@ impl GitBackend for Git2Backend {
         })
     }
 
-    fn blame(&self, path: &Path, file: &str) -> Result<Vec<BlameLine>, GitError> {
+    fn blame(
+        &self,
+        path: &Path,
+        file: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<BlameLine>, GitError> {
+        // blame_file 本身较重且不可中断;若到达阻塞线程时已被取代,先在这里放手。
+        if cancelled() {
+            return Err(GitError::Cancelled);
+        }
         let repo =
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
         let blame = repo
@@ -789,6 +834,10 @@ impl GitBackend for Git2Backend {
 
         let mut out = Vec::new();
         for (i, line) in text.lines().enumerate() {
+            // 大文件逐行组装也可能不短:每 512 行检查一次取消。
+            if i % 512 == 0 && cancelled() {
+                return Err(GitError::Cancelled);
+            }
             let lineno = i + 1;
             let (commit_id, short_id, author_name, timestamp) = match blame.get_line(lineno) {
                 Some(h) => {
@@ -962,6 +1011,66 @@ impl GitBackend for Git2Backend {
             .delete()
             .map_err(|e| GitError::Backend(e.to_string()))?;
         Ok(())
+    }
+
+    fn branch_delete_impact(
+        &self,
+        path: &Path,
+        name: &str,
+    ) -> Result<BranchDeleteImpact, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let full = format!("refs/heads/{name}");
+        let tip = repo
+            .find_branch(name, git2::BranchType::Local)
+            .map_err(|_| GitError::BranchNotFound(name.to_string()))?
+            .get()
+            .target()
+            .ok_or_else(|| GitError::Backend("分支无目标提交".into()))?;
+
+        // rev-list <name> --not <所有其它引用>:只在该分支、别处不可达的提交 = 删后会丢。
+        let mut walk = repo
+            .revwalk()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        walk.push(tip)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        // 隐藏除「待删分支」外的每一个引用(本地/远程/标签),annotated tag 用 peel 解到 commit。
+        for r in repo
+            .references()
+            .map_err(|e| GitError::Backend(e.to_string()))?
+            .flatten()
+        {
+            if r.name() == Some(full.as_str()) {
+                continue; // 别隐藏自己,否则全被抵消
+            }
+            if let Ok(commit) = r.peel_to_commit() {
+                walk.hide(commit.id())
+                    .map_err(|e| GitError::Backend(e.to_string()))?;
+            }
+        }
+        // HEAD(可能是分离头,不在 references() 里)也要隐藏。
+        if let Ok(head) = repo.head()
+            && let Ok(commit) = head.peel_to_commit()
+        {
+            walk.hide(commit.id())
+                .map_err(|e| GitError::Backend(e.to_string()))?;
+        }
+
+        let mut unmerged_commits = 0usize;
+        let mut sample_summaries = Vec::new();
+        for oid in walk {
+            let oid = oid.map_err(|e| GitError::Backend(e.to_string()))?;
+            unmerged_commits += 1;
+            if sample_summaries.len() < 5
+                && let Ok(commit) = repo.find_commit(oid)
+            {
+                sample_summaries.push(commit.summary().unwrap_or("").to_string());
+            }
+        }
+        Ok(BranchDeleteImpact {
+            unmerged_commits,
+            sample_summaries,
+        })
     }
 
     fn commit_file_diff(
@@ -1241,14 +1350,14 @@ mod tests {
 
         // 仅改信息:不新增提交,summary 变化
         b.amend_commit(&repo, Some("amended msg")).unwrap();
-        let log = b.log(&repo, 10, 0).unwrap();
+        let log = b.log(&repo, 10, 0, &|| false).unwrap();
         assert_eq!(log.len(), 1, "amend 不应新增提交");
         assert_eq!(log[0].summary, "amended msg");
 
         // 暂存新文件后 amend(None 保留信息):新文件应进入该提交
         stage(&repo, "b.txt", "2");
         b.amend_commit(&repo, None).unwrap();
-        let head = &b.log(&repo, 1, 0).unwrap()[0];
+        let head = &b.log(&repo, 1, 0, &|| false).unwrap()[0];
         assert_eq!(head.summary, "amended msg", "None 应保留上次信息");
         let files = b.commit_files(&repo, &head.id).unwrap();
         assert!(
@@ -1310,9 +1419,71 @@ mod tests {
         commit_index(&repo, "c2", 2000);
         stage(&repo, "b.txt", "x");
         commit_index(&repo, "c3", 3000);
-        let log = b.log(&repo, 10, 0).unwrap();
+        let log = b.log(&repo, 10, 0, &|| false).unwrap();
         let msgs: Vec<&str> = log.iter().map(|c| c.summary.as_str()).collect();
         assert_eq!(msgs, vec!["c3", "c2", "c1"]);
+    }
+
+    #[test]
+    fn reflog_records_commits_newest_first() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        let c1 = commit_index(&repo, "c1", 1000);
+        stage(&repo, "a.txt", "2");
+        let c2 = commit_index(&repo, "c2", 2000);
+
+        let entries = b.reflog(&repo, 10).unwrap();
+        assert!(entries.len() >= 2, "两次提交应至少留两条 reflog");
+        // 最近(c2)在前。
+        assert_eq!(entries[0].selector, "HEAD@{0}");
+        assert_eq!(entries[0].new_oid, c2);
+        assert!(
+            entries[0].message.contains("c2"),
+            "首条信息应含提交摘要: {}",
+            entries[0].message
+        );
+        // 找回:某条 reflog 指回 c1(它的 new_oid)。
+        assert!(
+            entries.iter().any(|e| e.new_oid == c1),
+            "reflog 应保留 c1 的 SHA 以供找回"
+        );
+    }
+
+    #[test]
+    fn reflog_empty_repo_is_empty() {
+        let (_tmp, repo) = init_repo();
+        // 刚 init、无任何提交 → 无 HEAD reflog,应返回空而非报错。
+        assert!(Git2Backend.reflog(&repo, 10).unwrap().is_empty());
+    }
+
+    /// 校验「撤销」分类器对**真实 git2 reflog 文案**成立——这是唯一靠肉眼看不出、
+    /// 必须真机验的假设(reflog message 是否真的形如 "commit: ..." / "reset: ...")。
+    #[test]
+    fn real_reflog_messages_classify_for_undo() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        let c1 = commit_index(&repo, "c1", 1000);
+        stage(&repo, "a.txt", "2");
+        commit_index(&repo, "c2", 2000);
+
+        // 顶项是真实的 commit reflog → 分类为「提交」。
+        let top = &b.reflog(&repo, 1).unwrap()[0].message;
+        assert_eq!(
+            git_core::undoable_op_label(top),
+            Some("提交"),
+            "真实 commit reflog 文案应被识别为可撤销: {top}"
+        );
+
+        // 做一次真实 reset,顶项变成 reset reflog → 分类为「重置(reset)」。
+        b.reset(&repo, &c1, ResetMode::Soft).unwrap();
+        let top = &b.reflog(&repo, 1).unwrap()[0].message;
+        assert_eq!(
+            git_core::undoable_op_label(top),
+            Some("重置(reset)"),
+            "真实 reset reflog 文案应被识别为可撤销: {top}"
+        );
     }
 
     #[test]
@@ -1325,7 +1496,7 @@ mod tests {
         commit_index(&repo, "c2", 2000);
         stage(&repo, "a.txt", "3");
         commit_index(&repo, "c3", 3000);
-        let page = b.log(&repo, 1, 1).unwrap();
+        let page = b.log(&repo, 1, 1, &|| false).unwrap();
         assert_eq!(page.len(), 1);
         assert_eq!(page[0].summary, "c2");
     }
@@ -1334,7 +1505,7 @@ mod tests {
     fn log_empty_repo_is_empty() {
         let (_tmp, repo) = init_repo();
         let b = Git2Backend;
-        assert!(b.log(&repo, 10, 0).unwrap().is_empty());
+        assert!(b.log(&repo, 10, 0, &|| false).unwrap().is_empty());
     }
 
     // ===== Task 3: commit_files =====
@@ -1828,7 +1999,11 @@ mod tests {
 
         // soft reset 到 c1:HEAD 回到 c1,但工作区仍是 "2"。
         b.reset(&repo, &c1, ResetMode::Soft).unwrap();
-        assert_eq!(b.log(&repo, 10, 0).unwrap().len(), 1, "soft 后只剩 c1 可达");
+        assert_eq!(
+            b.log(&repo, 10, 0, &|| false).unwrap().len(),
+            1,
+            "soft 后只剩 c1 可达"
+        );
         assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "2");
 
         // 前进回 c2(hard),再 hard reset 到 c1:工作区也被重置成 "1"。
@@ -1961,7 +2136,7 @@ mod tests {
         stage(&repo, "f.txt", "alpha\nbeta\ngamma\n");
         let c2 = commit_index(&repo, "c2", 2000);
 
-        let lines = b.blame(&repo, "f.txt").unwrap();
+        let lines = b.blame(&repo, "f.txt", &|| false).unwrap();
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].content, "alpha");
         assert_eq!(lines[0].commit_id, c1, "前两行归 c1");
@@ -1969,6 +2144,31 @@ mod tests {
         assert_eq!(lines[2].commit_id, c2, "第三行归 c2");
         assert_eq!(lines[2].content, "gamma");
         assert_eq!(lines[0].short_id, c1.chars().take(7).collect::<String>());
+    }
+
+    #[test]
+    fn log_honors_cancellation() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "f.txt", "x\n");
+        commit_index(&repo, "c1", 1000);
+        // cancelled 恒真 → 遍历第一条就中断,不白烧 CPU。
+        let err = b.log(&repo, 10, 0, &|| true).unwrap_err();
+        assert!(matches!(err, GitError::Cancelled));
+        // 不取消时正常返回。
+        assert_eq!(b.log(&repo, 10, 0, &|| false).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn blame_honors_cancellation() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "f.txt", "x\n");
+        commit_index(&repo, "c1", 1000);
+        // 入口即检查:被取代时连昂贵的 blame_file 都不跑。
+        let err = b.blame(&repo, "f.txt", &|| true).unwrap_err();
+        assert!(matches!(err, GitError::Cancelled));
+        assert_eq!(b.blame(&repo, "f.txt", &|| false).unwrap().len(), 1);
     }
 
     #[test]
@@ -2136,6 +2336,45 @@ mod tests {
             .map(|x| x.name)
             .collect();
         assert!(!names.contains(&"tmp".to_string()));
+    }
+
+    #[test]
+    fn branch_delete_impact_counts_only_orphaned_commits() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        let base = b.current_branch(&repo).unwrap().unwrap(); // 默认分支名(master/main 不定)
+
+        // feat 上多两个提交 c2、c3(仅 feat 可达)。
+        b.create_branch(&repo, "feat").unwrap();
+        b.checkout_branch(&repo, "feat").unwrap();
+        stage(&repo, "a.txt", "2");
+        commit_index(&repo, "c2", 2000);
+        stage(&repo, "a.txt", "3");
+        commit_index(&repo, "c3", 3000);
+        // 回基线分支(删别的分支时 HEAD 必然在别处;且不能删当前分支)。
+        b.checkout_branch(&repo, &base).unwrap();
+
+        let impact = b.branch_delete_impact(&repo, "feat").unwrap();
+        assert_eq!(impact.unmerged_commits, 2, "c2/c3 只在 feat 上,删后会丢");
+        // 摘要按新→旧。
+        assert_eq!(impact.sample_summaries, vec!["c3", "c2"]);
+
+        // 在 main 当前位置开个分支:它没有独有提交 → 删除安全(0)。
+        b.create_branch(&repo, "atmain").unwrap();
+        let safe = b.branch_delete_impact(&repo, "atmain").unwrap();
+        assert_eq!(safe.unmerged_commits, 0, "已并入别处的分支删除无损失");
+        assert!(safe.sample_summaries.is_empty());
+    }
+
+    #[test]
+    fn branch_delete_impact_missing_branch_errors() {
+        let (_tmp, repo) = init_repo();
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        let err = Git2Backend.branch_delete_impact(&repo, "nope").unwrap_err();
+        assert!(matches!(err, GitError::BranchNotFound(_)));
     }
 
     #[test]

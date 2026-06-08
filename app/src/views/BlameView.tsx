@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useBlame } from "../lib/queries";
 import { formatRelative } from "../lib/time";
 import { FileDiffIcon } from "../components/icons";
+import { Button } from "../components/ui/Button";
 import type { IpcError } from "../ipc";
 
 /** 把绝对路径转成仓库根相对路径(正斜杠);不在仓库内返回 null。 */
@@ -38,12 +39,9 @@ export function BlameView({ repo }: { repo: string }) {
     <div className="flex h-full flex-col">
       {/* 工具栏 */}
       <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-1.5">
-        <button
-          onClick={pick}
-          className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-elevated hover:text-fg"
-        >
+        <Button variant="ghost" size="sm" onClick={pick}>
           <FileDiffIcon width={13} height={13} /> 选择文件
-        </button>
+        </Button>
         {file && <span className="truncate font-mono text-xs text-fg" title={file}>{file}</span>}
       </div>
 
@@ -64,15 +62,23 @@ export function BlameView({ repo }: { repo: string }) {
             const uncommitted = l.commit_id === "";
             return (
               <div key={i} className="flex items-stretch hover:bg-elevated">
-                {/* 提交信息 gutter:同一提交的连续行只在首行显示 */}
+                {/* 提交信息 gutter:同一提交的连续行只在首行显示。
+                    flex 布局让「作者名」成为唯一可截断项,sha 与时间 shrink-0 始终可见
+                    —— 否则整体 truncate 会把末尾的时间切掉(仿 JetBrains 始终留时间)。 */}
                 <div
-                  className={`w-48 shrink-0 truncate border-r border-line px-2 ${newGroup ? "" : "opacity-0"} ${uncommitted ? "text-fg-subtle" : "text-fg-muted"}`}
-                  title={uncommitted ? "未提交" : `${l.commit_id}\n${l.author_name}`}
+                  className={`flex w-56 shrink-0 items-center gap-1.5 overflow-hidden border-r border-line px-2 ${newGroup ? "" : "opacity-0"} ${uncommitted ? "text-fg-subtle" : "text-fg-muted"}`}
+                  title={uncommitted ? "未提交" : `${l.commit_id}\n${l.author_name} · ${formatRelative(l.timestamp)}`}
                 >
-                  {newGroup && (
-                    uncommitted ? "· 未提交"
-                      : <><span className="text-accent">{l.short_id}</span> {l.author_name} · {formatRelative(l.timestamp)}</>
-                  )}
+                  {newGroup &&
+                    (uncommitted ? (
+                      <span>· 未提交</span>
+                    ) : (
+                      <>
+                        <span className="shrink-0 text-accent">{l.short_id}</span>
+                        <span className="min-w-0 flex-1 truncate">{l.author_name}</span>
+                        <span className="shrink-0 text-fg-subtle">{formatRelative(l.timestamp)}</span>
+                      </>
+                    ))}
                 </div>
                 <span className="w-10 shrink-0 select-none px-1.5 text-right text-fg-subtle">{l.line_no}</span>
                 <span className="flex-1 whitespace-pre pr-3 text-fg">{l.content || " "}</span>

@@ -7,7 +7,11 @@ import { CommitLines } from "../components/CommitLines";
 import { TagManager } from "../components/TagManager";
 import { ResetMenu } from "../components/ResetMenu";
 import { RebaseEditor } from "../components/RebaseEditor";
+import { ReflogPanel } from "../components/ReflogPanel";
+import { ComparePanel } from "../components/ComparePanel";
 import { CommitContextMenu } from "../components/CommitContextMenu";
+import { Button } from "../components/ui/Button";
+import { IconButton } from "../components/ui/IconButton";
 import { CommitFileList } from "../components/CommitFileList";
 import { CommitDetail } from "../components/CommitDetail";
 import { DiffView } from "../components/DiffView";
@@ -36,6 +40,8 @@ export function HistoryView({ repo }: { repo: string }) {
   const [searchInput, setSearchInput] = useState("");
   const [query, setQuery] = useState(""); // debounce 后的查询
   const [rebaseOpen, setRebaseOpen] = useState(false);
+  const [reflogOpen, setReflogOpen] = useState(false);
+  const [compareWith, setCompareWith] = useState<CommitDto | null>(null); // 比较模式的第二个提交
   const [menu, setMenu] = useState<{ commit: CommitDto; x: number; y: number } | null>(null);
   const qc = useQueryClient();
   const toast = useToast();
@@ -75,12 +81,24 @@ export function HistoryView({ repo }: { repo: string }) {
   const afterRebase = () => { setRebaseOpen(false); refresh(); };
 
   // 切仓库:重置分页、选择与搜索
-  useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); setSearchInput(""); setQuery(""); setRebaseOpen(false); setMenu(null); }, [repo]);
+  useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); setSearchInput(""); setQuery(""); setRebaseOpen(false); setCompareWith(null); setMenu(null); }, [repo]);
 
-  function selectCommit(c: CommitDto) {
+  // Cmd/Ctrl+点击第二个提交 → 进入比较模式;普通点击 → 单选并退出比较。
+  function selectCommit(c: CommitDto, opts?: { compare?: boolean }) {
+    if (opts?.compare && selected && selected.id !== c.id) {
+      setCompareWith(c);
+      return;
+    }
     setSelected(c);
     setSelectedFile(null);
+    setCompareWith(null);
   }
+
+  // 比较两端按时间定序:旧 = from,新 = to(diff 读作 旧→新)。
+  const comparing = !!(selected && compareWith);
+  const cmpOlderFirst = comparing && selected!.timestamp <= compareWith!.timestamp;
+  const cmpFrom = comparing ? (cmpOlderFirst ? selected! : compareWith!) : null;
+  const cmpTo = comparing ? (cmpOlderFirst ? compareWith! : selected!) : null;
 
   async function doCherryPick(commit: CommitDto) {
     setBusy(true);
@@ -133,6 +151,7 @@ export function HistoryView({ repo }: { repo: string }) {
         branch={branchQ.data ?? null}
         rows={rows}
         selectedId={selected?.id ?? null}
+        compareId={compareWith?.id ?? null}
         onSelect={selectCommit}
         onContext={(c, x, y) => setMenu({ commit: c, x, y })}
         onLoadMore={() => setLimit((l) => l + PAGE)}
@@ -145,35 +164,56 @@ export function HistoryView({ repo }: { repo: string }) {
         searching={searching}
         searchResults={searchQ.data ?? []}
         searchLoading={searchQ.isFetching}
+        onOpenReflog={() => setReflogOpen(true)}
       />
 
-      {/* 中间列:提交详情(上)+ 改动文件(下) */}
-      <MidColumn
-        commit={selected}
-        files={filesQ.data ?? []}
-        selectedFile={selectedFile}
-        onSelectFile={setSelectedFile}
-        onCherryPick={selected ? () => doCherryPick(selected) : undefined}
-        onRevert={selected ? () => doRevert(selected) : undefined}
-        onRebase={selIdx >= 0 ? () => setRebaseOpen(true) : undefined}
-        repo={repo}
-        tags={selectedTags}
-        onTagsChanged={() => invalidateHistory(qc, repo)}
-        onResetDone={() => {
-          invalidateHistory(qc, repo);
-          invalidateWorktree(qc, repo);
-          qc.invalidateQueries({ queryKey: qk.repoState(repo) });
-        }}
-        busy={busy}
-      />
+      {comparing && cmpFrom && cmpTo ? (
+        /* 比较模式:横幅 + 两提交的改动文件/diff(占据中+右区域) */
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex shrink-0 items-center gap-2 border-b border-line bg-accent/5 px-3 py-2 text-xs">
+            <span className="text-fg-muted">比较</span>
+            <span className="font-mono text-accent">{cmpFrom.short_id}</span>
+            <span className="truncate text-fg-subtle" title={cmpFrom.summary}>{cmpFrom.summary}</span>
+            <span className="shrink-0 text-fg-subtle">→</span>
+            <span className="font-mono text-accent">{cmpTo.short_id}</span>
+            <span className="truncate text-fg-subtle" title={cmpTo.summary}>{cmpTo.summary}</span>
+            <IconButton aria-label="退出比较" title="退出比较" onClick={() => setCompareWith(null)} className="ml-auto shrink-0">
+              <CloseIcon width={14} height={14} />
+            </IconButton>
+          </div>
+          <ComparePanel repo={repo} from={cmpFrom.id} to={cmpTo.id} />
+        </main>
+      ) : (
+        <>
+          {/* 中间列:提交详情(上)+ 改动文件(下) */}
+          <MidColumn
+            commit={selected}
+            files={filesQ.data ?? []}
+            selectedFile={selectedFile}
+            onSelectFile={setSelectedFile}
+            onCherryPick={selected ? () => doCherryPick(selected) : undefined}
+            onRevert={selected ? () => doRevert(selected) : undefined}
+            onRebase={selIdx >= 0 ? () => setRebaseOpen(true) : undefined}
+            repo={repo}
+            tags={selectedTags}
+            onTagsChanged={() => invalidateHistory(qc, repo)}
+            onResetDone={() => {
+              invalidateHistory(qc, repo);
+              invalidateWorktree(qc, repo);
+              qc.invalidateQueries({ queryKey: qk.repoState(repo) });
+            }}
+            busy={busy}
+          />
 
-      {/* Diff */}
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <ColumnHead>
-          {selectedFile ? <span className="font-mono normal-case tracking-normal text-fg">{selectedFile}</span> : "Diff"}
-        </ColumnHead>
-        <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!selectedFile} />
-      </main>
+          {/* Diff */}
+          <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            <ColumnHead>
+              {selectedFile ? <span className="font-mono normal-case tracking-normal text-fg">{selectedFile}</span> : "Diff"}
+            </ColumnHead>
+            <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!selectedFile} />
+          </main>
+        </>
+      )}
 
       {rebaseOpen && selected && rebaseCommits.length > 0 && (
         <RebaseEditor
@@ -183,6 +223,18 @@ export function HistoryView({ repo }: { repo: string }) {
           onClose={() => setRebaseOpen(false)}
           onConflict={afterRebase}
           onDone={afterRebase}
+        />
+      )}
+
+      {reflogOpen && (
+        <ReflogPanel
+          repo={repo}
+          onClose={() => setReflogOpen(false)}
+          onReset={() => {
+            invalidateHistory(qc, repo);
+            invalidateWorktree(qc, repo);
+            qc.invalidateQueries({ queryKey: qk.repoState(repo) });
+          }}
         />
       )}
 
@@ -197,6 +249,10 @@ export function HistoryView({ repo }: { repo: string }) {
           onRevert={() => doRevert(menu.commit)}
           onRebase={() => setRebaseOpen(true)}
           onChanged={refresh}
+          selectedShort={selected && selected.id !== menu.commit.id ? selected.short_id : undefined}
+          onCompareWithSelected={
+            selected && selected.id !== menu.commit.id ? () => setCompareWith(menu.commit) : undefined
+          }
         />
       )}
     </div>
@@ -205,13 +261,14 @@ export function HistoryView({ repo }: { repo: string }) {
 
 /** 图谱列(含可拖拽宽度 + 提交搜索)。搜索时切扁平匹配列表,清空回到图谱。 */
 function GraphColumn({
-  branch, rows, selectedId, onSelect, onContext, onLoadMore, loading, firstLoad, hasMore, error,
-  searchInput, onSearchChange, searching, searchResults, searchLoading,
+  branch, rows, selectedId, compareId, onSelect, onContext, onLoadMore, loading, firstLoad, hasMore, error,
+  searchInput, onSearchChange, searching, searchResults, searchLoading, onOpenReflog,
 }: {
   branch: string | null;
   rows: GraphRowDto[];
   selectedId: string | null;
-  onSelect: (c: CommitDto) => void;
+  compareId: string | null;
+  onSelect: (c: CommitDto, opts?: { compare?: boolean }) => void;
   onContext: (c: CommitDto, x: number, y: number) => void;
   onLoadMore: () => void;
   loading: boolean;
@@ -223,6 +280,7 @@ function GraphColumn({
   searching: boolean;
   searchResults: CommitDto[];
   searchLoading: boolean;
+  onOpenReflog: () => void;
 }) {
   const col = useResizableWidth("history.graphW", 320, 220, 640);
   return (
@@ -230,6 +288,15 @@ function GraphColumn({
       <div className="flex shrink-0 flex-col overflow-hidden" style={{ width: col.w }}>
         <ColumnHead icon={<BranchIcon width={13} height={13} />}>
           {branch ? <span className="font-mono normal-case tracking-normal text-fg">{branch}</span> : "提交历史"}
+          <Button
+            variant="secondary"
+            size="chip"
+            onClick={onOpenReflog}
+            title="查看 reflog(HEAD 移动历史 / 找回丢失提交)"
+            className="ml-auto normal-case tracking-normal"
+          >
+            Reflog
+          </Button>
         </ColumnHead>
         {/* 搜索框:按 message / 作者 / SHA 过滤 */}
         <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-2.5 py-1.5">
@@ -241,9 +308,9 @@ function GraphColumn({
             className="min-w-0 flex-1 bg-transparent text-xs text-fg placeholder:text-fg-subtle focus:outline-none"
           />
           {searchInput && (
-            <button onClick={() => onSearchChange("")} title="清除" className="shrink-0 text-fg-subtle hover:text-fg">
+            <IconButton aria-label="清除搜索" onClick={() => onSearchChange("")} title="清除" className="shrink-0">
               <CloseIcon width={12} height={12} />
-            </button>
+            </IconButton>
           )}
         </div>
         {error && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{error}</p>}
@@ -253,6 +320,7 @@ function GraphColumn({
           <CommitGraph
             rows={rows}
             selectedId={selectedId}
+            compareId={compareId}
             onSelect={onSelect}
             onContext={onContext}
             onLoadMore={onLoadMore}
@@ -334,36 +402,42 @@ function MidColumn({
           <span>提交详情</span>
           {commit && (
             <div className="ml-auto flex items-center gap-1">
-              <ResetMenu repo={repo} commit={commit} onDone={onResetDone} />
+              <ResetMenu repo={repo} commitId={commit.id} label={commit.short_id} onDone={onResetDone} />
               {onCherryPick && (
-                <button
+                <Button
+                  variant="secondary"
+                  size="chip"
                   onClick={onCherryPick}
                   disabled={busy}
                   title="把此提交拣选(cherry-pick)到当前分支"
-                  className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-40"
+                  className="normal-case tracking-normal"
                 >
                   Cherry-pick
-                </button>
+                </Button>
               )}
               {onRevert && (
-                <button
+                <Button
+                  variant="secondary"
+                  size="chip"
                   onClick={onRevert}
                   disabled={busy}
                   title="回滚此提交(生成一个抵消其改动的新提交)"
-                  className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-40"
+                  className="normal-case tracking-normal"
                 >
                   Revert
-                </button>
+                </Button>
               )}
               {onRebase && (
-                <button
+                <Button
+                  variant="secondary"
+                  size="chip"
                   onClick={onRebase}
                   disabled={busy}
                   title="从此提交开始交互式变基(改写历史:reorder/squash/reword/drop)"
-                  className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-40"
+                  className="normal-case tracking-normal"
                 >
                   变基
-                </button>
+                </Button>
               )}
             </div>
           )}

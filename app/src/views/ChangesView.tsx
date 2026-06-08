@@ -12,6 +12,7 @@ import { ConflictEditor } from "../components/ConflictEditor";
 import { ConflictBanner } from "../components/ConflictBanner";
 import { Resizer, useResizableWidth } from "../components/Resizer";
 import { useToast } from "../components/Toast";
+import { Button } from "../components/ui/Button";
 
 /** 工作区状态 → 颜色 + 单字母徽章 + 中文名(tooltip) */
 const STATE_STYLE: Record<string, { letter: string; cls: string; label: string }> = {
@@ -208,13 +209,14 @@ export function ChangesView({ repo }: { repo: string }) {
       <div className="flex shrink-0 flex-col overflow-hidden" style={{ width: listCol.w }}>
         {/* 工具栏 */}
         <div className="flex shrink-0 items-center gap-3 border-b border-line px-3 py-1.5">
-          <button
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => qc.invalidateQueries({ queryKey: qk.status(repo) })}
             disabled={busy || statusQ.isFetching}
-            className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-elevated hover:text-fg disabled:opacity-40"
           >
             <RefreshIcon width={13} height={13} className={busy || statusQ.isFetching ? "animate-spin" : ""} /> 刷新
-          </button>
+          </Button>
         </div>
 
         {/* 文件区(滚动) */}
@@ -275,13 +277,9 @@ export function ChangesView({ repo }: { repo: string }) {
               />
               修订上次提交
             </label>
-            <button
-              className="flex items-center gap-1.5 rounded-md bg-done px-3.5 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-              disabled={!canCommit}
-              onClick={doCommit}
-            >
+            <Button variant="commit" size="md" disabled={!canCommit} onClick={doCommit}>
               <CheckIcon width={14} height={14} /> {amend ? "修订提交" : "提交"}
-            </button>
+            </Button>
           </div>
         </div>
       </div>
