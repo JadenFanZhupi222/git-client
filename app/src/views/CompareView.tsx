@@ -1,10 +1,7 @@
 import { useEffect, useState } from "react";
-import { useRefs, useCurrentBranch, useCompareFiles, useCompareDiff } from "../lib/queries";
-import { CommitFileList } from "../components/CommitFileList";
-import { DiffView } from "../components/DiffView";
-import { Resizer, useResizableWidth } from "../components/Resizer";
+import { useRefs, useCurrentBranch, useCompareFiles } from "../lib/queries";
+import { ComparePanel } from "../components/ComparePanel";
 import { BranchIcon } from "../components/icons";
-import type { IpcError } from "../ipc";
 
 /** 比较两个 revision(分支/标签/提交)的改动:from → to。
  *  顶部两个分支选择器,左列改动文件,右侧行级 diff。 */
@@ -18,7 +15,6 @@ export function CompareView({ repo }: { repo: string }) {
 
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  const [file, setFile] = useState<string | null>(null);
 
   // 默认两端都设为当前分支(用户改 from 即可看与某分支的差异)
   useEffect(() => {
@@ -29,15 +25,11 @@ export function CompareView({ repo }: { repo: string }) {
     }
   }, [curQ.data]);
   // 切仓库重置
-  useEffect(() => { setFrom(""); setTo(""); setFile(null); }, [repo]);
+  useEffect(() => { setFrom(""); setTo(""); }, [repo]);
 
-  const filesQ = useCompareFiles(repo, from, to);
-  const diffQ = useCompareDiff(repo, from, to, file);
-  const files = filesQ.data ?? [];
+  // 计数仅用于工具栏文案;与 ComparePanel 同 key,React Query 复用缓存不重复请求。
+  const files = useCompareFiles(repo, from, to).data ?? [];
   const same = !!from && from === to;
-  const err = (filesQ.error as IpcError | null)?.message ?? (diffQ.error as IpcError | null)?.message ?? null;
-
-  const col = useResizableWidth("compare.filesW", 288, 200, 640);
 
   const pick = "rounded border border-line-strong bg-canvas px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none";
   const Selector = ({ value, onChange, label }: { value: string; onChange: (v: string) => void; label: string }) => (
@@ -63,28 +55,7 @@ export function CompareView({ repo }: { repo: string }) {
         </span>
       </div>
 
-      {err && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{err}</p>}
-
-      {/* 文件列表 + diff */}
-      <div className="flex min-h-0 flex-1">
-        <div className="flex shrink-0 flex-col overflow-hidden border-r border-line" style={{ width: col.w }}>
-          <div className="min-h-0 flex-1 overflow-hidden">
-            {same ? (
-              <div className="p-3 text-xs text-fg-subtle">两端相同,无差异</div>
-            ) : filesQ.isLoading ? (
-              <div className="p-3 text-xs text-fg-subtle">加载中…</div>
-            ) : files.length === 0 ? (
-              <div className="p-3 text-xs text-fg-subtle">无改动</div>
-            ) : (
-              <CommitFileList files={files} selected={file} onSelect={setFile} />
-            )}
-          </div>
-        </div>
-        <Resizer onDown={col.onDown} />
-        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!file} />
-        </main>
-      </div>
+      <ComparePanel repo={repo} from={from} to={to} />
     </div>
   );
 }

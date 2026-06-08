@@ -7,6 +7,7 @@ import { Button } from "./ui/Button";
  *  reset/tag/复制 SHA 自包含。onChanged 让上层失效历史/工作区/状态。 */
 export function CommitContextMenu({
   repo, commit, x, y, onClose, onCherryPick, onRevert, onRebase, onChanged,
+  selectedShort, onCompareWithSelected,
 }: {
   repo: string;
   commit: CommitDto;
@@ -17,6 +18,9 @@ export function CommitContextMenu({
   onRevert: () => void;
   onRebase: () => void;
   onChanged: () => void;
+  /** 已选中的另一提交短 SHA(用于「与选中提交比较」文案);无则不显示该项。 */
+  selectedShort?: string;
+  onCompareWithSelected?: () => void;
 }) {
   const toast = useToast();
   const [view, setView] = useState<"main" | "reset" | "resetHard" | "tag">("main");
@@ -89,6 +93,11 @@ export function CommitContextMenu({
             <button className={item} onClick={() => { onClose(); onCherryPick(); }}>Cherry-pick 到当前分支</button>
             <button className={item} onClick={() => { onClose(); onRevert(); }}>Revert 此提交</button>
             <button className={item} onClick={() => { onClose(); onRebase(); }}>从此交互式变基</button>
+            {onCompareWithSelected && (
+              <button className={item} onClick={() => { onClose(); onCompareWithSelected(); }}>
+                与选中提交 {selectedShort} 比较
+              </button>
+            )}
             <button className={item} onClick={() => setView("reset")}>Reset 到此 ▸</button>
             <button className={item} onClick={() => setView("tag")}>打标签…</button>
             <div className="my-1 border-t border-line" />

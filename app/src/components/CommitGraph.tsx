@@ -42,11 +42,14 @@ function RefBadges({ refs }: { refs: RefDto[] }) {
 }
 
 export function CommitGraph({
-  rows, selectedId, onSelect, onContext, onLoadMore, loading, hasMore,
+  rows, selectedId, compareId, onSelect, onContext, onLoadMore, loading, hasMore,
 }: {
   rows: GraphRowDto[];
   selectedId: string | null;
-  onSelect: (c: CommitDto) => void;
+  /** 比较模式下的第二个提交(对比目标),与 selectedId 一起高亮。 */
+  compareId?: string | null;
+  /** opts.compare=true 表示按下了 Cmd/Ctrl(请求与已选提交比较)。 */
+  onSelect: (c: CommitDto, opts?: { compare?: boolean }) => void;
   onContext?: (c: CommitDto, x: number, y: number) => void;
   onLoadMore: () => void;
   loading: boolean;
@@ -97,6 +100,7 @@ export function CommitGraph({
     <div className="fade-in overflow-y-auto">
       {rows.map((r) => {
         const on = selectedId === r.commit.id;
+        const cmp = !on && compareId === r.commit.id;
         const isHead = r.refs.some((x) => x.kind === "head");
         // 同步状态:未 push=绿 / 未 pull=蓝(与状态栏 SyncBadge 的 ↑绿↓蓝 一致)。
         const syncColor =
@@ -110,11 +114,13 @@ export function CommitGraph({
         return (
           <div
             key={r.commit.id}
-            onClick={() => onSelect(r.commit)}
+            onClick={(e) => onSelect(r.commit, { compare: e.metaKey || e.ctrlKey })}
             onContextMenu={(e) => { if (onContext) { e.preventDefault(); onSelect(r.commit); onContext(r.commit, e.clientX, e.clientY); } }}
             title={syncTip}
             className={`flex cursor-pointer items-stretch border-l-2 transition-colors ${
-              on ? "border-accent-emphasis bg-overlay" : "border-transparent hover:bg-elevated"
+              on ? "border-accent-emphasis bg-overlay"
+              : cmp ? "border-accent bg-accent/10"
+              : "border-transparent hover:bg-elevated"
             }`}
             style={{ height: ROW_H }}
           >
