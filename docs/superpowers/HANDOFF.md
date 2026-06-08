@@ -21,8 +21,10 @@
     点击也聚焦,聚焦面板显 accent inset 环,j/k 作用于聚焦面板;文件列表选中自动滚进可视区。
   - ✅ **M3.3 模糊跳转(分支)**(已合 main):命令面板「跳转」子模式——统一 Entry 抽象 + 通用 `rankBy<T>`;
     首个 provider「跳转到分支…」模糊找本地分支→checkout(标「当前」、不重复切);Esc/空输入 Backspace 返回命令模式。
-  - 待做:M3.2 续(ChangesView 文件列表键盘导航,需空格 stage 等额外键)、M3.3 续(跳转到提交/文件,
-    提交跳转需跨视图选中——考虑把选中状态上提或用事件)、M3.4 拖拽。
+  - ✅ **M3.4 拖拽(rebase 重排)**(已合 main):RebaseEditor 提交列表拖拽重排——GripIcon 手柄 +
+    拖动变淡 + 目标行顶端 accent 插入线;纯函数 `moveItem<T>`(lib/listNav.ts,5 vitest),▲▼ 按钮也复用它。
+  - **M3 主体完成**(命令面板 / j・k 导航 + 聚焦面板 / ⌘K 跳转分支 / rebase 拖拽)。零散续做:
+    ChangesView 文件列表键盘化(需空格 stage)、跳转到提交/文件(需跨视图选中)、拖提交到分支(意图消歧)。
 
 ## 已完成(本里程碑 M2「Fearless」)
 
