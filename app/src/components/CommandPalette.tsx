@@ -16,13 +16,22 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
 
-  // 只展示当前可用的命令:不可用项(如未开仓库时的 Fetch)直接不进列表,
-  // 既不占键盘可选位、也不显示为灰条噪音。
-  const results = useMemo(() => rankCommands(commands.filter((c) => !c.disabled), query), [commands, query]);
+  // 不可用命令仍然展示(灰条,利于发现),但不参与键盘选中。
+  const results = useMemo(() => rankCommands(commands, query), [commands, query]);
 
-  // query 变化 → 高亮回到第一项(避免停在越界下标)
+  // 从 from 出发沿 dir(±1)找下一个「可用」项的下标;到边界则停在原地(返回 -1 表示没有可用项)。
+  function step(from: number, dir: 1 | -1): number {
+    for (let i = from + dir; i >= 0 && i < results.length; i += dir) {
+      if (!results[i].cmd.disabled) return i;
+    }
+    return from >= 0 && from < results.length && !results[from]?.cmd.disabled ? from : -1;
+  }
+  const firstEnabled = () => results.findIndex((r) => !r.cmd.disabled);
+
+  // query 变化 → 高亮落到第一个可用项(可能不是第 0 行,因为前面可能是灰条)
   useEffect(() => {
-    setActive(0);
+    setActive(firstEnabled());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
   // 高亮项滚动进可视区
@@ -40,10 +49,10 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActive((a) => Math.min(a + 1, results.length - 1));
+      setActive((a) => step(a, 1)); // 跳过灰条,落到下一个可用项
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActive((a) => Math.max(a - 1, 0));
+      setActive((a) => step(a, -1));
     } else if (e.key === "Enter") {
       e.preventDefault();
       activate(active);
@@ -79,7 +88,10 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
           {results.length === 0 ? (
             <li className="px-3 py-6 text-center text-xs text-fg-subtle">无匹配命令</li>
           ) : (
-            results.map((r, i) => <Row key={r.cmd.id} r={r} idx={i} active={i === active} onActivate={() => activate(i)} onHover={() => setActive(i)} />)
+            results.map((r, i) => (
+              // 灰条(disabled)不参与 hover 高亮:鼠标移上去不抢选中
+              <Row key={r.cmd.id} r={r} idx={i} active={i === active} onActivate={() => activate(i)} onHover={() => !r.cmd.disabled && setActive(i)} />
+            ))
           )}
         </ul>
       </div>
