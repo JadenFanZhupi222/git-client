@@ -13,7 +13,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 pub mod graph;
+pub mod repo_context;
 pub mod watcher;
+
+pub use repo_context::{RepoContext, RepoRegistry};
 
 /// 仓库服务。生产版本里它会演化成第 4 部分讲的 RepoActor(独占状态 + 消息驱动)。
 /// 阶段 0 先用最简单的形式跑通分层。

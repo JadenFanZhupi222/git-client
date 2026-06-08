@@ -1,4 +1,4 @@
-use app_service::RepoService;
+use app_service::RepoRegistry;
 use app_service::watcher::{ChangeKind, RepoWatcher};
 use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组合
 use ipc_types::{
@@ -55,28 +55,6 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
     }
 }
 
-/// 命令层:极薄。只做"接参数 → 丢阻塞线程池调 service → 返回"。
-///
-/// 关键铁律:git2 是同步阻塞的,绝不能在 async 命令里直接调,
-/// 否则卡死整个 tokio 运行时、UI 冻结。一律 spawn_blocking。
-#[tauri::command]
-async fn get_head_commit(repo_path: String) -> Result<CommitDto, IpcError> {
-    let result = tokio::task::spawn_blocking(move || {
-        // 在阻塞线程里:注入真实后端,执行用例
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.head_commit(&PathBuf::from(repo_path))
-    })
-    .await
-    // spawn_blocking 自身失败(线程 panic 等)→ 也转成可识别的错误,绝不让进程崩
-    .map_err(|join_err| IpcError {
-        code: "TASK_PANIC".into(),
-        message: format!("后台任务异常: {join_err}"),
-        recoverable: true,
-    })?;
-
-    result.map_err(to_ipc)
-}
-
 /// spawn_blocking 自身失败(线程 panic)→ 统一转可识别错误,绝不让进程崩。
 fn join_panic(e: tokio::task::JoinError) -> IpcError {
     IpcError {
@@ -86,210 +64,244 @@ fn join_panic(e: tokio::task::JoinError) -> IpcError {
     }
 }
 
+/// 命令层:极薄。只做"取长驻上下文 → 丢阻塞线程池调它 → 返回"。
+///
+/// 关键铁律:
+/// - git2 是同步阻塞的,绝不能在 async 命令里直接调,一律 spawn_blocking。
+/// - 仓库上下文从 `RepoRegistry`(Tauri State)取,不再每次 `RepoService::new` +
+///   重建后端。`registry.context()` 只在查表那一瞬持锁,返回的 `Arc<RepoContext>`
+///   move 进阻塞线程后才跑 git,绝不持锁做阻塞操作。
 #[tauri::command]
-async fn get_status(repo_path: String) -> Result<StatusDto, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.status(&PathBuf::from(repo_path))
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn get_head_commit(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<CommitDto, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.head_commit())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn stage_file(repo_path: String, file_path: String) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.stage(&PathBuf::from(repo_path), &PathBuf::from(file_path))
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn get_status(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<StatusDto, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.status())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn unstage_file(repo_path: String, file_path: String) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.unstage(&PathBuf::from(repo_path), &PathBuf::from(file_path))
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn stage_file(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    file_path: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.stage(&PathBuf::from(file_path)))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn stage_hunk(repo_path: String, file: String, hunk_index: usize) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.stage_hunk(&PathBuf::from(repo_path), &file, hunk_index)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn unstage_file(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    file_path: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.unstage(&PathBuf::from(file_path)))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn stage_hunk(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    file: String,
+    hunk_index: usize,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.stage_hunk(&file, hunk_index))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
 async fn stage_lines(
+    registry: tauri::State<'_, RepoRegistry>,
     repo_path: String,
     file: String,
     hunk_index: usize,
     lines: Vec<usize>,
 ) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.stage_lines(&PathBuf::from(repo_path), &file, hunk_index, &lines)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.stage_lines(&file, hunk_index, &lines))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn unstage_hunk(repo_path: String, file: String, hunk_index: usize) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.unstage_hunk(&PathBuf::from(repo_path), &file, hunk_index)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn unstage_hunk(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    file: String,
+    hunk_index: usize,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.unstage_hunk(&file, hunk_index))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn commit(repo_path: String, message: String) -> Result<String, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.commit(&PathBuf::from(repo_path), &message)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn commit(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    message: String,
+) -> Result<String, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.commit(&message))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn amend_commit(repo_path: String, message: Option<String>) -> Result<String, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.amend_commit(&PathBuf::from(repo_path), message.as_deref())
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn amend_commit(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    message: Option<String>,
+) -> Result<String, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.amend_commit(message.as_deref()))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn get_log(repo_path: String, limit: usize, skip: usize) -> Result<Vec<CommitDto>, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.log(&PathBuf::from(repo_path), limit, skip)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn get_log(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    limit: usize,
+    skip: usize,
+) -> Result<Vec<CommitDto>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.log(limit, skip))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
 async fn get_commit_files(
+    registry: tauri::State<'_, RepoRegistry>,
     repo_path: String,
     commit_id: String,
 ) -> Result<Vec<FileChangeDto>, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.commit_files(&PathBuf::from(repo_path), &commit_id)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.commit_files(&commit_id))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
 async fn get_commit_file_diff(
+    registry: tauri::State<'_, RepoRegistry>,
     repo_path: String,
     commit_id: String,
     file: String,
 ) -> Result<FileDiffDto, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.commit_file_diff(&PathBuf::from(repo_path), &commit_id, &file)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.commit_file_diff(&commit_id, &file))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
 async fn compare_files(
+    registry: tauri::State<'_, RepoRegistry>,
     repo_path: String,
     from: String,
     to: String,
 ) -> Result<Vec<FileChangeDto>, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.compare_files(&PathBuf::from(repo_path), &from, &to)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.compare_files(&from, &to))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
 async fn compare_file_diff(
+    registry: tauri::State<'_, RepoRegistry>,
     repo_path: String,
     from: String,
     to: String,
     file: String,
 ) -> Result<FileDiffDto, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.compare_file_diff(&PathBuf::from(repo_path), &from, &to, &file)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.compare_file_diff(&from, &to, &file))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
 async fn get_working_diff(
+    registry: tauri::State<'_, RepoRegistry>,
     repo_path: String,
     file: String,
     staged: bool,
 ) -> Result<FileDiffDto, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.working_diff(&PathBuf::from(repo_path), &file, staged)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.working_diff(&file, staged))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn get_commit_graph(repo_path: String, limit: usize) -> Result<Vec<GraphRowDto>, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.commit_graph(&PathBuf::from(repo_path), limit)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn get_commit_graph(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    limit: usize,
+) -> Result<Vec<GraphRowDto>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.commit_graph(limit))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
 async fn search_commits(
-    state: tauri::State<'_, SearchGen>,
+    registry: tauri::State<'_, RepoRegistry>,
+    gen_state: tauri::State<'_, SearchGen>,
     repo_path: String,
     query: String,
     limit: usize,
 ) -> Result<Vec<CommitDto>, IpcError> {
     // 领号:本次搜索的代次。后来的搜索 fetch_add 会推进全局号,使本次的闭包失效。
-    let generation = state.0.clone();
+    let generation = gen_state.0.clone();
     let mine = generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let ctx = registry.context(&PathBuf::from(repo_path));
     tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
         let cancelled = || generation.load(Ordering::SeqCst) != mine;
-        service.search_commits(&PathBuf::from(repo_path), &query, limit, &cancelled)
+        ctx.search_commits(&query, limit, &cancelled)
     })
     .await
     .map_err(join_panic)?
@@ -297,270 +309,298 @@ async fn search_commits(
 }
 
 #[tauri::command]
-async fn get_reflog(repo_path: String, limit: usize) -> Result<Vec<ReflogEntryDto>, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.reflog(&PathBuf::from(repo_path), limit)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn get_reflog(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    limit: usize,
+) -> Result<Vec<ReflogEntryDto>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.reflog(limit))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn get_current_branch(repo_path: String) -> Result<Option<String>, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.current_branch(&PathBuf::from(repo_path))
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn get_current_branch(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<Option<String>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.current_branch())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn list_branches(repo_path: String) -> Result<Vec<BranchDto>, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.branches(&PathBuf::from(repo_path))
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn list_branches(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<Vec<BranchDto>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.branches())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn get_ahead_behind(repo_path: String) -> Result<Option<AheadBehindDto>, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.ahead_behind(&PathBuf::from(repo_path))
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn get_ahead_behind(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<Option<AheadBehindDto>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.ahead_behind())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn get_remotes(repo_path: String) -> Result<Vec<String>, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.remotes(&PathBuf::from(repo_path))
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn get_remotes(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<Vec<String>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.remotes())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn list_refs(repo_path: String) -> Result<Vec<RefDto>, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.refs(&PathBuf::from(repo_path))
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn list_refs(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<Vec<RefDto>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.refs())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn set_upstream(repo_path: String, upstream: String) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.set_upstream(&PathBuf::from(repo_path), &upstream)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn set_upstream(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    upstream: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.set_upstream(&upstream))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn checkout_branch(repo_path: String, name: String) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.checkout_branch(&PathBuf::from(repo_path), &name)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn checkout_branch(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    name: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.checkout_branch(&name))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn create_branch(repo_path: String, name: String, checkout: bool) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.create_branch(&PathBuf::from(repo_path), &name, checkout)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn create_branch(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    name: String,
+    checkout: bool,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.create_branch(&name, checkout))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn delete_branch(repo_path: String, name: String) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.delete_branch(&PathBuf::from(repo_path), &name)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn delete_branch(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    name: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.delete_branch(&name))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn fetch(repo_path: String, remote: Option<String>) -> Result<FetchResultDto, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.fetch(&PathBuf::from(repo_path), remote.as_deref())
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn fetch(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    remote: Option<String>,
+) -> Result<FetchResultDto, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.fetch(remote.as_deref()))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
 async fn pull(
+    registry: tauri::State<'_, RepoRegistry>,
     repo_path: String,
     remote: Option<String>,
     rebase: bool,
 ) -> Result<PullResultDto, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.pull(&PathBuf::from(repo_path), remote.as_deref(), rebase)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.pull(remote.as_deref(), rebase))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn push(repo_path: String, remote: Option<String>) -> Result<PushResultDto, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.push(&PathBuf::from(repo_path), remote.as_deref())
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn push(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    remote: Option<String>,
+) -> Result<PushResultDto, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.push(remote.as_deref()))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn get_repo_state(repo_path: String) -> Result<String, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.repo_state(&PathBuf::from(repo_path))
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn get_repo_state(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<String, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.repo_state())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn resolve_ours(repo_path: String, file: String) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.resolve_ours(&PathBuf::from(repo_path), &file)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn resolve_ours(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    file: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.resolve_ours(&file))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn resolve_theirs(repo_path: String, file: String) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.resolve_theirs(&PathBuf::from(repo_path), &file)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn resolve_theirs(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    file: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.resolve_theirs(&file))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn continue_op(repo_path: String) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.continue_op(&PathBuf::from(repo_path))
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn continue_op(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.continue_op())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn abort_op(repo_path: String) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.abort_op(&PathBuf::from(repo_path))
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn abort_op(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.abort_op())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn blame(repo_path: String, file: String) -> Result<Vec<BlameLineDto>, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.blame(&PathBuf::from(repo_path), &file)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn blame(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    file: String,
+) -> Result<Vec<BlameLineDto>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.blame(&file))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn cherry_pick(repo_path: String, commit_id: String) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.cherry_pick(&PathBuf::from(repo_path), &commit_id)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn cherry_pick(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    commit_id: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.cherry_pick(&commit_id))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn revert(repo_path: String, commit_id: String) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.revert(&PathBuf::from(repo_path), &commit_id)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn revert(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    commit_id: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.revert(&commit_id))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
 async fn create_tag(
+    registry: tauri::State<'_, RepoRegistry>,
     repo_path: String,
     name: String,
     commit_id: String,
     message: Option<String>,
 ) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.create_tag(
-            &PathBuf::from(repo_path),
-            &name,
-            &commit_id,
-            message.as_deref(),
-        )
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.create_tag(&name, &commit_id, message.as_deref()))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn delete_tag(repo_path: String, name: String) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.delete_tag(&PathBuf::from(repo_path), &name)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn delete_tag(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    name: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.delete_tag(&name))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 /// 交互式 rebase 的单步入参(前端传来的 JSON)。
@@ -573,6 +613,7 @@ struct RebaseStepInput {
 
 #[tauri::command]
 async fn interactive_rebase(
+    registry: tauri::State<'_, RepoRegistry>,
     repo_path: String,
     base: Option<String>,
     steps: Vec<RebaseStepInput>,
@@ -594,17 +635,20 @@ async fn interactive_rebase(
         };
         domain.push(RebaseStep { sha: s.sha, action });
     }
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.interactive_rebase(&PathBuf::from(repo_path), base.as_deref(), &domain)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.interactive_rebase(base.as_deref(), &domain))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn reset(repo_path: String, commit_id: String, mode: String) -> Result<(), IpcError> {
+async fn reset(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    commit_id: String,
+    mode: String,
+) -> Result<(), IpcError> {
     use git_core::model::ResetMode;
     let mode = match mode.as_str() {
         "soft" => ResetMode::Soft,
@@ -616,18 +660,22 @@ async fn reset(repo_path: String, commit_id: String, mode: String) -> Result<(),
             ))));
         }
     };
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.reset(&PathBuf::from(repo_path), &commit_id, mode)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.reset(&commit_id, mode))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 /// 写入冲突解决后的内容并标记已解决(写文件 + git add)。防目录穿越。
 #[tauri::command]
-async fn write_resolved(repo_path: String, file: String, content: String) -> Result<(), IpcError> {
+async fn write_resolved(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    file: String,
+    content: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(&repo_path));
     tokio::task::spawn_blocking(move || -> Result<(), IpcError> {
         let write_err = |m: String| IpcError {
             code: "WRITE_FILE".into(),
@@ -645,10 +693,7 @@ async fn write_resolved(repo_path: String, file: String, content: String) -> Res
         }
         std::fs::write(&target_c, content).map_err(|e| write_err(e.to_string()))?;
         // 写完即 git add 标记已解决
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service
-            .stage(&repo, std::path::Path::new(&file))
-            .map_err(to_ipc)
+        ctx.stage(std::path::Path::new(&file)).map_err(to_ipc)
     })
     .await
     .map_err(join_panic)?
@@ -656,14 +701,16 @@ async fn write_resolved(repo_path: String, file: String, content: String) -> Res
 
 /// 读冲突文件三方内容(base/ours/theirs)供三栏合并编辑器渲染。
 #[tauri::command]
-async fn conflict_sides(repo_path: String, file: String) -> Result<ConflictSidesDto, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.conflict_sides(&PathBuf::from(repo_path), &file)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn conflict_sides(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    file: String,
+) -> Result<ConflictSidesDto, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.conflict_sides(&file))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 /// 读工作区某文件原文(用于冲突文件只读展示)。不经 git,直接 fs;防目录穿越。
@@ -689,58 +736,67 @@ async fn read_working_file(repo_path: String, file: String) -> Result<String, Ip
 }
 
 #[tauri::command]
-async fn stash_list(repo_path: String) -> Result<Vec<StashDto>, IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.stash_list(&PathBuf::from(repo_path))
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn stash_list(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<Vec<StashDto>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.stash_list())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn stash_save(repo_path: String, message: Option<String>) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.stash_save(&PathBuf::from(repo_path), message.as_deref())
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn stash_save(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    message: Option<String>,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.stash_save(message.as_deref()))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn stash_apply(repo_path: String, index: usize) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.stash_apply(&PathBuf::from(repo_path), index)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn stash_apply(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    index: usize,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.stash_apply(index))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn stash_pop(repo_path: String, index: usize) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.stash_pop(&PathBuf::from(repo_path), index)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn stash_pop(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    index: usize,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.stash_pop(index))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 #[tauri::command]
-async fn stash_drop(repo_path: String, index: usize) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || {
-        let service = RepoService::new(Arc::new(CompositeBackend::default()));
-        service.stash_drop(&PathBuf::from(repo_path), index)
-    })
-    .await
-    .map_err(join_panic)?
-    .map_err(to_ipc)
+async fn stash_drop(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    index: usize,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.stash_drop(index))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
 }
 
 /// 开始监听某仓库的文件变化。变化经 debounce + 分类后,
@@ -776,9 +832,12 @@ fn watch_repo(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 整个应用一个共享后端,启动时建一次;按仓库路由的长驻上下文由 RepoRegistry 管理。
+    let registry = RepoRegistry::new(Arc::new(CompositeBackend::default()));
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init()) // 选目录对话框用
+        .manage(registry)
         .manage(WatcherState::default())
         .manage(SearchGen::default())
         .invoke_handler(tauri::generate_handler![
