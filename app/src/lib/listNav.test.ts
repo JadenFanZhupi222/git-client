@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { navTarget } from "./listNav";
+import { navTarget, moveItem } from "./listNav";
 
 // 列表键盘导航纯逻辑回归。锁:方向键映射、边界停住、未选中先落 0、非导航键返回 null。
 
@@ -43,5 +43,30 @@ describe("navTarget", () => {
 
   it("空列表返回 null", () => {
     expect(navTarget("j", -1, 0)).toBeNull();
+  });
+});
+
+describe("moveItem", () => {
+  it("向下移动:1 → 3", () => {
+    expect(moveItem(["a", "b", "c", "d"], 1, 3)).toEqual(["a", "c", "d", "b"]);
+  });
+
+  it("向上移动:3 → 1", () => {
+    expect(moveItem(["a", "b", "c", "d"], 3, 1)).toEqual(["a", "d", "b", "c"]);
+  });
+
+  it("相邻交换:2 → 1", () => {
+    expect(moveItem(["a", "b", "c"], 2, 1)).toEqual(["a", "c", "b"]);
+  });
+
+  it("原地不动返回同一引用", () => {
+    const arr = ["a", "b", "c"];
+    expect(moveItem(arr, 1, 1)).toBe(arr);
+  });
+
+  it("越界返回同一引用", () => {
+    const arr = ["a", "b"];
+    expect(moveItem(arr, 0, 5)).toBe(arr);
+    expect(moveItem(arr, -1, 0)).toBe(arr);
   });
 });

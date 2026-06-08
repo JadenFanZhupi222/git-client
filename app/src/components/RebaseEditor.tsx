@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { interactiveRebase, type CommitDto, type RebaseActionKind, type RebaseStepInput, type IpcError } from "../ipc";
+import { moveItem } from "../lib/listNav";
 import { useToast } from "./Toast";
 import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
-import { CloseIcon } from "./icons";
+import { CloseIcon, GripIcon } from "./icons";
 
 type Row = { sha: string; short: string; summary: string; action: RebaseActionKind; message: string };
 
@@ -31,15 +32,18 @@ export function RebaseEditor({
     commits.map((c) => ({ sha: c.id, short: c.short_id, summary: c.summary, action: "pick", message: c.summary })),
   );
   const [busy, setBusy] = useState(false);
+  const [dragIndex, setDragIndex] = useState<number | null>(null); // 正在拖的行
+  const [overIndex, setOverIndex] = useState<number | null>(null); // 拖到哪一行上方
 
   function move(i: number, dir: -1 | 1) {
-    const j = i + dir;
-    if (j < 0 || j >= rows.length) return;
-    setRows((rs) => {
-      const next = [...rs];
-      [next[i], next[j]] = [next[j], next[i]];
-      return next;
-    });
+    setRows((rs) => moveItem(rs, i, i + dir));
+  }
+
+  // 拖放重排:把 dragIndex 行移动到 targetIndex 处。
+  function drop(targetIndex: number) {
+    if (dragIndex !== null) setRows((rs) => moveItem(rs, dragIndex, targetIndex));
+    setDragIndex(null);
+    setOverIndex(null);
   }
   function setAction(i: number, action: RebaseActionKind) {
     setRows((rs) => rs.map((r, k) => (k === i ? { ...r, action } : r)));
@@ -94,8 +98,26 @@ export function RebaseEditor({
 
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
           {rows.map((r, i) => (
-            <div key={r.sha} className="rounded px-2 py-1.5 hover:bg-elevated">
+            <div
+              key={r.sha}
+              onDragOver={(e) => { e.preventDefault(); if (dragIndex !== null) setOverIndex(i); }}
+              onDrop={(e) => { e.preventDefault(); drop(i); }}
+              // 拖动中的行变淡;拖到某行上方时该行顶端显示 accent 插入线(透明边占位,不抖动)
+              className={`rounded border-t-2 px-2 py-1.5 transition-colors ${dragIndex === i ? "opacity-40" : "hover:bg-elevated"} ${
+                overIndex === i && dragIndex !== null && dragIndex !== i ? "border-accent" : "border-transparent"
+              }`}
+            >
               <div className="flex items-center gap-2">
+                {/* 拖拽手柄:从这里按下可拖动整行重排 */}
+                <span
+                  draggable
+                  onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(i)); setDragIndex(i); }}
+                  onDragEnd={() => { setDragIndex(null); setOverIndex(null); }}
+                  title="拖动重排"
+                  className="shrink-0 cursor-grab text-fg-subtle hover:text-fg active:cursor-grabbing"
+                >
+                  <GripIcon width={14} height={14} />
+                </span>
                 <div className="flex shrink-0 flex-col">
                   <button onClick={() => move(i, -1)} disabled={i === 0} className="leading-none text-fg-subtle hover:text-fg disabled:opacity-30">▲</button>
                   <button onClick={() => move(i, 1)} disabled={i === rows.length - 1} className="leading-none text-fg-subtle hover:text-fg disabled:opacity-30">▼</button>

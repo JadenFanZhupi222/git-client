@@ -171,3 +171,15 @@ export const TrashIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M2.5 4h11M6 4V2.5h4V4M5 4l.5 9a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1L11 4" />
   </svg>
 );
+
+// 拖拽手柄:两列六点(drag-handle / grip),提示「可拖动」。
+export const GripIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p} strokeWidth={0} fill="currentColor">
+    <circle cx="6" cy="4" r="1.1" />
+    <circle cx="10" cy="4" r="1.1" />
+    <circle cx="6" cy="8" r="1.1" />
+    <circle cx="10" cy="8" r="1.1" />
+    <circle cx="6" cy="12" r="1.1" />
+    <circle cx="10" cy="12" r="1.1" />
+  </svg>
+);
