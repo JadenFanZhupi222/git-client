@@ -62,15 +62,23 @@ export function BlameView({ repo }: { repo: string }) {
             const uncommitted = l.commit_id === "";
             return (
               <div key={i} className="flex items-stretch hover:bg-elevated">
-                {/* 提交信息 gutter:同一提交的连续行只在首行显示 */}
+                {/* 提交信息 gutter:同一提交的连续行只在首行显示。
+                    flex 布局让「作者名」成为唯一可截断项,sha 与时间 shrink-0 始终可见
+                    —— 否则整体 truncate 会把末尾的时间切掉(仿 JetBrains 始终留时间)。 */}
                 <div
-                  className={`w-48 shrink-0 truncate border-r border-line px-2 ${newGroup ? "" : "opacity-0"} ${uncommitted ? "text-fg-subtle" : "text-fg-muted"}`}
-                  title={uncommitted ? "未提交" : `${l.commit_id}\n${l.author_name}`}
+                  className={`flex w-56 shrink-0 items-center gap-1.5 overflow-hidden border-r border-line px-2 ${newGroup ? "" : "opacity-0"} ${uncommitted ? "text-fg-subtle" : "text-fg-muted"}`}
+                  title={uncommitted ? "未提交" : `${l.commit_id}\n${l.author_name} · ${formatRelative(l.timestamp)}`}
                 >
-                  {newGroup && (
-                    uncommitted ? "· 未提交"
-                      : <><span className="text-accent">{l.short_id}</span> {l.author_name} · {formatRelative(l.timestamp)}</>
-                  )}
+                  {newGroup &&
+                    (uncommitted ? (
+                      <span>· 未提交</span>
+                    ) : (
+                      <>
+                        <span className="shrink-0 text-accent">{l.short_id}</span>
+                        <span className="min-w-0 flex-1 truncate">{l.author_name}</span>
+                        <span className="shrink-0 text-fg-subtle">{formatRelative(l.timestamp)}</span>
+                      </>
+                    ))}
                 </div>
                 <span className="w-10 shrink-0 select-none px-1.5 text-right text-fg-subtle">{l.line_no}</span>
                 <span className="flex-1 whitespace-pre pr-3 text-fg">{l.content || " "}</span>
