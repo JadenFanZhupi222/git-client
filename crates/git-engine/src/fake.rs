@@ -243,7 +243,16 @@ impl GitBackend for FakeBackend {
         Ok("fakeamend00000000000000000000000000000000".to_string())
     }
 
-    fn log(&self, _path: &Path, _limit: usize, _skip: usize) -> Result<Vec<Commit>, GitError> {
+    fn log(
+        &self,
+        _path: &Path,
+        _limit: usize,
+        _skip: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Commit>, GitError> {
+        if cancelled() {
+            return Err(GitError::Cancelled);
+        }
         *self.log_calls.lock().unwrap() += 1;
         Ok(self.canned_log.lock().unwrap().clone())
     }
@@ -361,7 +370,15 @@ impl GitBackend for FakeBackend {
             .unwrap()
             .unwrap_or(RepoState::Clean))
     }
-    fn blame(&self, _path: &Path, _file: &str) -> Result<Vec<BlameLine>, GitError> {
+    fn blame(
+        &self,
+        _path: &Path,
+        _file: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<BlameLine>, GitError> {
+        if cancelled() {
+            return Err(GitError::Cancelled);
+        }
         *self.blame_calls.lock().unwrap() += 1;
         Ok(Vec::new())
     }
@@ -597,7 +614,7 @@ mod tests {
                 deletions: 0,
             }])
             .with_branch(Some("main".into()));
-        assert_eq!(fb.log(Path::new("/r"), 10, 0).unwrap().len(), 1);
+        assert_eq!(fb.log(Path::new("/r"), 10, 0, &|| false).unwrap().len(), 1);
         assert_eq!(fb.commit_files(Path::new("/r"), "x").unwrap()[0].path, "a");
         assert_eq!(
             fb.current_branch(Path::new("/r")).unwrap(),

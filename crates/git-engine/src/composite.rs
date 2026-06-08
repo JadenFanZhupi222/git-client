@@ -38,8 +38,14 @@ impl GitBackend for CompositeBackend {
     fn amend_commit(&self, repo: &Path, message: Option<&str>) -> Result<String, GitError> {
         self.git2.amend_commit(repo, message)
     }
-    fn log(&self, repo: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, GitError> {
-        self.git2.log(repo, limit, skip)
+    fn log(
+        &self,
+        repo: &Path,
+        limit: usize,
+        skip: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Commit>, GitError> {
+        self.git2.log(repo, limit, skip, cancelled)
     }
     fn search_commits(
         &self,
@@ -96,8 +102,13 @@ impl GitBackend for CompositeBackend {
     fn repo_state(&self, repo: &Path) -> Result<RepoState, GitError> {
         self.git2.repo_state(repo)
     }
-    fn blame(&self, repo: &Path, file: &str) -> Result<Vec<BlameLine>, GitError> {
-        self.git2.blame(repo, file)
+    fn blame(
+        &self,
+        repo: &Path,
+        file: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<BlameLine>, GitError> {
+        self.git2.blame(repo, file, cancelled)
     }
     fn conflict_sides(&self, repo: &Path, file: &str) -> Result<ConflictSides, GitError> {
         self.git2.conflict_sides(repo, file)

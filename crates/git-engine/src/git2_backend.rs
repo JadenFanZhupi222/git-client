@@ -380,7 +380,13 @@ impl GitBackend for Git2Backend {
         Ok(())
     }
 
-    fn log(&self, path: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, GitError> {
+    fn log(
+        &self,
+        path: &Path,
+        limit: usize,
+        skip: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Commit>, GitError> {
         let repo =
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
 
@@ -389,8 +395,12 @@ impl GitBackend for Git2Backend {
         };
 
         // ⚠️ Revwalk 惰性:直接 skip/take,别先 collect 全部
+        // 大仓库历史很长:每条检查取消信号,被取代的旧请求尽快放手。
         let mut out = Vec::new();
         for oid in walk.skip(skip).take(limit) {
+            if cancelled() {
+                return Err(GitError::Cancelled);
+            }
             let oid = oid.map_err(|e| GitError::Backend(e.to_string()))?;
             let commit = repo
                 .find_commit(oid)
@@ -800,7 +810,16 @@ impl GitBackend for Git2Backend {
         })
     }
 
-    fn blame(&self, path: &Path, file: &str) -> Result<Vec<BlameLine>, GitError> {
+    fn blame(
+        &self,
+        path: &Path,
+        file: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<BlameLine>, GitError> {
+        // blame_file 本身较重且不可中断;若到达阻塞线程时已被取代,先在这里放手。
+        if cancelled() {
+            return Err(GitError::Cancelled);
+        }
         let repo =
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
         let blame = repo
@@ -815,6 +834,10 @@ impl GitBackend for Git2Backend {
 
         let mut out = Vec::new();
         for (i, line) in text.lines().enumerate() {
+            // 大文件逐行组装也可能不短:每 512 行检查一次取消。
+            if i % 512 == 0 && cancelled() {
+                return Err(GitError::Cancelled);
+            }
             let lineno = i + 1;
             let (commit_id, short_id, author_name, timestamp) = match blame.get_line(lineno) {
                 Some(h) => {
@@ -1267,14 +1290,14 @@ mod tests {
 
         // 仅改信息:不新增提交,summary 变化
         b.amend_commit(&repo, Some("amended msg")).unwrap();
-        let log = b.log(&repo, 10, 0).unwrap();
+        let log = b.log(&repo, 10, 0, &|| false).unwrap();
         assert_eq!(log.len(), 1, "amend 不应新增提交");
         assert_eq!(log[0].summary, "amended msg");
 
         // 暂存新文件后 amend(None 保留信息):新文件应进入该提交
         stage(&repo, "b.txt", "2");
         b.amend_commit(&repo, None).unwrap();
-        let head = &b.log(&repo, 1, 0).unwrap()[0];
+        let head = &b.log(&repo, 1, 0, &|| false).unwrap()[0];
         assert_eq!(head.summary, "amended msg", "None 应保留上次信息");
         let files = b.commit_files(&repo, &head.id).unwrap();
         assert!(
@@ -1336,7 +1359,7 @@ mod tests {
         commit_index(&repo, "c2", 2000);
         stage(&repo, "b.txt", "x");
         commit_index(&repo, "c3", 3000);
-        let log = b.log(&repo, 10, 0).unwrap();
+        let log = b.log(&repo, 10, 0, &|| false).unwrap();
         let msgs: Vec<&str> = log.iter().map(|c| c.summary.as_str()).collect();
         assert_eq!(msgs, vec!["c3", "c2", "c1"]);
     }
@@ -1384,7 +1407,7 @@ mod tests {
         commit_index(&repo, "c2", 2000);
         stage(&repo, "a.txt", "3");
         commit_index(&repo, "c3", 3000);
-        let page = b.log(&repo, 1, 1).unwrap();
+        let page = b.log(&repo, 1, 1, &|| false).unwrap();
         assert_eq!(page.len(), 1);
         assert_eq!(page[0].summary, "c2");
     }
@@ -1393,7 +1416,7 @@ mod tests {
     fn log_empty_repo_is_empty() {
         let (_tmp, repo) = init_repo();
         let b = Git2Backend;
-        assert!(b.log(&repo, 10, 0).unwrap().is_empty());
+        assert!(b.log(&repo, 10, 0, &|| false).unwrap().is_empty());
     }
 
     // ===== Task 3: commit_files =====
@@ -1887,7 +1910,11 @@ mod tests {
 
         // soft reset 到 c1:HEAD 回到 c1,但工作区仍是 "2"。
         b.reset(&repo, &c1, ResetMode::Soft).unwrap();
-        assert_eq!(b.log(&repo, 10, 0).unwrap().len(), 1, "soft 后只剩 c1 可达");
+        assert_eq!(
+            b.log(&repo, 10, 0, &|| false).unwrap().len(),
+            1,
+            "soft 后只剩 c1 可达"
+        );
         assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "2");
 
         // 前进回 c2(hard),再 hard reset 到 c1:工作区也被重置成 "1"。
@@ -2020,7 +2047,7 @@ mod tests {
         stage(&repo, "f.txt", "alpha\nbeta\ngamma\n");
         let c2 = commit_index(&repo, "c2", 2000);
 
-        let lines = b.blame(&repo, "f.txt").unwrap();
+        let lines = b.blame(&repo, "f.txt", &|| false).unwrap();
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[0].content, "alpha");
         assert_eq!(lines[0].commit_id, c1, "前两行归 c1");
@@ -2028,6 +2055,31 @@ mod tests {
         assert_eq!(lines[2].commit_id, c2, "第三行归 c2");
         assert_eq!(lines[2].content, "gamma");
         assert_eq!(lines[0].short_id, c1.chars().take(7).collect::<String>());
+    }
+
+    #[test]
+    fn log_honors_cancellation() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "f.txt", "x\n");
+        commit_index(&repo, "c1", 1000);
+        // cancelled 恒真 → 遍历第一条就中断,不白烧 CPU。
+        let err = b.log(&repo, 10, 0, &|| true).unwrap_err();
+        assert!(matches!(err, GitError::Cancelled));
+        // 不取消时正常返回。
+        assert_eq!(b.log(&repo, 10, 0, &|| false).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn blame_honors_cancellation() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "f.txt", "x\n");
+        commit_index(&repo, "c1", 1000);
+        // 入口即检查:被取代时连昂贵的 blame_file 都不跑。
+        let err = b.blame(&repo, "f.txt", &|| true).unwrap_err();
+        assert!(matches!(err, GitError::Cancelled));
+        assert_eq!(b.blame(&repo, "f.txt", &|| false).unwrap().len(), 1);
     }
 
     #[test]

@@ -25,7 +25,21 @@ use lru::LruCache;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// 每个「重读操作类」一个代次计数器(M1.3 取消)。
+///
+/// 新请求 `fetch_add` 推进计数 → 被它取代的旧请求,其闭包看到「当前代次 ≠ 自己的」
+/// 即返回 `GitError::Cancelled`,尽快从阻塞线程池放手。每类一个、互不干扰:切分支触发
+/// 的 graph 重算不会误取消正在跑的 blame。计数只在「缓存未命中=真正下探后端」时推进,
+/// 缓存命中瞬回、不打扰任何在跑的请求。
+#[derive(Default)]
+struct CancelGens {
+    log: AtomicU64,
+    graph: AtomicU64,
+    blame: AtomicU64,
+}
 
 /// 同时缓存几个不同 limit 的图谱(「加载更多」会换 limit)。LRU 控上限防内存膨胀。
 const GRAPH_CACHE_CAP: usize = 8;
@@ -95,6 +109,7 @@ pub struct RepoContext {
     service: RepoService,
     path: PathBuf,
     cache: RepoCache,
+    cancel: CancelGens,
 }
 
 impl RepoContext {
@@ -103,6 +118,7 @@ impl RepoContext {
             service: RepoService::new(backend),
             path,
             cache: RepoCache::default(),
+            cancel: CancelGens::default(),
         }
     }
 
@@ -165,7 +181,11 @@ impl RepoContext {
         if let Some(hit) = self.cache.log.lock().unwrap().get(&key).cloned() {
             return Ok(hit);
         }
-        let v = self.service.log(&self.path, limit, skip)?;
+        // 缓存未命中 = 一次真正的重读:推进代次取消上一次仍在跑的 log,并把
+        // 「是否被取代」做成闭包传进后端循环。被取代时提前返回 Cancelled,不写缓存。
+        let mine = self.cancel.log.fetch_add(1, Ordering::SeqCst) + 1;
+        let cancelled = || self.cancel.log.load(Ordering::SeqCst) != mine;
+        let v = self.service.log(&self.path, limit, skip, &cancelled)?;
         self.cache.log.lock().unwrap().put(key, v.clone());
         Ok(v)
     }
@@ -173,7 +193,9 @@ impl RepoContext {
         if let Some(cached) = self.cache.graph.lock().unwrap().get(&limit).cloned() {
             return Ok(cached);
         }
-        let rows = self.service.commit_graph(&self.path, limit)?;
+        let mine = self.cancel.graph.fetch_add(1, Ordering::SeqCst) + 1;
+        let cancelled = || self.cancel.graph.load(Ordering::SeqCst) != mine;
+        let rows = self.service.commit_graph(&self.path, limit, &cancelled)?;
         self.cache.graph.lock().unwrap().put(limit, rows.clone());
         Ok(rows)
     }
@@ -293,7 +315,9 @@ impl RepoContext {
         if let Some(hit) = self.cache.blame.lock().unwrap().get(file).cloned() {
             return Ok(hit);
         }
-        let v = self.service.blame(&self.path, file)?;
+        let mine = self.cancel.blame.fetch_add(1, Ordering::SeqCst) + 1;
+        let cancelled = || self.cancel.blame.load(Ordering::SeqCst) != mine;
+        let v = self.service.blame(&self.path, file, &cancelled)?;
         self.cache
             .blame
             .lock()
