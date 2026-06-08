@@ -16,7 +16,9 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
 
-  const results = useMemo(() => rankCommands(commands, query), [commands, query]);
+  // 只展示当前可用的命令:不可用项(如未开仓库时的 Fetch)直接不进列表,
+  // 既不占键盘可选位、也不显示为灰条噪音。
+  const results = useMemo(() => rankCommands(commands.filter((c) => !c.disabled), query), [commands, query]);
 
   // query 变化 → 高亮回到第一项(避免停在越界下标)
   useEffect(() => {
@@ -64,8 +66,10 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder="输入命令…"
-            // focus-visible:outline-none 专门盖掉 index.css 的全局键盘焦点环(否则输入框被一圈蓝框包住,难看)
-            className="w-full bg-transparent py-2.5 text-sm text-fg placeholder:text-fg-subtle focus:outline-none focus-visible:outline-none"
+            // index.css 的全局 :focus-visible 焦点环是「无层级」规则,Tailwind 工具类(在 @layer 里)盖不住它;
+            // 只有内联 style 能赢过它。面板本身已表明焦点所在,这里的输入框不需要再画焦点环。
+            style={{ outline: "none" }}
+            className="w-full bg-transparent py-2.5 text-sm text-fg placeholder:text-fg-subtle"
           />
           <kbd className="shrink-0 rounded border border-line-strong px-1.5 py-0.5 font-mono text-[10px] text-fg-subtle">Esc</kbd>
         </div>
