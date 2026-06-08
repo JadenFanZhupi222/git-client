@@ -64,7 +64,8 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder="输入命令…"
-            className="w-full bg-transparent py-2.5 text-sm text-fg placeholder:text-fg-subtle focus:outline-none"
+            // focus-visible:outline-none 专门盖掉 index.css 的全局键盘焦点环(否则输入框被一圈蓝框包住,难看)
+            className="w-full bg-transparent py-2.5 text-sm text-fg placeholder:text-fg-subtle focus:outline-none focus-visible:outline-none"
           />
           <kbd className="shrink-0 rounded border border-line-strong px-1.5 py-0.5 font-mono text-[10px] text-fg-subtle">Esc</kbd>
         </div>
@@ -90,9 +91,10 @@ function Row({ r, idx, active, onActivate, onHover }: { r: RankedCommand; idx: n
         disabled={cmd.disabled}
         onClick={onActivate}
         onMouseMove={onHover}
+        // 选中行:accent 浅底 + 2px accent 左条(透明左条占位,切换时不抖动),明显区别于普通行
         className={cx(
-          "flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors",
-          active && !cmd.disabled ? "bg-overlay" : "",
+          "flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-sm transition-colors",
+          active && !cmd.disabled ? "border-accent bg-accent/15" : "border-transparent",
           cmd.disabled ? "cursor-not-allowed opacity-40" : "text-fg",
         )}
       >
