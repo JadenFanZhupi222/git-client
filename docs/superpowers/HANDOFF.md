@@ -15,11 +15,14 @@
     App 顶栏加可发现的「⌘K」按钮。纯前端、后端零改动。
     **真机待验**:⌘K 打开/关闭、输入过滤高亮、↑↓/回车/Esc、各命令执行(切视图/Fetch/撤销等),
     不可用项(未开仓库时)灰显。需 `pnpm -C app tauri dev` 整段重启(无 Rust 改动,纯前端 HMR 即可)。
-  - ✅ **M3.2 提交列表键盘导航**(已合 main):历史视图提交列表 j/k/↑↓/g/G 移动选中→驱动详情/diff;
-    选中行自动滚进可视区(图谱虚拟列表 scrollToIndex(auto) / 搜索列表 scrollIntoView(nearest));
-    输入态与 ⌘/Ctrl/Alt 组合键不拦截。纯逻辑 `app/src/lib/listNav.ts`(navTarget + useListKeyboardNav,8 vitest)。
-  - 待做:M3.2 续(文件列表键盘导航——需「聚焦哪个面板」模型,避免 j/k 被两个列表同时抢)、
-    M3.3 分支/文件/提交模糊跳转、M3.4 拖拽。
+  - ✅ **M3.2 提交列表键盘导航**(已合 main):历史视图 j/k/↑↓/g/G 移动选中→驱动详情/diff;
+    选中行自动滚进可视区;输入态与组合键不拦截。纯逻辑 `app/src/lib/listNav.ts`(navTarget + useListKeyboardNav,8 vitest)。
+  - ✅ **M3.2 续 聚焦面板模型**(已合 main):历史视图 commits|files 双面板;Tab/h・l/←→/Enter 切焦点、
+    点击也聚焦,聚焦面板显 accent inset 环,j/k 作用于聚焦面板;文件列表选中自动滚进可视区。
+  - ✅ **M3.3 模糊跳转(分支)**(已合 main):命令面板「跳转」子模式——统一 Entry 抽象 + 通用 `rankBy<T>`;
+    首个 provider「跳转到分支…」模糊找本地分支→checkout(标「当前」、不重复切);Esc/空输入 Backspace 返回命令模式。
+  - 待做:M3.2 续(ChangesView 文件列表键盘导航,需空格 stage 等额外键)、M3.3 续(跳转到提交/文件,
+    提交跳转需跨视图选中——考虑把选中状态上提或用事件)、M3.4 拖拽。
 
 ## 已完成(本里程碑 M2「Fearless」)
 
