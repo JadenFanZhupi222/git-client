@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { continueOp, abortOp, type RepoStateStr, type IpcError } from "../ipc";
 import { invalidateWorktree, invalidateHistory, qk } from "../lib/queries";
 import { useToast } from "./Toast";
+import { Button } from "./ui/Button";
 import { AlertIcon } from "./icons";
 
 const LABEL: Record<RepoStateStr, string> = {
@@ -44,22 +45,24 @@ export function ConflictBanner({ repo, state, conflicts }: { repo: string; state
         {conflicts > 0 ? `${conflicts} 个文件冲突待解决` : "冲突已解决,可继续"}
       </span>
       <div className="ml-auto flex items-center gap-1.5">
-        <button
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={() => run(continueOp.bind(null, repo), "已继续")}
           disabled={busy || conflicts > 0}
           title={conflicts > 0 ? "先解决所有冲突文件" : "继续(提交合并 / rebase --continue)"}
-          className="rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-40"
         >
           继续
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="danger"
+          size="sm"
           onClick={() => run(abortOp.bind(null, repo), "已中止")}
           disabled={busy}
           title="中止当前操作"
-          className="rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-danger transition-colors hover:bg-danger/10 disabled:opacity-40"
         >
           中止
-        </button>
+        </Button>
       </div>
     </div>
   );

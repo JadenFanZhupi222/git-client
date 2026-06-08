@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { interactiveRebase, type CommitDto, type RebaseActionKind, type RebaseStepInput, type IpcError } from "../ipc";
 import { useToast } from "./Toast";
+import { Button } from "./ui/Button";
+import { IconButton } from "./ui/IconButton";
 import { CloseIcon } from "./icons";
 
 type Row = { sha: string; short: string; summary: string; action: RebaseActionKind; message: string };
@@ -83,7 +85,7 @@ export function RebaseEditor({
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold text-fg">交互式变基 · {rows.length} 个提交</h2>
-          <button onClick={onClose} className="text-fg-subtle hover:text-fg"><CloseIcon width={15} height={15} /></button>
+          <IconButton aria-label="关闭" onClick={onClose}><CloseIcon width={15} height={15} /></IconButton>
         </div>
 
         <p className="shrink-0 border-b border-line bg-warning/10 px-4 py-2 text-xs text-warning">
@@ -127,14 +129,10 @@ export function RebaseEditor({
             {firstKeptInvalid ? "第一个保留的提交不能是 squash/fixup" : allDropped ? "至少保留一个提交" : ""}
           </span>
           <div className="flex gap-2">
-            <button onClick={onClose} className="rounded-md border border-line-strong px-3 py-1.5 text-sm text-fg-muted hover:bg-elevated">取消</button>
-            <button
-              onClick={start}
-              disabled={!canStart}
-              className="rounded-md bg-accent px-3.5 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-            >
+            <Button variant="secondary" size="md" onClick={onClose}>取消</Button>
+            <Button variant="primary" size="md" onClick={start} disabled={!canStart}>
               开始变基
-            </button>
+            </Button>
           </div>
         </div>
       </div>

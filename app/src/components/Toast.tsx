@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { AlertIcon, CheckIcon, CloseIcon } from "./icons";
+import { IconButton } from "./ui/IconButton";
 
 /**
  * 可复用 toast 通知系统。
@@ -101,13 +102,9 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
           </div>
         )}
       </div>
-      <button
-        onClick={onDismiss}
-        title="关闭"
-        className="-mr-0.5 -mt-0.5 shrink-0 rounded p-1 text-fg-subtle transition-colors hover:bg-overlay hover:text-fg"
-      >
+      <IconButton aria-label="关闭" onClick={onDismiss} title="关闭" className="-mr-0.5 -mt-0.5 shrink-0">
         <CloseIcon width={12} height={12} />
-      </button>
+      </IconButton>
     </div>
   );
 }

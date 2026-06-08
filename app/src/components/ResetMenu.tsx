@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { resetTo, type ResetMode, type IpcError } from "../ipc";
 import { useToast } from "./Toast";
+import { Button } from "./ui/Button";
 
 const MODES: { mode: ResetMode; label: string; desc: string; danger?: boolean }[] = [
   { mode: "soft", label: "Soft", desc: "保留暂存区与工作区(改动转为已暂存)" },
@@ -45,14 +46,16 @@ export function ResetMenu({
 
   return (
     <div className="relative">
-      <button
+      <Button
+        variant="secondary"
+        size="chip"
         onClick={() => (open ? close() : setOpen(true))}
         disabled={busy}
         title="把当前分支重置到此提交"
-        className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-40"
+        className="normal-case tracking-normal"
       >
         Reset
-      </button>
+      </Button>
       {open && (
         <>
           {/* 点击外部关闭 */}
@@ -75,13 +78,9 @@ export function ResetMenu({
               <div className="border-t border-line bg-danger/10 px-3 py-2 text-[11px]">
                 <p className="mb-1.5 text-danger">Hard reset 会永久丢弃未提交改动,确认?</p>
                 <div className="flex gap-2">
-                  <button
-                    disabled={busy}
-                    onClick={() => run("hard")}
-                    className="rounded border border-danger/50 px-2 py-0.5 text-danger hover:bg-danger/15 disabled:opacity-40"
-                  >
+                  <Button variant="danger" size="chip" disabled={busy} onClick={() => run("hard")}>
                     确认丢弃
-                  </button>
+                  </Button>
                   <button onClick={() => setConfirmHard(false)} className="text-fg-muted hover:underline">
                     取消
                   </button>

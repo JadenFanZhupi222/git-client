@@ -9,6 +9,8 @@ import { ResetMenu } from "../components/ResetMenu";
 import { RebaseEditor } from "../components/RebaseEditor";
 import { ReflogPanel } from "../components/ReflogPanel";
 import { CommitContextMenu } from "../components/CommitContextMenu";
+import { Button } from "../components/ui/Button";
+import { IconButton } from "../components/ui/IconButton";
 import { CommitFileList } from "../components/CommitFileList";
 import { CommitDetail } from "../components/CommitDetail";
 import { DiffView } from "../components/DiffView";
@@ -246,13 +248,15 @@ function GraphColumn({
       <div className="flex shrink-0 flex-col overflow-hidden" style={{ width: col.w }}>
         <ColumnHead icon={<BranchIcon width={13} height={13} />}>
           {branch ? <span className="font-mono normal-case tracking-normal text-fg">{branch}</span> : "提交历史"}
-          <button
+          <Button
+            variant="secondary"
+            size="chip"
             onClick={onOpenReflog}
             title="查看 reflog(HEAD 移动历史 / 找回丢失提交)"
-            className="ml-auto rounded border border-line-strong bg-elevated px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
+            className="ml-auto normal-case tracking-normal"
           >
             Reflog
-          </button>
+          </Button>
         </ColumnHead>
         {/* 搜索框:按 message / 作者 / SHA 过滤 */}
         <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-2.5 py-1.5">
@@ -264,9 +268,9 @@ function GraphColumn({
             className="min-w-0 flex-1 bg-transparent text-xs text-fg placeholder:text-fg-subtle focus:outline-none"
           />
           {searchInput && (
-            <button onClick={() => onSearchChange("")} title="清除" className="shrink-0 text-fg-subtle hover:text-fg">
+            <IconButton aria-label="清除搜索" onClick={() => onSearchChange("")} title="清除" className="shrink-0">
               <CloseIcon width={12} height={12} />
-            </button>
+            </IconButton>
           )}
         </div>
         {error && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{error}</p>}
@@ -359,34 +363,40 @@ function MidColumn({
             <div className="ml-auto flex items-center gap-1">
               <ResetMenu repo={repo} commitId={commit.id} label={commit.short_id} onDone={onResetDone} />
               {onCherryPick && (
-                <button
+                <Button
+                  variant="secondary"
+                  size="chip"
                   onClick={onCherryPick}
                   disabled={busy}
                   title="把此提交拣选(cherry-pick)到当前分支"
-                  className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-40"
+                  className="normal-case tracking-normal"
                 >
                   Cherry-pick
-                </button>
+                </Button>
               )}
               {onRevert && (
-                <button
+                <Button
+                  variant="secondary"
+                  size="chip"
                   onClick={onRevert}
                   disabled={busy}
                   title="回滚此提交(生成一个抵消其改动的新提交)"
-                  className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-40"
+                  className="normal-case tracking-normal"
                 >
                   Revert
-                </button>
+                </Button>
               )}
               {onRebase && (
-                <button
+                <Button
+                  variant="secondary"
+                  size="chip"
                   onClick={onRebase}
                   disabled={busy}
                   title="从此提交开始交互式变基(改写历史:reorder/squash/reword/drop)"
-                  className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-40"
+                  className="normal-case tracking-normal"
                 >
                   变基
-                </button>
+                </Button>
               )}
             </div>
           )}
