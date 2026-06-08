@@ -20,7 +20,25 @@ export interface Command {
   keywords?: string;
   /** 当前不可用:灰显 + 回车/点击不执行。 */
   disabled?: boolean;
+  /** 若提供:激活该命令不直接 run,而是进入「跳转」子模式,对这些项做二次模糊选择
+   *  (如「跳转到分支」→ 列出分支)。run 仍可作为空操作占位。 */
+  jump?: JumpMode;
   /** 执行动作。面板会先关闭再调用。 */
+  run: () => void;
+}
+
+/** 跳转子模式:换一个占位提示 + 一批可模糊选择的项(分支/提交/文件…)。 */
+export interface JumpMode {
+  placeholder: string;
+  items: JumpItem[];
+}
+
+/** 跳转子模式里的一项。 */
+export interface JumpItem {
+  id: string;
+  label: string;
+  /** 右侧灰色补充(如「当前」「ahead 2」)。 */
+  hint?: string;
   run: () => void;
 }
 
@@ -100,4 +118,20 @@ export function rankCommands(commands: Command[], query: string): RankedCommand[
   }
   scored.sort((a, b) => b.score - a.score);
   return scored.map(({ cmd, indices }) => ({ cmd, indices }));
+}
+
+/**
+ * 通用模糊排序:对任意项按其文本做 fuzzyMatch 过滤 + 排序(用于跳转子模式的分支/提交等)。
+ * 空 query 原样返回;命中项带高亮下标。
+ */
+export function rankBy<T>(items: T[], text: (t: T) => string, query: string): { item: T; indices: number[] }[] {
+  const q = query.trim();
+  if (!q) return items.map((item) => ({ item, indices: [] }));
+  const scored: { item: T; indices: number[]; score: number }[] = [];
+  for (const item of items) {
+    const m = fuzzyMatch(q, text(item));
+    if (m) scored.push({ item, indices: m.indices, score: m.score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.map(({ item, indices }) => ({ item, indices }));
 }

@@ -6,7 +6,7 @@ import { HistoryView } from "./views/HistoryView";
 import { CompareView } from "./views/CompareView";
 import { BlameView } from "./views/BlameView";
 import { useQueryClient } from "@tanstack/react-query";
-import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, type IpcError } from "./ipc";
+import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, checkoutBranch, type IpcError } from "./ipc";
 import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
@@ -16,7 +16,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import type { Command } from "./lib/commands";
 import { useToast } from "./components/Toast";
 import { Button } from "./components/ui/Button";
-import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
+import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, useBranches, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
 import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
 
 /** 把 git fetch 的原始摘要提炼成简洁细节:优先取 "->" 更新行。 */
@@ -53,6 +53,7 @@ export default function App() {
   const undoState = useUndoState(repo ?? "").data ?? null;
   const canUndo = undoState?.can_undo ?? null;
   const canRedo = undoState?.can_redo ?? null;
+  const branches = useBranches(repo ?? "", !!repo).data ?? [];
 
   const busy = fetching || pulling || pushing || undoing;
   // 同步提示:落后 → 建议 Pull;领先 → 建议 Push(无上游时 sync 为 null,不提示)
@@ -164,6 +165,21 @@ export default function App() {
     }
   }
 
+  // 命令面板「跳转到分支」用:切换分支 + 反馈 + 失效。
+  async function doCheckout(name: string) {
+    if (!repo) return;
+    try {
+      await checkoutBranch(repo, name);
+      toast({ kind: "success", title: `已切换到分支 ${name}` });
+      qc.invalidateQueries({ queryKey: ["branches", repo] });
+      invalidateHistory(qc, repo);
+      invalidateWorktree(qc, repo);
+    } catch (e) {
+      // 脏工作区切换失败等 → 提示
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+    }
+  }
+
   async function pickRepo() {
     const dir = await open({ directory: true, title: "选择一个 git 仓库" });
     if (typeof dir === "string") setRepo(dir);
@@ -206,6 +222,26 @@ export default function App() {
       run: () => setTab(v.id),
     });
   }
+  commands.push({
+    id: "jump:branch",
+    title: "跳转到分支…",
+    subtitle: "切换",
+    group: "跳转",
+    keywords: "checkout switch branch 切换 分支 跳转",
+    disabled: !repo || busy || branches.length === 0,
+    run: () => {},
+    jump: {
+      placeholder: "跳转到分支…",
+      items: branches.map((b) => ({
+        id: b.name,
+        label: b.name,
+        hint: b.is_head ? "当前" : undefined,
+        run: () => {
+          if (!b.is_head) doCheckout(b.name);
+        },
+      })),
+    },
+  });
   commands.push({
     id: "repo:pick",
     title: repo ? "切换仓库" : "选择仓库",
