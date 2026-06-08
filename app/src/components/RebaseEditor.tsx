@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { interactiveRebase, type CommitDto, type RebaseActionKind, type RebaseStepInput, type IpcError } from "../ipc";
 import { moveItem } from "../lib/listNav";
 import { useToast } from "./Toast";
@@ -32,18 +32,55 @@ export function RebaseEditor({
     commits.map((c) => ({ sha: c.id, short: c.short_id, summary: c.summary, action: "pick", message: c.summary })),
   );
   const [busy, setBusy] = useState(false);
-  const [dragIndex, setDragIndex] = useState<number | null>(null); // 正在拖的行
-  const [overIndex, setOverIndex] = useState<number | null>(null); // 拖到哪一行上方
+  // 指针拖拽重排(不用 HTML5 DnD——Tauri/WebView 的系统级拖放会吞掉那些事件)。
+  const [fromIndex, setFromIndex] = useState<number | null>(null); // 正在拖的行(用于变淡)
+  const [overIndex, setOverIndex] = useState<number | null>(null); // 插入位置 0..length(用于插入线)
+  const [preview, setPreview] = useState<{ x: number; y: number; short: string; summary: string } | null>(null);
+  const overRef = useRef<number | null>(null); // onUp 读最新插入位置,避免闭包陈旧
+  const listRef = useRef<HTMLDivElement>(null);
 
   function move(i: number, dir: -1 | 1) {
     setRows((rs) => moveItem(rs, i, i + dir));
   }
 
-  // 拖放重排:把 dragIndex 行移动到 targetIndex 处。
-  function drop(targetIndex: number) {
-    if (dragIndex !== null) setRows((rs) => moveItem(rs, dragIndex, targetIndex));
-    setDragIndex(null);
-    setOverIndex(null);
+  // 从拖拽手柄按下:挂 window 指针监听,实时算插入位置 + 跟随预览,松手落定。
+  function startDrag(i: number, e: React.PointerEvent) {
+    e.preventDefault();
+    setFromIndex(i);
+    setPreview({ x: e.clientX, y: e.clientY, short: rows[i].short, summary: rows[i].summary });
+
+    const onMove = (ev: PointerEvent) => {
+      const items = listRef.current?.querySelectorAll<HTMLElement>("[data-row-index]");
+      if (items) {
+        let target = items.length; // 默认落到末尾
+        for (let k = 0; k < items.length; k++) {
+          const rect = items[k].getBoundingClientRect();
+          if (ev.clientY < rect.top + rect.height / 2) {
+            target = k;
+            break;
+          }
+        }
+        overRef.current = target;
+        setOverIndex(target);
+      }
+      setPreview((p) => (p ? { ...p, x: ev.clientX, y: ev.clientY } : p));
+    };
+    const onUp = () => {
+      const to = overRef.current;
+      if (to !== null) {
+        // to 是「插入到第 to 项之前」;移除 from 后下标左移,故 from<to 时目标 -1。
+        const finalTo = i < to ? to - 1 : to;
+        setRows((rs) => moveItem(rs, i, finalTo));
+      }
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      overRef.current = null;
+      setFromIndex(null);
+      setOverIndex(null);
+      setPreview(null);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
   }
   function setAction(i: number, action: RebaseActionKind) {
     setRows((rs) => rs.map((r, k) => (k === i ? { ...r, action } : r)));
@@ -96,54 +133,52 @@ export function RebaseEditor({
           ⚠ 会改写提交历史。若这些提交已 push,变基后需 force push。冲突可在「更改」页解决或中止。
         </p>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-2">
           {rows.map((r, i) => (
-            <div
-              key={r.sha}
-              onDragOver={(e) => { e.preventDefault(); if (dragIndex !== null) setOverIndex(i); }}
-              onDrop={(e) => { e.preventDefault(); drop(i); }}
-              // 拖动中的行变淡;拖到某行上方时该行顶端显示 accent 插入线(透明边占位,不抖动)
-              className={`rounded border-t-2 px-2 py-1.5 transition-colors ${dragIndex === i ? "opacity-40" : "hover:bg-elevated"} ${
-                overIndex === i && dragIndex !== null && dragIndex !== i ? "border-accent" : "border-transparent"
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                {/* 拖拽手柄:从这里按下可拖动整行重排 */}
-                <span
-                  draggable
-                  onDragStart={(e) => { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(i)); setDragIndex(i); }}
-                  onDragEnd={() => { setDragIndex(null); setOverIndex(null); }}
-                  title="拖动重排"
-                  className="shrink-0 cursor-grab text-fg-subtle hover:text-fg active:cursor-grabbing"
-                >
-                  <GripIcon width={14} height={14} />
-                </span>
-                <div className="flex shrink-0 flex-col">
-                  <button onClick={() => move(i, -1)} disabled={i === 0} className="leading-none text-fg-subtle hover:text-fg disabled:opacity-30">▲</button>
-                  <button onClick={() => move(i, 1)} disabled={i === rows.length - 1} className="leading-none text-fg-subtle hover:text-fg disabled:opacity-30">▼</button>
+            <Fragment key={r.sha}>
+              <InsertLine active={overIndex === i} />
+              <div
+                data-row-index={i}
+                className={`rounded px-2 py-1.5 transition-opacity ${fromIndex === i ? "opacity-40" : "hover:bg-elevated"}`}
+              >
+                <div className="flex items-center gap-2">
+                  {/* 拖拽手柄:从这里按下可拖动整行重排(指针拖拽,自带预览) */}
+                  <span
+                    onPointerDown={(e) => startDrag(i, e)}
+                    title="拖动重排"
+                    className="shrink-0 cursor-grab touch-none text-fg-subtle hover:text-fg active:cursor-grabbing"
+                  >
+                    <GripIcon width={14} height={14} />
+                  </span>
+                  <div className="flex shrink-0 flex-col">
+                    <button onClick={() => move(i, -1)} disabled={i === 0} className="leading-none text-fg-subtle hover:text-fg disabled:opacity-30">▲</button>
+                    <button onClick={() => move(i, 1)} disabled={i === rows.length - 1} className="leading-none text-fg-subtle hover:text-fg disabled:opacity-30">▼</button>
+                  </div>
+                  <select
+                    value={r.action}
+                    onChange={(e) => setAction(i, e.target.value as RebaseActionKind)}
+                    className="shrink-0 rounded border border-line-strong bg-canvas px-1.5 py-1 text-xs text-fg focus:border-accent focus:outline-none"
+                  >
+                    {ACTIONS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+                  </select>
+                  <span className="shrink-0 font-mono text-[11px] text-accent">{r.short}</span>
+                  <span className={`min-w-0 flex-1 truncate text-[13px] ${r.action === "drop" ? "text-fg-subtle line-through" : "text-fg"}`} title={r.summary}>
+                    {r.summary}
+                  </span>
                 </div>
-                <select
-                  value={r.action}
-                  onChange={(e) => setAction(i, e.target.value as RebaseActionKind)}
-                  className="shrink-0 rounded border border-line-strong bg-canvas px-1.5 py-1 text-xs text-fg focus:border-accent focus:outline-none"
-                >
-                  {ACTIONS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
-                </select>
-                <span className="shrink-0 font-mono text-[11px] text-accent">{r.short}</span>
-                <span className={`min-w-0 flex-1 truncate text-[13px] ${r.action === "drop" ? "text-fg-subtle line-through" : "text-fg"}`} title={r.summary}>
-                  {r.summary}
-                </span>
+                {(r.action === "reword" || r.action === "squash") && (
+                  <input
+                    value={r.message}
+                    onChange={(e) => setMessage(i, e.target.value)}
+                    placeholder="新的提交信息"
+                    className="mt-1 ml-7 w-[calc(100%-1.75rem)] rounded border border-line-strong bg-canvas px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none"
+                  />
+                )}
               </div>
-              {(r.action === "reword" || r.action === "squash") && (
-                <input
-                  value={r.message}
-                  onChange={(e) => setMessage(i, e.target.value)}
-                  placeholder="新的提交信息"
-                  className="mt-1 ml-7 w-[calc(100%-1.75rem)] rounded border border-line-strong bg-canvas px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none"
-                />
-              )}
-            </div>
+            </Fragment>
           ))}
+          {/* 末尾插入位 */}
+          <InsertLine active={overIndex === rows.length} />
         </div>
 
         <div className="flex shrink-0 items-center justify-between border-t border-line px-4 py-3">
@@ -158,6 +193,22 @@ export function RebaseEditor({
           </div>
         </div>
       </div>
+
+      {/* 拖拽预览:跟随指针的浮层(fixed 不被 modal overflow 裁剪) */}
+      {preview && (
+        <div
+          className="pointer-events-none fixed z-[60] flex max-w-[20rem] items-center gap-2 rounded border border-accent/50 bg-elevated px-2 py-1 text-[13px] shadow-lg"
+          style={{ left: preview.x + 12, top: preview.y + 8 }}
+        >
+          <span className="shrink-0 font-mono text-[11px] text-accent">{preview.short}</span>
+          <span className="min-w-0 truncate text-fg">{preview.summary}</span>
+        </div>
+      )}
     </div>
   );
+}
+
+/** 行间插入线:拖拽时高亮目标插入位。透明占位避免布局抖动。 */
+function InsertLine({ active }: { active: boolean }) {
+  return <div className={`mx-2 h-0.5 rounded transition-colors ${active ? "bg-accent" : "bg-transparent"}`} />;
 }
