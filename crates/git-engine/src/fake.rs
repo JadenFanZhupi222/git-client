@@ -48,6 +48,10 @@ pub struct FakeBackend {
     // 读路径调用计数:供缓存测试断言「命中不打后端 / 失效后重打」。
     status_calls: Mutex<u32>,
     log_calls: Mutex<u32>,
+    commit_file_diff_calls: Mutex<u32>,
+    working_diff_calls: Mutex<u32>,
+    blame_calls: Mutex<u32>,
+    refs_calls: Mutex<u32>,
 }
 
 impl FakeBackend {
@@ -142,6 +146,18 @@ impl FakeBackend {
     }
     pub fn log_call_count(&self) -> u32 {
         *self.log_calls.lock().unwrap()
+    }
+    pub fn commit_file_diff_call_count(&self) -> u32 {
+        *self.commit_file_diff_calls.lock().unwrap()
+    }
+    pub fn working_diff_call_count(&self) -> u32 {
+        *self.working_diff_calls.lock().unwrap()
+    }
+    pub fn blame_call_count(&self) -> u32 {
+        *self.blame_calls.lock().unwrap()
+    }
+    pub fn refs_call_count(&self) -> u32 {
+        *self.refs_calls.lock().unwrap()
     }
     pub fn staged_hunks(&self) -> Vec<(String, usize)> {
         self.staged_hunks.lock().unwrap().clone()
@@ -297,9 +313,11 @@ impl GitBackend for FakeBackend {
         _commit_id: &str,
         _file: &str,
     ) -> Result<FileDiff, GitError> {
+        *self.commit_file_diff_calls.lock().unwrap() += 1;
         Ok(self.canned_file_diff.lock().unwrap().clone())
     }
     fn working_diff(&self, _path: &Path, _file: &str, _staged: bool) -> Result<FileDiff, GitError> {
+        *self.working_diff_calls.lock().unwrap() += 1;
         Ok(self.canned_file_diff.lock().unwrap().clone())
     }
     fn stage_hunk(&self, _path: &Path, file: &str, hunk_index: usize) -> Result<(), GitError> {
@@ -333,6 +351,7 @@ impl GitBackend for FakeBackend {
         Ok(self.canned_branches.lock().unwrap().clone())
     }
     fn refs(&self, _path: &Path) -> Result<Vec<CommitRef>, GitError> {
+        *self.refs_calls.lock().unwrap() += 1;
         Ok(self.canned_refs.lock().unwrap().clone())
     }
     fn repo_state(&self, _path: &Path) -> Result<RepoState, GitError> {
@@ -343,6 +362,7 @@ impl GitBackend for FakeBackend {
             .unwrap_or(RepoState::Clean))
     }
     fn blame(&self, _path: &Path, _file: &str) -> Result<Vec<BlameLine>, GitError> {
+        *self.blame_calls.lock().unwrap() += 1;
         Ok(Vec::new())
     }
     fn conflict_sides(&self, _path: &Path, _file: &str) -> Result<ConflictSides, GitError> {
