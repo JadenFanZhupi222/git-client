@@ -45,6 +45,7 @@ export function HistoryView({ repo }: { repo: string }) {
   const [compareWith, setCompareWith] = useState<CommitDto | null>(null); // 比较模式的第二个提交
   const [menu, setMenu] = useState<{ commit: CommitDto; x: number; y: number } | null>(null);
   const [focusedPane, setFocusedPane] = useState<"commits" | "files">("commits"); // 键盘焦点在哪个列表
+  const [kbMode, setKbMode] = useState(false); // 最近一次交互是否来自键盘(决定是否显示聚焦环)
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -133,6 +134,23 @@ export function HistoryView({ repo }: { repo: string }) {
     onSelect: (i) => selectFile(files[i].path),
   });
 
+  // 输入模态:键盘导航键 → 进入键盘模式(显示聚焦环);任何鼠标按下 → 退出(隐藏环)。
+  // 这样鼠标点选不会留下蓝色聚焦环,只有真正用键盘时才提示「焦点在哪个面板」。
+  useEffect(() => {
+    const NAV_KEYS = ["j", "k", "g", "G", "h", "l", "Tab", "Enter", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"];
+    const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(document.activeElement)) return;
+      if (NAV_KEYS.includes(e.key)) setKbMode(true);
+    };
+    const onPointer = () => setKbMode(false);
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("pointerdown", onPointer, true);
+    };
+  }, []);
+
   // 面板间切焦点:Tab 来回切;l/→/Enter 从提交进文件,h/← 从文件回提交。
   // 与 j/k/g/G 用的是不相交的键,两个 window 监听不打架。
   useEffect(() => {
@@ -208,7 +226,7 @@ export function HistoryView({ repo }: { repo: string }) {
         rows={rows}
         selectedId={selected?.id ?? null}
         compareId={compareWith?.id ?? null}
-        focused={focusedPane === "commits"}
+        focused={focusedPane === "commits" && kbMode}
         onSelect={selectCommit}
         onContext={(c, x, y) => setMenu({ commit: c, x, y })}
         onLoadMore={() => setLimit((l) => l + PAGE)}
@@ -247,7 +265,7 @@ export function HistoryView({ repo }: { repo: string }) {
             commit={selected}
             files={filesQ.data ?? []}
             selectedFile={selectedFile}
-            focused={focusedPane === "files"}
+            focused={focusedPane === "files" && kbMode}
             onSelectFile={selectFile}
             onCherryPick={selected ? () => doCherryPick(selected) : undefined}
             onRevert={selected ? () => doRevert(selected) : undefined}
