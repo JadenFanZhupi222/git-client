@@ -66,6 +66,45 @@ fn spawn_err(e: std::io::Error) -> GitError {
     }
 }
 
+/// 读 HEAD 的完整 SHA(提交/修订成功后取返回值)。
+fn head_sha(repo: &Path) -> Result<String, GitError> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .map_err(spawn_err)?;
+    if !out.status.success() {
+        return Err(GitError::Backend("提交后无法读取 HEAD".into()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// 把 `git commit` 失败的输出归类成领域错误。hook 拦截/签名失败等落到 Backend(原文),
+/// 让用户看到 git 给的真实原因(如 pre-commit hook 的报错)。
+fn classify_commit_error(stdout: &[u8], stderr: &[u8]) -> GitError {
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(stdout),
+        String::from_utf8_lossy(stderr)
+    );
+    let low = combined.to_lowercase();
+    if low.contains("nothing to commit")
+        || low.contains("no changes added")
+        || low.contains("nothing added to commit")
+    {
+        return GitError::NothingToCommit;
+    }
+    if low.contains("please tell me who you are")
+        || low.contains("empty ident")
+        || low.contains("user.name")
+        || low.contains("user.email")
+    {
+        return GitError::EmptySignature;
+    }
+    GitError::Backend(combined.trim().to_string())
+}
+
 /// 数 git 输出里有几个文件冲突(以 "CONFLICT" 开头的行)。
 /// merge/rebase/cherry-pick/revert/pull/stash 冲突提示共用,给前端更友好的文件数。
 fn count_conflicts(stdout: &str) -> usize {
@@ -480,6 +519,50 @@ impl CliBackend {
         self.run_op(repo, &["revert", "--no-edit", commit_id])
     }
 
+    /// 提交。走 `git commit -m`,**原生跑 pre-commit/commit-msg hooks、并按 commit.gpgsign 签名**
+    /// ——这正是相比 git2 直接写提交所修正的正确性硬伤。失败按输出归类。
+    pub fn commit(&self, repo: &Path, message: &str) -> Result<String, GitError> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["commit", "-m", message])
+            .output()
+            .map_err(spawn_err)?;
+        if out.status.success() {
+            return head_sha(repo);
+        }
+        Err(classify_commit_error(&out.stdout, &out.stderr))
+    }
+
+    /// 修订最近一次提交。message=None → `--no-edit` 保留原信息。同样跑 hooks + 签名。
+    pub fn amend_commit(&self, repo: &Path, message: Option<&str>) -> Result<String, GitError> {
+        // 空仓库无可修订 → NoHead(与 git2 行为一致)。
+        let head = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["rev-parse", "--verify", "HEAD"])
+            .output()
+            .map_err(spawn_err)?;
+        if !head.status.success() {
+            return Err(GitError::NoHead);
+        }
+        let mut cmd = Command::new("git");
+        cmd.arg("-C").arg(repo).args(["commit", "--amend"]);
+        match message {
+            Some(m) => {
+                cmd.args(["-m", m]);
+            }
+            None => {
+                cmd.arg("--no-edit");
+            }
+        }
+        let out = cmd.output().map_err(spawn_err)?;
+        if out.status.success() {
+            return head_sha(repo);
+        }
+        Err(classify_commit_error(&out.stdout, &out.stderr))
+    }
+
     /// 读某提交的签名状态:`git show -s --format=%G?<NUL>%GS`。
     /// `%G?` 是状态码,`%GS` 是签名者;用 NUL 分隔避免签名者名里的换行/空格干扰。
     pub fn commit_signature(
@@ -757,6 +840,84 @@ mod tests {
         let sig = CliBackend.commit_signature(repo.path(), &sha).unwrap();
         assert_eq!(sig.status, SignatureStatus::None);
         assert!(sig.signer.is_empty());
+    }
+
+    /// 建一个配好身份、关签名的空仓库(提交相关测试共用)。
+    fn init_repo_for_commit() -> tempfile::TempDir {
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-b", "main", "."]);
+        git(repo.path(), &["config", "user.email", "t@e"]);
+        git(repo.path(), &["config", "user.name", "t"]);
+        git(repo.path(), &["config", "commit.gpgsign", "false"]);
+        repo
+    }
+
+    #[test]
+    fn commit_creates_then_nothing_to_commit() {
+        let repo = init_repo_for_commit();
+        std::fs::write(repo.path().join("f.txt"), "x").unwrap();
+        git(repo.path(), &["add", "."]);
+
+        let sha = CliBackend.commit(repo.path(), "c1").unwrap();
+        assert_eq!(sha.len(), 40, "应返回完整 SHA");
+        assert_eq!(sha, rev_parse(repo.path(), "HEAD"));
+
+        // 没有新改动 → NothingToCommit
+        assert!(matches!(
+            CliBackend.commit(repo.path(), "c2").unwrap_err(),
+            GitError::NothingToCommit
+        ));
+    }
+
+    #[test]
+    fn amend_changes_message() {
+        let repo = init_repo_for_commit();
+        std::fs::write(repo.path().join("f.txt"), "x").unwrap();
+        git(repo.path(), &["add", "."]);
+        CliBackend.commit(repo.path(), "orig").unwrap();
+
+        CliBackend
+            .amend_commit(repo.path(), Some("amended"))
+            .unwrap();
+        let msg = {
+            let out = Command::new("git")
+                .current_dir(repo.path())
+                .args(["log", "-1", "--format=%s"])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        assert_eq!(msg, "amended");
+    }
+
+    #[test]
+    fn commit_respects_pre_commit_hook() {
+        // M4.3 的核心:commit 走 CLI 后会跑 hooks——失败的 pre-commit 应拦下提交。
+        let repo = init_repo_for_commit();
+        let hook = repo.path().join(".git/hooks/pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\necho blocked-by-hook 1>&2\nexit 1\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(repo.path().join("f.txt"), "x").unwrap();
+        git(repo.path(), &["add", "."]);
+
+        let err = CliBackend
+            .commit(repo.path(), "should-be-blocked")
+            .unwrap_err();
+        assert!(
+            matches!(err, GitError::Backend(_)),
+            "被 hook 拦截应为 Backend 错误"
+        );
+        // 提交未发生:HEAD 仍未生(空仓库)。
+        let head = Command::new("git")
+            .current_dir(repo.path())
+            .args(["rev-parse", "--verify", "HEAD"])
+            .output()
+            .unwrap();
+        assert!(!head.status.success(), "hook 拦截后不应产生提交");
     }
 
     #[test]

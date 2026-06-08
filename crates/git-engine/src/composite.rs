@@ -33,10 +33,11 @@ impl GitBackend for CompositeBackend {
         self.git2.unstage(repo, file)
     }
     fn commit(&self, repo: &Path, message: &str) -> Result<String, GitError> {
-        self.git2.commit(repo, message)
+        // 走 CLI 才能跑 hooks + 按 commit.gpgsign 签名(git2 直接写提交会绕过两者)。
+        self.cli.commit(repo, message)
     }
     fn amend_commit(&self, repo: &Path, message: Option<&str>) -> Result<String, GitError> {
-        self.git2.amend_commit(repo, message)
+        self.cli.amend_commit(repo, message)
     }
     fn log(
         &self,
