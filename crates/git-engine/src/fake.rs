@@ -120,6 +120,12 @@ impl FakeBackend {
         *self.canned_branch_delete_impact.lock().unwrap() = impact;
         self
     }
+    /// 链式预置 status 条目(可与 with_head / with_reflog 组合)。供「撤销前脏工作区护栏」测试:
+    /// 非空 entries 即代表工作区有未提交改动,hard 还原应被拒绝。
+    pub fn with_status_entries(self, entries: Vec<FileEntry>) -> Self {
+        *self.canned_status.lock().unwrap() = entries;
+        self
+    }
     /// 预置可移动 HEAD 的初始 oid(之后 reset 会改它)。供 Undo/Redo 时间线测试。
     pub fn with_head(self, oid: &str) -> Self {
         *self.head_oid.lock().unwrap() = Some(oid.to_string());

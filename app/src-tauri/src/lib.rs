@@ -3,7 +3,7 @@ use app_service::watcher::{ChangeKind, RepoWatcher};
 use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组合
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
-    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError, PullResultDto,
+    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError, OpLogDto, PullResultDto,
     PushResultDto, RefDto, ReflogEntryDto, StashDto, StatusDto, UndoStateDto, UndoStepDto,
 };
 use std::path::PathBuf;
@@ -47,6 +47,7 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         MergeConflict { .. } => ("MERGE_CONFLICT", true),
         NothingToUndo => ("NOTHING_TO_UNDO", false),
         NothingToRedo => ("NOTHING_TO_REDO", false),
+        UncommittedChanges { .. } => ("UNCOMMITTED_CHANGES", true),
         Unsupported => ("UNSUPPORTED", false),
         Backend(_) => ("BACKEND", true),
     };
@@ -722,6 +723,33 @@ async fn redo(
         .map_err(to_ipc)
 }
 
+/// 操作日志(只读):本会话写操作时间线 + 当前光标。
+#[tauri::command]
+async fn op_log(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<OpLogDto, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.op_log())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+/// 跳到操作日志第 index 项:reset --soft 过去。
+#[tauri::command]
+async fn op_goto(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    index: usize,
+) -> Result<UndoStepDto, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.goto(index))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
 /// 写入冲突解决后的内容并标记已解决(写文件 + git add)。防目录穿越。
 #[tauri::command]
 async fn write_resolved(
@@ -946,6 +974,8 @@ pub fn run() {
             undo_state,
             undo,
             redo,
+            op_log,
+            op_goto,
             interactive_rebase,
             blame,
             conflict_sides,

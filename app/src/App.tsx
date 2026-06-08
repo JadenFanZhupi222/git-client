@@ -7,10 +7,11 @@ import { CompareView } from "./views/CompareView";
 import { BlameView } from "./views/BlameView";
 import { useQueryClient } from "@tanstack/react-query";
 import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, type IpcError } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon } from "./components/icons";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
 import { StashMenu } from "./components/StashMenu";
+import { OpLogPanel } from "./components/OpLogPanel";
 import { useToast } from "./components/Toast";
 import { Button } from "./components/ui/Button";
 import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
@@ -37,6 +38,7 @@ export default function App() {
   const [remoteMenu, setRemoteMenu] = useState(false);
   const [upMenu, setUpMenu] = useState(false);
   const [undoing, setUndoing] = useState(false);
+  const [opLogOpen, setOpLogOpen] = useState(false);
   const toast = useToast();
   const qc = useQueryClient();
 
@@ -141,10 +143,13 @@ export default function App() {
     setUndoing(true);
     try {
       const info = await (dir === "undo" ? undo(repo) : redo(repo));
+      const where = dir === "undo" ? "回到" : "前进到";
+      // soft(撤销提交)内容回暂存区;hard(撤销 reset 等)已忠实还原工作区。
+      const effect = info.worktree_restored ? "工作区已还原到该状态" : "改动回到暂存区";
       toast({
         kind: "success",
         title: `${dir === "undo" ? "已撤销" : "已重做"}:${info.label}`,
-        detail: `HEAD ${dir === "undo" ? "回到" : "前进到"} ${info.target_short},改动在暂存区`,
+        detail: `HEAD ${where} ${info.target_short},${effect}`,
       });
     } catch (e) {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
@@ -216,7 +221,7 @@ export default function App() {
                 <button
                   onClick={() => doNav("undo")}
                   disabled={busy}
-                  title={`撤销刚才的「${canUndo.label}」(reset --soft 到 ${canUndo.target_short};改动回暂存区,不丢工作区)`}
+                  title={`撤销刚才的「${canUndo.label}」(回到 ${canUndo.target_short};${canUndo.worktree_restored ? "还原工作区,有未提交改动会先拦下" : "改动回暂存区,不丢工作区"})`}
                   className="flex items-center gap-1.5 rounded-md border border-accent/60 bg-accent/10 px-2.5 py-1 text-xs text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
                 >
                   {undoing ? <SpinnerIcon width={13} height={13} /> : <UndoIcon width={13} height={13} />}
@@ -234,6 +239,14 @@ export default function App() {
                   {`重做${canRedo.label}`}
                 </button>
               )}
+              <button
+                onClick={() => setOpLogOpen(true)}
+                title="操作日志(本会话写操作时间线,可点回跳)"
+                aria-label="操作日志"
+                className="grid h-7 w-7 place-items-center rounded-md border border-line-strong bg-elevated text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle"
+              >
+                <HistoryIcon width={14} height={14} />
+              </button>
               <button
                 onClick={doFetch}
                 disabled={busy}
@@ -385,6 +398,17 @@ export default function App() {
             {repo}
           </span>
         </footer>
+      )}
+
+      {repo && opLogOpen && (
+        <OpLogPanel
+          repo={repo}
+          onClose={() => setOpLogOpen(false)}
+          onJumped={() => {
+            invalidateHistory(qc, repo);
+            invalidateWorktree(qc, repo);
+          }}
+        />
       )}
     </div>
   );

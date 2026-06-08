@@ -409,8 +409,9 @@ export async function getReflog(repoPath: string, limit: number): Promise<Reflog
 
 // ── 多级 Undo/Redo(操作时间线 + 光标,reset --soft,永不丢工作区)──
 export interface UndoStepDto {
-  label: string;        // 操作中文名,如 "提交"、"重置(reset)"
-  target_short: string; // 这一步移动后 HEAD 的短 SHA
+  label: string;             // 操作中文名,如 "提交"、"重置(reset)"
+  target_short: string;      // 这一步移动后 HEAD 的短 SHA
+  worktree_restored: boolean; // true=还原了工作区(hard,撤销 reset 等);false=内容回暂存区(soft,撤销提交)
 }
 
 export interface UndoStateDto {
@@ -431,6 +432,28 @@ export async function undo(repoPath: string): Promise<UndoStepDto> {
 /** 重做一步:沿时间线前进,reset --soft。 */
 export async function redo(repoPath: string): Promise<UndoStepDto> {
   return await invoke<UndoStepDto>("redo", { repoPath });
+}
+
+// ── 操作日志(本会话写操作时间线)──
+export interface OpLogEntryDto {
+  label: string;        // 操作中文名;基点为 "起点"
+  target_short: string; // 该操作后 HEAD 短 SHA
+  timestamp: number;    // Unix 秒
+}
+
+export interface OpLogDto {
+  entries: OpLogEntryDto[]; // oldest→newest
+  current: number;          // 当前 HEAD 所在项下标
+}
+
+/** 操作日志:本工具本会话做过的写操作时间线 + 当前光标。 */
+export async function opLog(repoPath: string): Promise<OpLogDto> {
+  return await invoke<OpLogDto>("op_log", { repoPath });
+}
+
+/** 跳到操作日志第 index 项(reset --soft 过去)。 */
+export async function opGoto(repoPath: string, index: number): Promise<UndoStepDto> {
+  return await invoke<UndoStepDto>("op_goto", { repoPath, index });
 }
 
 export async function searchCommits(repoPath: string, query: string, limit: number): Promise<CommitDto[]> {

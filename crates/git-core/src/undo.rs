@@ -10,31 +10,56 @@
 //!
 //! 这一层是纯函数(只吃一个字符串),不碰任何 git 实现,可毫秒级单测。
 
-/// 判断一条 reflog 顶项(`HEAD@{0}`)的操作能否用「reset --soft 到上一步」安全撤销。
+/// 撤销一个操作时,该用哪种「还原语义」——决定上层用 `reset --soft` 还是 `--hard`。
 ///
-/// 返回 `Some(中文操作名)` 表示可撤销(用于按钮/toast 文案),`None` 表示不可撤销。
+/// 这是本模块的核心区分。两类操作的撤销方式根本不同:
+/// - [`UndoKind::Uncommit`](提交 / amend):撤销 = 「反提交」,内容退回暂存区供你继续改。
+///   只动 HEAD 指针,**绝不碰工作区**,永远安全 → `reset --soft`。
+/// - [`UndoKind::Restore`](reset / cherry-pick / revert / merge / rebase / pull):
+///   这些操作改写了历史**并改动了工作区/暂存区**。撤销必须**忠实还原**到操作前的完整
+///   状态(HEAD+暂存区+工作区),否则会留下残渣(比如撤销 `reset --hard` 后用 soft,
+///   暂存区会凭空多出文件)→ `reset --hard`(由上层在工作区干净时才执行)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UndoKind {
+    /// 提交类:撤销退回暂存区(soft),保留你的活。
+    Uncommit,
+    /// 改写/移动类:撤销需忠实还原完整工作区(hard)。
+    Restore,
+}
+
+/// 判断一条 reflog 顶项(`HEAD@{0}`)的操作能否用 reset 安全撤销,并给出还原语义。
+///
+/// 返回 `Some((中文操作名, 还原类别))` 表示可撤销;`None` 表示不可撤销
+/// (checkout 切分支 / clone / branch / 未识别 —— 用 reset 撤销会错移分支指针)。
 ///
 /// git 的 reflog message 形如:`"commit: 修复 X"`、`"commit (amend): ..."`、
 /// `"reset: moving to HEAD~1"`、`"merge feature: Merge made by..."`、
 /// `"cherry-pick: ..."`、`"revert: ..."`、`"rebase (finish): ..."`、
 /// `"pull: Fast-forward"`、`"checkout: moving from a to b"`。
-pub fn undoable_op_label(reflog_message: &str) -> Option<&'static str> {
+pub fn classify_undoable(reflog_message: &str) -> Option<(&'static str, UndoKind)> {
+    use UndoKind::*;
     let msg = reflog_message.trim_start();
     // 取第一个 token(到空格或冒号为止),即操作类型关键字。
     let head = msg.split([' ', ':']).next().unwrap_or("");
     match head {
-        // amend 也是一次 commit,但语义上要分开提示。
-        "commit" if msg.starts_with("commit (amend)") => Some("修改提交(amend)"),
-        "commit" => Some("提交"),
-        "cherry-pick" => Some("cherry-pick"),
-        "revert" => Some("回退提交(revert)"),
-        "merge" => Some("合并"),
-        "rebase" => Some("变基(rebase)"),
-        "reset" => Some("重置(reset)"),
-        "pull" => Some("拉取(pull)"),
+        // amend 也是一次 commit,但语义上要分开提示。提交类 → 撤销退回暂存区。
+        "commit" if msg.starts_with("commit (amend)") => Some(("修改提交(amend)", Uncommit)),
+        "commit" => Some(("提交", Uncommit)),
+        // 以下都改动了工作区/暂存区,撤销需忠实还原(hard)。
+        "cherry-pick" => Some(("cherry-pick", Restore)),
+        "revert" => Some(("回退提交(revert)", Restore)),
+        "merge" => Some(("合并", Restore)),
+        "rebase" => Some(("变基(rebase)", Restore)),
+        "reset" => Some(("重置(reset)", Restore)),
+        "pull" => Some(("拉取(pull)", Restore)),
         // checkout / clone / branch / 未识别 → 不冒险用 reset 撤销。
         _ => None,
     }
+}
+
+/// [`classify_undoable`] 的便捷封装:只取中文操作名(用于只关心文案、不关心还原语义的地方)。
+pub fn undoable_op_label(reflog_message: &str) -> Option<&'static str> {
+    classify_undoable(reflog_message).map(|(label, _)| label)
 }
 
 #[cfg(test)]
@@ -77,5 +102,33 @@ mod tests {
         assert_eq!(undoable_op_label("branch: Created from HEAD"), None);
         assert_eq!(undoable_op_label(""), None);
         assert_eq!(undoable_op_label("某种未来才有的操作"), None);
+    }
+
+    #[test]
+    fn classifies_restore_semantics() {
+        use UndoKind::*;
+        // 提交类 → Uncommit(撤销退回暂存区)。
+        assert_eq!(classify_undoable("commit: x").map(|c| c.1), Some(Uncommit));
+        assert_eq!(
+            classify_undoable("commit (amend): x").map(|c| c.1),
+            Some(Uncommit)
+        );
+        // 改写/移动类 → Restore(撤销需忠实还原工作区)。这正是 reset --hard 撤销
+        // 必须走 hard、而非 soft 的依据(soft 留残渣)。
+        for msg in [
+            "reset: moving to HEAD~1",
+            "cherry-pick: x",
+            "revert: x",
+            "merge feature: ...",
+            "rebase (finish): ...",
+            "pull: Fast-forward",
+        ] {
+            assert_eq!(
+                classify_undoable(msg).map(|c| c.1),
+                Some(Restore),
+                "{msg} 应归为 Restore"
+            );
+        }
+        assert_eq!(classify_undoable("checkout: moving"), None);
     }
 }
