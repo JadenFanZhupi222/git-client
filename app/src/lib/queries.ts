@@ -8,7 +8,7 @@ import {
   getStatus, getWorkingDiff, getCommitGraph, searchCommits, getReflog, getCommitFiles, getCommitFileDiff,
   compareFiles, compareFileDiff,
   getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
-  getRepoState, readWorkingFile, blame, conflictSides, undoState,
+  getRepoState, readWorkingFile, blame, conflictSides, undoState, opLog,
   watchRepo, onRepoChanged,
 } from "../ipc";
 
@@ -34,6 +34,7 @@ export const qk = {
   compareDiff: (repo: string) => ["compareDiff", repo] as const,
   refs: (repo: string) => ["refs", repo] as const,
   undoState: (repo: string) => ["undoState", repo] as const,
+  opLog: (repo: string) => ["opLog", repo] as const,
 };
 
 // ---- 读 hooks ----
@@ -120,6 +121,11 @@ export function useUndoState(repo: string) {
   return useQuery({ queryKey: qk.undoState(repo), queryFn: () => undoState(repo), enabled: !!repo });
 }
 
+/** 操作日志(本会话写操作时间线)。随历史变化失效。`enabled` 控制是否拉(面板打开才拉)。 */
+export function useOpLog(repo: string, enabled: boolean) {
+  return useQuery({ queryKey: qk.opLog(repo), queryFn: () => opLog(repo), enabled: enabled && !!repo });
+}
+
 export function useAheadBehind(repo: string) {
   return useQuery({ queryKey: qk.aheadBehind(repo), queryFn: () => getAheadBehind(repo), enabled: !!repo });
 }
@@ -185,6 +191,7 @@ export function invalidateHistory(qc: QueryClient, repo: string) {
   qc.invalidateQueries({ queryKey: qk.currentBranch(repo) });
   qc.invalidateQueries({ queryKey: qk.aheadBehind(repo) });
   qc.invalidateQueries({ queryKey: qk.undoState(repo) }); // HEAD 动了 → 重算可否撤销/重做
+  qc.invalidateQueries({ queryKey: qk.opLog(repo) }); // 操作日志(光标/新条目)也刷新
 }
 
 // ---- 一处监听文件变化 → 失效对应查询(取代各 view 的订阅+重载)----

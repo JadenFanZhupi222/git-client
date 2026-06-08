@@ -85,6 +85,26 @@ pub struct UndoStateDto {
     pub can_redo: Option<UndoStepDto>,
 }
 
+/// 操作日志的一项:本工具做过的一次写操作的落点。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpLogEntryDto {
+    /// 操作中文名,如 "提交"、"cherry-pick";时间线基点为 "起点"。
+    pub label: String,
+    /// 该操作后 HEAD 的短 SHA。
+    pub target_short: String,
+    /// Unix 时间戳(秒),供「几分钟前」显示。
+    pub timestamp: i64,
+}
+
+/// 操作日志面板数据:本会话写操作时间线(oldest→newest)+ 当前光标位置。
+/// 点击第 i 项 = goto(i),沿时间线 reset --soft 跳过去。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpLogDto {
+    pub entries: Vec<OpLogEntryDto>,
+    /// 当前 HEAD 所在的项下标(高亮「现在在哪」)。
+    pub current: usize,
+}
+
 /// 跨 IPC 边界的错误:带错误码(前端做逻辑分支)+ 友好信息 + 是否可重试。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpcError {

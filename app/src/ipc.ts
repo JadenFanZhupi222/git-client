@@ -433,6 +433,28 @@ export async function redo(repoPath: string): Promise<UndoStepDto> {
   return await invoke<UndoStepDto>("redo", { repoPath });
 }
 
+// ── 操作日志(本会话写操作时间线)──
+export interface OpLogEntryDto {
+  label: string;        // 操作中文名;基点为 "起点"
+  target_short: string; // 该操作后 HEAD 短 SHA
+  timestamp: number;    // Unix 秒
+}
+
+export interface OpLogDto {
+  entries: OpLogEntryDto[]; // oldest→newest
+  current: number;          // 当前 HEAD 所在项下标
+}
+
+/** 操作日志:本工具本会话做过的写操作时间线 + 当前光标。 */
+export async function opLog(repoPath: string): Promise<OpLogDto> {
+  return await invoke<OpLogDto>("op_log", { repoPath });
+}
+
+/** 跳到操作日志第 index 项(reset --soft 过去)。 */
+export async function opGoto(repoPath: string, index: number): Promise<UndoStepDto> {
+  return await invoke<UndoStepDto>("op_goto", { repoPath, index });
+}
+
 export async function searchCommits(repoPath: string, query: string, limit: number): Promise<CommitDto[]> {
   return await invoke<CommitDto[]>("search_commits", { repoPath, query, limit });
 }

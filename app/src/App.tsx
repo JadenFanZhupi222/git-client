@@ -7,10 +7,11 @@ import { CompareView } from "./views/CompareView";
 import { BlameView } from "./views/BlameView";
 import { useQueryClient } from "@tanstack/react-query";
 import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, type IpcError } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon } from "./components/icons";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
 import { StashMenu } from "./components/StashMenu";
+import { OpLogPanel } from "./components/OpLogPanel";
 import { useToast } from "./components/Toast";
 import { Button } from "./components/ui/Button";
 import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
@@ -37,6 +38,7 @@ export default function App() {
   const [remoteMenu, setRemoteMenu] = useState(false);
   const [upMenu, setUpMenu] = useState(false);
   const [undoing, setUndoing] = useState(false);
+  const [opLogOpen, setOpLogOpen] = useState(false);
   const toast = useToast();
   const qc = useQueryClient();
 
@@ -235,6 +237,14 @@ export default function App() {
                 </button>
               )}
               <button
+                onClick={() => setOpLogOpen(true)}
+                title="操作日志(本会话写操作时间线,可点回跳)"
+                aria-label="操作日志"
+                className="grid h-7 w-7 place-items-center rounded-md border border-line-strong bg-elevated text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle"
+              >
+                <HistoryIcon width={14} height={14} />
+              </button>
+              <button
                 onClick={doFetch}
                 disabled={busy}
                 title="Fetch(从远程拉取更新,不改工作区)"
@@ -385,6 +395,17 @@ export default function App() {
             {repo}
           </span>
         </footer>
+      )}
+
+      {repo && opLogOpen && (
+        <OpLogPanel
+          repo={repo}
+          onClose={() => setOpLogOpen(false)}
+          onJumped={() => {
+            invalidateHistory(qc, repo);
+            invalidateWorktree(qc, repo);
+          }}
+        />
       )}
     </div>
   );

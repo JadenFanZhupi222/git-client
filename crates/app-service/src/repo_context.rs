@@ -19,8 +19,9 @@ use git_core::model::{RebaseStep, ResetMode};
 use git_core::{GitBackend, GitError};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
-    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto,
-    ReflogEntryDto, StashDto, StatusDto, UndoStateDto, UndoStepDto,
+    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, OpLogDto, OpLogEntryDto,
+    PullResultDto, PushResultDto, RefDto, ReflogEntryDto, StashDto, StatusDto, UndoStateDto,
+    UndoStepDto,
 };
 use lru::LruCache;
 use std::collections::HashMap;
@@ -529,8 +530,16 @@ impl RepoContext {
             self.nav
                 .lock()
                 .unwrap()
-                .record(before.as_deref(), &after, label);
+                .record(before.as_deref(), &after, label, Self::now());
         }
+    }
+
+    /// 当前 Unix 时间戳(秒);时钟异常兜底为 0。给操作日志的点打时间戳。
+    fn now() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
     }
 
     /// 冷启动 / 外部改动后重建时间线用的提示:reflog 顶项可安全撤销时给
@@ -567,7 +576,7 @@ impl RepoContext {
             self.bootstrap_hint()?
         };
         let mut nav = self.nav.lock().unwrap();
-        nav.sync(&head, boot);
+        nav.sync(&head, boot, Self::now());
         let to_dto = |s: crate::undo_nav::NavStep| UndoStepDto {
             label: s.label,
             target_short: Self::short(&s.target_oid),
@@ -578,13 +587,64 @@ impl RepoContext {
         })
     }
 
+    /// 操作日志:本工具本会话做过的写操作时间线 + 当前光标(高亮「现在在哪」)。
+    /// 与 undo_state 同样先对齐真实 HEAD。点击某项 → [`RepoContext::goto`]。
+    pub fn op_log(&self) -> Result<OpLogDto, GitError> {
+        let Some(head) = self.head_oid_opt() else {
+            return Ok(OpLogDto {
+                entries: Vec::new(),
+                current: 0,
+            });
+        };
+        let aligned = self.nav.lock().unwrap().is_aligned(&head);
+        let boot = if aligned {
+            None
+        } else {
+            self.bootstrap_hint()?
+        };
+        let mut nav = self.nav.lock().unwrap();
+        nav.sync(&head, boot, Self::now());
+        Ok(OpLogDto {
+            entries: nav
+                .items()
+                .into_iter()
+                .map(|it| OpLogEntryDto {
+                    label: it.label,
+                    target_short: Self::short(&it.oid),
+                    timestamp: it.timestamp,
+                })
+                .collect(),
+            current: nav.cursor(),
+        })
+    }
+
+    /// 跳到操作日志的第 `index` 项:reset --soft 过去(撤销/重做的泛化)。改动回暂存区,
+    /// 不丢工作区。已在该点或越界 → NothingToUndo(无需移动)。
+    pub fn goto(&self, index: usize) -> Result<UndoStepDto, GitError> {
+        let head = self.head_oid_opt().ok_or(GitError::NoHead)?;
+        let boot = self.bootstrap_hint()?;
+        let step = {
+            let mut nav = self.nav.lock().unwrap();
+            nav.sync(&head, boot, Self::now());
+            nav.point_at(index).ok_or(GitError::NothingToUndo)?
+        };
+        self.service
+            .reset(&self.path, &step.target_oid, ResetMode::Soft)?;
+        self.nav.lock().unwrap().commit_goto(index);
+        self.after_write(true, true);
+        Ok(UndoStepDto {
+            label: step.label,
+            target_short: Self::short(&step.target_oid),
+        })
+    }
+
     /// 撤销一步:reset --soft 到光标左邻点。改动回暂存区,不丢工作区。无可撤销 → NothingToUndo。
     pub fn undo(&self) -> Result<UndoStepDto, GitError> {
         let head = self.head_oid_opt().ok_or(GitError::NoHead)?;
         let boot = self.bootstrap_hint()?;
         let step = {
             let mut nav = self.nav.lock().unwrap();
-            nav.sync(&head, boot);
+            nav.sync(&head, boot, Self::now());
             nav.can_undo().ok_or(GitError::NothingToUndo)?
         };
         // git 重活在锁外做;reset --soft 只移动分支指针,永不丢工作区。
@@ -604,7 +664,7 @@ impl RepoContext {
         let boot = self.bootstrap_hint()?;
         let step = {
             let mut nav = self.nav.lock().unwrap();
-            nav.sync(&head, boot);
+            nav.sync(&head, boot, Self::now());
             nav.can_redo().ok_or(GitError::NothingToRedo)?
         };
         self.service
@@ -988,5 +1048,42 @@ mod tests {
         assert!(ctx.undo_state().unwrap().can_undo.is_none());
         assert!(matches!(ctx.undo(), Err(GitError::NothingToUndo)));
         assert!(fb.tag_ops().is_empty());
+    }
+
+    #[test]
+    fn op_log_lists_timeline_and_goto_jumps() {
+        let a = "a".repeat(40);
+        let b = "b".repeat(40);
+        let fb = Arc::new(
+            FakeBackend::default()
+                .with_head(&b)
+                .with_reflog(reflog_top("commit: 改了点东西", &a)),
+        );
+        let ctx = RepoRegistry::new(fb.clone()).context(Path::new("/r"));
+
+        // 冷启动 bootstrap:时间线 [起点(A), 提交(B)],当前在 B(index 1)。
+        let log = ctx.op_log().unwrap();
+        assert_eq!(log.entries.len(), 2);
+        assert_eq!(log.current, 1);
+        assert_eq!(log.entries[0].label, "起点");
+        assert_eq!(log.entries[0].target_short, "aaaaaaa");
+        assert_eq!(log.entries[1].label, "提交");
+        assert_eq!(log.entries[1].target_short, "bbbbbbb");
+
+        // 点第 0 项 → 跳回 A(reset --soft),光标到 0。
+        let done = ctx.goto(0).unwrap();
+        assert_eq!(done.target_short, "aaaaaaa");
+        assert_eq!(fb.head_oid().as_deref(), Some(a.as_str()));
+        assert_eq!(ctx.op_log().unwrap().current, 0);
+
+        // 跳到当前项 → NothingToUndo(无需移动),不再 reset。
+        let resets_before = fb.tag_ops().len();
+        assert!(matches!(ctx.goto(0), Err(GitError::NothingToUndo)));
+        assert_eq!(fb.tag_ops().len(), resets_before, "跳到原地不该 reset");
+
+        // 点回第 1 项 → 跳到 B,光标回 1。
+        ctx.goto(1).unwrap();
+        assert_eq!(fb.head_oid().as_deref(), Some(b.as_str()));
+        assert_eq!(ctx.op_log().unwrap().current, 1);
     }
 }
