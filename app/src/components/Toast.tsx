@@ -39,10 +39,11 @@ export function useToast() {
   return useContext(ToastCtx);
 }
 
-const KIND_STYLE: Record<ToastKind, { cls: string; icon: ReactNode }> = {
-  success: { cls: "text-success", icon: <CheckIcon width={15} height={15} /> },
-  error: { cls: "text-danger", icon: <AlertIcon width={15} height={15} /> },
-  info: { cls: "text-accent", icon: <AlertIcon width={15} height={15} /> },
+/** 每种 toast 的视觉:图标 + 颜色类(图标/标题/左条同色,让卡片整体一眼可辨状态)。 */
+const KIND_STYLE: Record<ToastKind, { color: string; bar: string; icon: ReactNode }> = {
+  success: { color: "text-success", bar: "border-l-success", icon: <CheckIcon width={16} height={16} /> },
+  error: { color: "text-danger", bar: "border-l-danger", icon: <AlertIcon width={16} height={16} /> },
+  info: { color: "text-accent", bar: "border-l-accent", icon: <AlertIcon width={16} height={16} /> },
 };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
@@ -89,13 +90,14 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
   const style = KIND_STYLE[item.kind];
   return (
     <div
-      className={`pointer-events-auto flex w-80 items-start gap-2.5 rounded-lg border border-line-strong bg-elevated p-3 shadow-lg ${
+      // 4px 同色左条 + 同色图标/标题:整张卡片携带状态色,角落 / 全屏也一眼可辨
+      className={`pointer-events-auto flex w-80 items-start gap-2.5 rounded-lg border border-l-4 border-line-strong ${style.bar} bg-elevated p-3 shadow-lg ${
         item.leaving ? "toast-out" : "toast-in"
       }`}
     >
-      <span className={`mt-0.5 shrink-0 ${style.cls}`}>{style.icon}</span>
+      <span className={`mt-0.5 shrink-0 ${style.color}`}>{style.icon}</span>
       <div className="min-w-0 flex-1">
-        <div className="text-[13px] font-medium text-fg">{item.title}</div>
+        <div className={`text-[13px] font-semibold ${style.color}`}>{item.title}</div>
         {item.detail && (
           <div className="mt-0.5 break-words whitespace-pre-line font-mono text-[11px] leading-snug text-fg-muted">
             {item.detail}
