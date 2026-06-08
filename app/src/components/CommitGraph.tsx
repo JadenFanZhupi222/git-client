@@ -1,8 +1,7 @@
 import { type CommitDto, type GraphRowDto, type RefDto } from "../ipc";
 import { CommitLines } from "./CommitLines";
+import { ROW_H, cx, gutterWidth, topPath, botPath } from "../lib/graphGeometry";
 
-const LANE_W = 16; // 每条 lane 的像素宽
-const ROW_H = 48; // 行高必须固定,否则跨行的连线对不齐
 const NLANE = 8;
 const laneColor = (c: number) => `var(--lane-${((c % NLANE) + NLANE) % NLANE})`;
 
@@ -72,29 +71,7 @@ export function CommitGraph({
     );
   }
 
-  // gutter 宽度 = 所有行里出现过的最大列号 + 1
-  let maxCol = 0;
-  for (const r of rows) {
-    maxCol = Math.max(maxCol, r.column);
-    for (const s of r.top) maxCol = Math.max(maxCol, s.from, s.to);
-    for (const s of r.bottom) maxCol = Math.max(maxCol, s.from, s.to);
-  }
-  const gutterW = (maxCol + 1) * LANE_W;
-  const cx = (c: number) => c * LANE_W + LANE_W / 2;
-  const MID = ROW_H / 2;
-  // 上半段:顶边 → 中点。直列时是竖线;换列时用三次 bezier,两端切线竖直 →
-  // lane 在自己列里走直线,只在拐点柔和地弯,消除生硬的对角线/锯齿。
-  const topPath = (from: number, to: number) => {
-    const x1 = cx(from), x2 = cx(to);
-    if (x1 === x2) return `M${x1},0 L${x1},${MID}`;
-    return `M${x1},0 C${x1},${MID / 2} ${x2},${MID / 2} ${x2},${MID}`;
-  };
-  // 下半段:中点 → 底边。
-  const botPath = (from: number, to: number) => {
-    const x1 = cx(from), x2 = cx(to);
-    if (x1 === x2) return `M${x1},${MID} L${x1},${ROW_H}`;
-    return `M${x1},${MID} C${x1},${MID + MID / 2} ${x2},${MID + MID / 2} ${x2},${ROW_H}`;
-  };
+  const gutterW = gutterWidth(rows);
 
   return (
     <div className="fade-in overflow-y-auto">
