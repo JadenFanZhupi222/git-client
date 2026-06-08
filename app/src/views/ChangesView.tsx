@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   stageFile, unstageFile, stageHunk, unstageHunk, stageLines, commit, amendCommit,
@@ -6,6 +6,7 @@ import {
   type FileEntryDto, type IpcError,
 } from "../ipc";
 import { useStatus, useWorkingDiff, useRepoState, invalidateWorktree, invalidateHistory, qk } from "../lib/queries";
+import { useListKeyboardNav, isTypingTarget } from "../lib/listNav";
 import { RefreshIcon, CheckIcon, FileDiffIcon, PlusIcon, MinusIcon } from "../components/icons";
 import { DiffView } from "../components/DiffView";
 import { ConflictEditor } from "../components/ConflictEditor";
@@ -44,6 +45,7 @@ export function ChangesView({ repo }: { repo: string }) {
   const [busy, setBusy] = useState(false);
   const [sel, setSel] = useState<{ path: string; staged: boolean } | null>(null);
   const listCol = useResizableWidth("changes.listW", 340, 220, 680);
+  const listScrollRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
 
   // 选中文件的工作区 diff(随 sel 与失效自动重取)
@@ -56,6 +58,43 @@ export function ChangesView({ repo }: { repo: string }) {
   // 普通提交需有暂存;amend 可只改信息(允许无暂存)。两者都禁在冲突中、需有信息。
   const canCommit =
     !busy && conflicts.length === 0 && message.trim() !== "" && (amend || staged.length > 0);
+
+  // 扁平的可键盘选择列表(按显示顺序:冲突 → 已暂存 → 未暂存),供 j/k 导航与空格暂存。
+  const flatList = [
+    ...conflicts.map((e) => ({ path: e.path, staged: false, conflict: true })),
+    ...staged.map((e) => ({ path: e.path, staged: true, conflict: false })),
+    ...unstaged.map((e) => ({ path: e.path, staged: false, conflict: false })),
+  ];
+  const flatIndex = sel ? flatList.findIndex((x) => x.path === sel.path && x.staged === sel.staged) : -1;
+  useListKeyboardNav({
+    count: flatList.length,
+    index: flatIndex,
+    onSelect: (i) => setSel({ path: flatList[i].path, staged: flatList[i].staged }),
+  });
+
+  // 空格:暂存/取消暂存当前选中文件(冲突文件除外——它要显式选我方/对方/已解决)。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== " " || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTypingTarget(document.activeElement)) return;
+      if (!sel || busy) return;
+      const item = flatList.find((x) => x.path === sel.path && x.staged === sel.staged);
+      if (!item || item.conflict) return;
+      e.preventDefault();
+      run(() => (item.staged ? unstageFile(repo, item.path) : stageFile(repo, item.path)));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel, busy, flatList, repo]);
+
+  // 键盘选中变化 → 把该行滚进可视区(已可见则不动)。
+  useEffect(() => {
+    if (!sel) return;
+    listScrollRef.current
+      ?.querySelector<HTMLElement>(`[data-fkey="${CSS.escape(`${sel.path}|${sel.staged}`)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [sel]);
 
   // 切仓库清空选择与 amend
   useEffect(() => { setSel(null); setAmend(false); }, [repo]);
@@ -130,6 +169,7 @@ export function ChangesView({ repo }: { repo: string }) {
     const { dir, name } = splitPath(entry.path);
     return (
       <li
+        data-fkey={`${entry.path}|${isStaged}`}
         onClick={() => setSel({ path: entry.path, staged: isStaged })}
         className={`group flex cursor-pointer items-center gap-2 py-1 pl-3 pr-1.5 ${on ? "bg-overlay" : "hover:bg-elevated"}`}
       >
@@ -155,6 +195,7 @@ export function ChangesView({ repo }: { repo: string }) {
     const { dir, name } = splitPath(entry.path);
     return (
       <li
+        data-fkey={`${entry.path}|false`}
         onClick={() => setSel({ path: entry.path, staged: false })}
         className={`group flex cursor-pointer items-center gap-2 py-1 pl-3 pr-1.5 ${on ? "bg-overlay" : "hover:bg-elevated"}`}
       >
@@ -220,7 +261,7 @@ export function ChangesView({ repo }: { repo: string }) {
         </div>
 
         {/* 文件区(滚动) */}
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div ref={listScrollRef} className="min-h-0 flex-1 overflow-y-auto">
           {conflicts.length > 0 && (
             <Section title="冲突" count={conflicts.length}>
               <ul>
