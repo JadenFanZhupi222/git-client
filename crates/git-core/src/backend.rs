@@ -1,8 +1,8 @@
 use crate::error::GitError;
 use crate::model::{
-    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, PullOutcome, PushOutcome, RebaseStep, ReflogEntry, RepoState, ResetMode, StashEntry,
-    SyncCommits, WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
+    FetchOutcome, FileChange, FileDiff, PullOutcome, PushOutcome, RebaseStep, ReflogEntry,
+    RepoState, ResetMode, StashEntry, SyncCommits, WorkingTreeStatus,
 };
 use std::path::Path;
 
@@ -247,6 +247,16 @@ pub trait GitBackend: Send + Sync {
 
     /// 删除本地分支。不能删除当前所在分支。
     fn delete_branch(&self, repo: &Path, name: &str) -> Result<(), GitError>;
+
+    /// 删除某分支前的影响预览:有多少提交只在它上面、删后会丢。供二次确认。
+    /// 默认返回空(0 影响),不实现图计算的后端不阻塞删除流程。
+    fn branch_delete_impact(
+        &self,
+        _repo: &Path,
+        _name: &str,
+    ) -> Result<BranchDeleteImpact, GitError> {
+        Ok(BranchDeleteImpact::default())
+    }
 
     /// 从远程拉取更新(更新远程跟踪分支,不改工作区/当前分支)。
     /// remote = None 时用 git 默认远程(通常当前分支的 upstream / origin)。

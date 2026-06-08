@@ -178,6 +178,13 @@ impl GitBackend for CompositeBackend {
     fn delete_branch(&self, repo: &Path, name: &str) -> Result<(), GitError> {
         self.git2.delete_branch(repo, name)
     }
+    fn branch_delete_impact(
+        &self,
+        repo: &Path,
+        name: &str,
+    ) -> Result<git_core::model::BranchDeleteImpact, GitError> {
+        self.git2.branch_delete_impact(repo, name)
+    }
 
     // 网络操作走 CLI 后端。
     fn fetch(&self, repo: &Path, remote: Option<&str>) -> Result<FetchOutcome, GitError> {

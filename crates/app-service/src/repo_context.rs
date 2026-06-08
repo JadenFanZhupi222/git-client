@@ -18,9 +18,9 @@ use crate::watcher::ChangeKind;
 use git_core::model::{RebaseStep, ResetMode};
 use git_core::{GitBackend, GitError};
 use ipc_types::{
-    AheadBehindDto, BlameLineDto, BranchDto, CommitDto, ConflictSidesDto, FetchResultDto,
-    FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto,
-    StashDto, StatusDto, UndoStateDto, UndoStepDto,
+    AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
+    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto,
+    ReflogEntryDto, StashDto, StatusDto, UndoStateDto, UndoStepDto,
 };
 use lru::LruCache;
 use std::collections::HashMap;
@@ -435,6 +435,10 @@ impl RepoContext {
         self.service.delete_branch(&self.path, name)?;
         self.after_write(false, true);
         Ok(())
+    }
+    /// 删分支影响预览(只读,删除前调)。不缓存:仅在用户点删除时按需算一次。
+    pub fn branch_delete_impact(&self, name: &str) -> Result<BranchDeleteImpactDto, GitError> {
+        self.service.branch_delete_impact(&self.path, name)
     }
     pub fn fetch(&self, remote: Option<&str>) -> Result<FetchResultDto, GitError> {
         let out = self.service.fetch(&self.path, remote)?;

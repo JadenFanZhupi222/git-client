@@ -63,6 +63,18 @@ pub struct BranchInfo {
     pub is_head: bool,
 }
 
+/// 删除某分支的「影响预览」:删除前用它做二次确认。
+/// `unmerged_commits` = 仅该分支可达、不被任何其它引用(HEAD / 其它本地分支 / 远程跟踪 /
+/// 标签)可达的提交数 —— 删除后这些提交会变成孤儿(只剩 reflog),即「会丢失的工作」。
+/// 0 = 该分支已并入别处,删除安全。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BranchDeleteImpact {
+    /// 会因删除而丢失(孤立)的提交数。
+    pub unmerged_commits: usize,
+    /// 这些提交的摘要样本(最多数条,供确认弹窗展示「将丢失什么」)。
+    pub sample_summaries: Vec<String>,
+}
+
 /// 当前分支相对其上游(upstream)的领先/落后提交数。
 /// 无上游时上层返回 None,不构造本结构。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

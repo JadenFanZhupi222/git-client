@@ -4,15 +4,20 @@ import {
   checkoutBranch,
   createBranch,
   deleteBranch,
+  branchDeleteImpact,
+  type BranchDeleteImpactDto,
   type IpcError,
 } from "../ipc";
 import { useBranches, invalidateHistory } from "../lib/queries";
 import { Button } from "./ui/Button";
+import { IconButton } from "./ui/IconButton";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { BranchIcon, CheckIcon, PlusIcon, TrashIcon } from "./icons";
 
 /**
  * 底栏分支切换器(VSCode 状态栏式):点当前分支名 → 向上弹出本地分支列表。
- * 支持:点选 checkout、新建分支(建完即切)、删除分支(行内二次确认)。
+ * 支持:点选 checkout、新建分支(建完即切)、删除分支(统一 ConfirmDialog 确认,
+ * 删前查影响:未合并分支强警告并列出将丢失的提交)。
  * 分支列表走 useBranches(打开时拉);切换/新建/删除后失效查询,各视图自动重载。
  */
 export function BranchSwitcher({
@@ -32,7 +37,8 @@ export function BranchSwitcher({
   const [filter, setFilter] = useState("");
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [checkingDelete, setCheckingDelete] = useState<string | null>(null); // 正在查影响的分支
+  const [pendingDelete, setPendingDelete] = useState<{ name: string; impact: BranchDeleteImpactDto | null } | null>(null);
   const newInputRef = useRef<HTMLInputElement>(null);
 
   // checkout/create/delete 后失效:分支列表 + 历史/当前分支/同步状态。
@@ -63,7 +69,8 @@ export function BranchSwitcher({
     setError(null);
     setCreating(false);
     setNewName("");
-    setConfirmDelete(null);
+    setPendingDelete(null);
+    setCheckingDelete(null);
   }
 
   async function select(name: string, isCurrent: boolean) {
@@ -102,15 +109,31 @@ export function BranchSwitcher({
     }
   }
 
+  // 点删除图标:先查影响(会丢多少提交),再开统一确认弹窗。
+  async function requestDelete(name: string) {
+    setCheckingDelete(name);
+    setError(null);
+    try {
+      const impact = await branchDeleteImpact(repo, name);
+      setPendingDelete({ name, impact });
+    } catch {
+      // 查影响失败(如分支已被外部删)→ 仍给一个保守确认,不直接删。
+      setPendingDelete({ name, impact: null });
+    } finally {
+      setCheckingDelete(null);
+    }
+  }
+
   async function doDelete(name: string) {
     setBusy(name);
     setError(null);
     try {
       await deleteBranch(repo, name);
-      setConfirmDelete(null);
+      setPendingDelete(null);
       invalidate();
     } catch (e) {
       setError((e as IpcError).message ?? String(e));
+      setPendingDelete(null);
     } finally {
       setBusy(null);
     }
@@ -158,7 +181,6 @@ export function BranchSwitcher({
               ) : (
                 shown.map((b) => {
                   const current = b.name === branch || b.is_head;
-                  const confirming = confirmDelete === b.name;
                   return (
                     <li key={b.name} className="group flex items-center pr-1.5">
                       <button
@@ -174,35 +196,19 @@ export function BranchSwitcher({
                         <span className="truncate font-mono">{b.name}</span>
                       </button>
 
-                      {/* 当前分支不可删 */}
-                      {!current &&
-                        (confirming ? (
-                          <span className="flex shrink-0 items-center gap-0.5">
-                            <button
-                              onClick={() => doDelete(b.name)}
-                              disabled={busy !== null}
-                              title="确认删除"
-                              className="rounded p-1 text-danger hover:bg-danger/10 disabled:opacity-50"
-                            >
-                              <CheckIcon width={12} height={12} />
-                            </button>
-                            <button
-                              onClick={() => setConfirmDelete(null)}
-                              title="取消"
-                              className="rounded p-1 text-fg-subtle hover:bg-overlay"
-                            >
-                              <CloseGlyph />
-                            </button>
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => setConfirmDelete(b.name)}
-                            title="删除分支"
-                            className="shrink-0 rounded p-1 text-fg-subtle opacity-0 transition-opacity hover:bg-overlay hover:text-danger group-hover:opacity-100"
-                          >
-                            <TrashIcon width={12} height={12} />
-                          </button>
-                        ))}
+                      {/* 当前分支不可删;点删除 → 查影响 → 统一确认弹窗 */}
+                      {!current && (
+                        <IconButton
+                          aria-label={`删除分支 ${b.name}`}
+                          tone="danger"
+                          onClick={() => requestDelete(b.name)}
+                          disabled={busy !== null || checkingDelete !== null}
+                          title="删除分支"
+                          className="shrink-0 p-1 opacity-0 transition-opacity group-hover:opacity-100"
+                        >
+                          <TrashIcon width={12} height={12} />
+                        </IconButton>
+                      )}
                     </li>
                   );
                 })
@@ -237,15 +243,36 @@ export function BranchSwitcher({
           </div>
         </>
       )}
-    </div>
-  );
-}
 
-function CloseGlyph() {
-  return (
-    <svg width={12} height={12} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
-      <path d="M4 4l8 8M12 4l-8 8" />
-    </svg>
+      {pendingDelete && (() => {
+        const { name, impact } = pendingDelete;
+        const unmerged = impact?.unmerged_commits ?? 0;
+        const danger = impact === null || unmerged > 0;
+        return (
+          <ConfirmDialog
+            open
+            title={`删除分支 “${name}”?`}
+            message={
+              impact === null
+                ? "无法确认该分支是否已并入别处,请谨慎删除。"
+                : unmerged > 0
+                  ? undefined
+                  : "该分支的提交已并入别处,删除不会丢失工作。"
+            }
+            impactNote={
+              unmerged > 0
+                ? `该分支有 ${unmerged} 个提交未合并到任何其它分支,删除后将丢失。`
+                : undefined
+            }
+            items={unmerged > 0 ? impact!.sample_summaries : undefined}
+            confirmLabel={danger ? "仍要删除" : "删除"}
+            busy={busy === name}
+            onConfirm={() => doDelete(name)}
+            onCancel={() => setPendingDelete(null)}
+          />
+        );
+      })()}
+    </div>
   );
 }
 
