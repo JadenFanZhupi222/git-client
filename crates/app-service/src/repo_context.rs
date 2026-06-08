@@ -19,7 +19,7 @@ use git_core::{GitBackend, GitError};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDto, CommitDto, ConflictSidesDto, FetchResultDto,
     FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto,
-    StashDto, StatusDto,
+    StashDto, StatusDto, UndoInfoDto,
 };
 use lru::LruCache;
 use std::collections::HashMap;
@@ -492,6 +492,16 @@ impl RepoContext {
         self.service.reset(&self.path, commit_id, mode)?;
         self.after_write(true, true);
         Ok(())
+    }
+    /// 预览"撤销上一步":只读 reflog,不写,无需失效缓存。
+    pub fn undo_preview(&self) -> Result<Option<UndoInfoDto>, GitError> {
+        self.service.undo_preview(&self.path)
+    }
+    /// 撤销上一步(reset --soft 到 HEAD@{1})。同 reset:工作区 + ref 域都要失效。
+    pub fn undo_last(&self) -> Result<UndoInfoDto, GitError> {
+        let out = self.service.undo_last(&self.path)?;
+        self.after_write(true, true);
+        Ok(out)
     }
     pub fn interactive_rebase(
         &self,

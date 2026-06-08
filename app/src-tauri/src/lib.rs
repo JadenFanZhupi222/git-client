@@ -4,7 +4,7 @@ use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组�
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDto, CommitDto, ConflictSidesDto, FetchResultDto,
     FileChangeDto, FileDiffDto, GraphRowDto, IpcError, PullResultDto, PushResultDto, RefDto,
-    ReflogEntryDto, StashDto, StatusDto,
+    ReflogEntryDto, StashDto, StatusDto, UndoInfoDto,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -45,6 +45,7 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         NoUpstream => ("NO_UPSTREAM", false),
         PushRejected => ("PUSH_REJECTED", true),
         MergeConflict { .. } => ("MERGE_CONFLICT", true),
+        NothingToUndo => ("NOTHING_TO_UNDO", false),
         Unsupported => ("UNSUPPORTED", false),
         Backend(_) => ("BACKEND", true),
     };
@@ -667,6 +668,32 @@ async fn reset(
         .map_err(to_ipc)
 }
 
+/// 预览"撤销上一步"(只读):返回可撤销操作信息,或 null(无可撤销)。
+#[tauri::command]
+async fn undo_preview(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<Option<UndoInfoDto>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.undo_preview())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+/// 撤销上一步:reset --soft 到 HEAD@{1}。改动回暂存区,不丢工作区。
+#[tauri::command]
+async fn undo_last(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<UndoInfoDto, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.undo_last())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
 /// 写入冲突解决后的内容并标记已解决(写文件 + git add)。防目录穿越。
 #[tauri::command]
 async fn write_resolved(
@@ -887,6 +914,8 @@ pub fn run() {
             create_tag,
             delete_tag,
             reset,
+            undo_preview,
+            undo_last,
             interactive_rebase,
             blame,
             conflict_sides,

@@ -397,6 +397,22 @@ export async function getReflog(repoPath: string, limit: number): Promise<Reflog
   return await invoke<ReflogEntryDto[]>("get_reflog", { repoPath, limit });
 }
 
+// ── 撤销上一步(基于 reflog HEAD@{1},reset --soft,永不丢工作区)──
+export interface UndoInfoDto {
+  label: string;        // 可撤销操作中文名,如 "提交"、"重置(reset)"
+  target_short: string; // 撤销后 HEAD 指向的提交短 SHA
+}
+
+/** 预览能否撤销上一步:可撤销返回信息,否则 null(只读,不改仓库)。 */
+export async function undoPreview(repoPath: string): Promise<UndoInfoDto | null> {
+  return await invoke<UndoInfoDto | null>("undo_preview", { repoPath });
+}
+
+/** 撤销上一步:reset --soft 到 HEAD@{1}。改动回暂存区,不丢工作区。 */
+export async function undoLast(repoPath: string): Promise<UndoInfoDto> {
+  return await invoke<UndoInfoDto>("undo_last", { repoPath });
+}
+
 export async function searchCommits(repoPath: string, query: string, limit: number): Promise<CommitDto[]> {
   return await invoke<CommitDto[]>("search_commits", { repoPath, query, limit });
 }

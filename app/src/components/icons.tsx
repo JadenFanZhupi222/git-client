@@ -28,6 +28,14 @@ export const RefreshIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+// 撤销:逆时针回转箭头(arrow-uturn-left 风格)。
+export const UndoIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M2.5 6.5h7.5a3.5 3.5 0 0 1 0 7H6" />
+    <path d="M5 3.5 2 6.5l3 3" />
+  </svg>
+);
+
 export const BranchIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
     <circle cx="4" cy="3.5" r="1.5" />

@@ -6,7 +6,7 @@ use git_core::{GitBackend, GitError};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDto, CommitDto, ConflictSidesDto, FetchResultDto,
     FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto,
-    StashDto, StatusDto,
+    StashDto, StatusDto, UndoInfoDto,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -390,6 +390,41 @@ impl RepoService {
             return Err(GitError::Backend("提交 ID 不能为空".into()));
         }
         self.backend.reset(repo_path, commit_id, mode)
+    }
+
+    /// 用例(编排):预览"撤销上一步"——只读,不改仓库。
+    /// 读 reflog 顶 2 项,若顶项是可安全撤销的操作且存在上一步,返回 Some(信息),否则 None。
+    /// 撤销不是新原语,而是 reflog + reset 的组合,所以编排放在应用层(无需新增后端方法)。
+    pub fn undo_preview(&self, repo_path: &Path) -> Result<Option<UndoInfoDto>, GitError> {
+        let entries = self.backend.reflog(repo_path, 2)?;
+        // 需要 HEAD@{0}(判类型)和 HEAD@{1}(撤销目标)都存在。
+        let [top, prev, ..] = entries.as_slice() else {
+            return Ok(None);
+        };
+        let Some(label) = git_core::undoable_op_label(&top.message) else {
+            return Ok(None);
+        };
+        Ok(Some(UndoInfoDto {
+            label: label.to_string(),
+            target_short: prev.new_short.clone(),
+        }))
+    }
+
+    /// 用例(编排):撤销上一步 = `reset --soft` 到 `HEAD@{1}`。
+    /// soft 只移动分支指针,绝不动工作区文件——被撤销的提交内容回到暂存区,永不丢数据。
+    /// 顶项不可安全撤销(如 checkout 切分支)或没有上一步 → `NothingToUndo`。
+    pub fn undo_last(&self, repo_path: &Path) -> Result<UndoInfoDto, GitError> {
+        let entries = self.backend.reflog(repo_path, 2)?;
+        let [top, prev, ..] = entries.as_slice() else {
+            return Err(GitError::NothingToUndo);
+        };
+        let label = git_core::undoable_op_label(&top.message).ok_or(GitError::NothingToUndo)?;
+        self.backend
+            .reset(repo_path, &prev.new_oid, git_core::model::ResetMode::Soft)?;
+        Ok(UndoInfoDto {
+            label: label.to_string(),
+            target_short: prev.new_short.clone(),
+        })
     }
 
     /// 用例:交互式 rebase。base=最旧提交的父(None→--root);steps 为 oldest→newest。
@@ -949,6 +984,107 @@ mod tests {
         assert_eq!(fb.tag_ops(), vec!["reset:soft:abc123", "reset:hard:def456"]);
         // 空 id 拦截
         assert!(svc.reset(Path::new("/r"), " ", ResetMode::Mixed).is_err());
+    }
+
+    // 撤销测试用的 reflog 构造助手:msg=顶项操作描述,prev_oid=上一步目标。
+    #[cfg(test)]
+    fn undo_reflog(msg: &str, prev_oid: &str) -> Vec<git_core::model::ReflogEntry> {
+        use git_core::model::{ReflogEntry, Signature};
+        let sig = Signature {
+            name: "n".into(),
+            email: "e".into(),
+        };
+        vec![
+            ReflogEntry {
+                index: 0,
+                selector: "HEAD@{0}".into(),
+                new_oid: "head0000".into(),
+                new_short: "head000".into(),
+                message: msg.into(),
+                committer: sig.clone(),
+                timestamp: 0,
+            },
+            ReflogEntry {
+                index: 1,
+                selector: "HEAD@{1}".into(),
+                new_oid: prev_oid.into(),
+                new_short: prev_oid.chars().take(7).collect(),
+                message: "older".into(),
+                committer: sig,
+                timestamp: 0,
+            },
+        ]
+    }
+
+    #[test]
+    fn undo_last_soft_resets_to_prev_for_undoable_op() {
+        // 顶项是 commit → 可撤销 → reset --soft 到 HEAD@{1}.new_oid。
+        let fb =
+            Arc::new(FakeBackend::default().with_reflog(undo_reflog("commit: 修复", "prev1234")));
+        let svc = RepoService::new(fb.clone());
+        let info = svc.undo_last(Path::new("/r")).unwrap();
+        assert_eq!(info.label, "提交");
+        assert_eq!(info.target_short, "prev123");
+        // 验证确实是 soft + 正确目标 oid(fake.reset 记进 tag_ops)。
+        assert_eq!(fb.tag_ops(), vec!["reset:soft:prev1234"]);
+    }
+
+    #[test]
+    fn undo_last_refuses_checkout() {
+        // 切分支不能用 reset 撤销 → NothingToUndo,且不调 reset。
+        let fb = Arc::new(
+            FakeBackend::default()
+                .with_reflog(undo_reflog("checkout: moving from a to b", "prev1")),
+        );
+        let svc = RepoService::new(fb.clone());
+        assert!(matches!(
+            svc.undo_last(Path::new("/r")),
+            Err(GitError::NothingToUndo)
+        ));
+        assert!(fb.tag_ops().is_empty(), "拒绝时绝不能动 HEAD");
+    }
+
+    #[test]
+    fn undo_last_errors_when_no_prev_step() {
+        // 只有一条 reflog(如刚 init 后首次提交)→ 没有可回退的上一步。
+        use git_core::model::{ReflogEntry, Signature};
+        let only = vec![ReflogEntry {
+            index: 0,
+            selector: "HEAD@{0}".into(),
+            new_oid: "only0000".into(),
+            new_short: "only000".into(),
+            message: "commit (initial): 第一次".into(),
+            committer: Signature {
+                name: "n".into(),
+                email: "e".into(),
+            },
+            timestamp: 0,
+        }];
+        let svc = RepoService::new(Arc::new(FakeBackend::default().with_reflog(only)));
+        assert!(matches!(
+            svc.undo_last(Path::new("/r")),
+            Err(GitError::NothingToUndo)
+        ));
+    }
+
+    #[test]
+    fn undo_preview_reflects_undoability_without_writing() {
+        // 可撤销:返回 Some(label, 目标短 SHA),且不调 reset。
+        let fb = Arc::new(
+            FakeBackend::default().with_reflog(undo_reflog("reset: moving to HEAD~1", "tgt9999")),
+        );
+        let svc = RepoService::new(fb.clone());
+        let prev = svc.undo_preview(Path::new("/r")).unwrap();
+        let prev = prev.expect("reset 应可撤销");
+        assert_eq!(prev.label, "重置(reset)");
+        assert_eq!(prev.target_short, "tgt9999");
+        assert!(fb.tag_ops().is_empty(), "preview 是只读的");
+
+        // 不可撤销:None。
+        let fb2 =
+            FakeBackend::default().with_reflog(undo_reflog("checkout: moving from a to b", "x"));
+        let svc2 = RepoService::new(Arc::new(fb2));
+        assert!(svc2.undo_preview(Path::new("/r")).unwrap().is_none());
     }
 
     #[test]

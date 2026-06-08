@@ -65,6 +65,16 @@ impl From<ReflogEntry> for ReflogEntryDto {
     }
 }
 
+/// 「撤销上一步」的信息。`undo_preview` 返回 `Option<UndoInfoDto>`(None=无可撤销),
+/// `undo_last` 成功后返回它(已撤销)。两处共用同一结构,文案一致。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoInfoDto {
+    /// 将被 / 已被撤销的操作的中文名,如 "提交"、"重置(reset)"。
+    pub label: String,
+    /// 撤销后 HEAD 指向的提交短 SHA(供 toast/tooltip 显示"回到 abc1234")。
+    pub target_short: String,
+}
+
 /// 跨 IPC 边界的错误:带错误码(前端做逻辑分支)+ 友好信息 + 是否可重试。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpcError {
