@@ -36,7 +36,15 @@ pub trait GitBackend: Send + Sync {
     }
 
     /// 提交历史,时间倒序(新→旧)。limit/skip 分页。
-    fn log(&self, repo: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, GitError>;
+    /// `cancelled`:遍历时定期回调,返回 true 则尽快中断并返回 `GitError::Cancelled`
+    ///(上层在用户快速切分支/切 tab 时取消上一次,避免占满阻塞线程池)。
+    fn log(
+        &self,
+        repo: &Path,
+        limit: usize,
+        skip: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Commit>, GitError>;
 
     /// HEAD 的 reflog(最近在前),最多 limit 条。无 reflog(如刚 init 的空仓库)→ 空。
     /// 每条的 `new_oid` 即该步后 HEAD 指向的提交,可作为 reset 的目标(找回丢失提交)。
@@ -112,7 +120,13 @@ pub trait GitBackend: Send + Sync {
     fn repo_state(&self, repo: &Path) -> Result<RepoState, GitError>;
 
     /// 逐行 blame:返回 `file`(仓库根相对路径)每行最后修改的提交信息。
-    fn blame(&self, repo: &Path, file: &str) -> Result<Vec<BlameLine>, GitError>;
+    /// `cancelled`:大文件 blame 较重,定期回调返回 true 则中断并返回 `GitError::Cancelled`。
+    fn blame(
+        &self,
+        repo: &Path,
+        file: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<BlameLine>, GitError>;
 
     // ---- 冲突解决:整文件采用一边走 CLI;默认 Unsupported ----
 

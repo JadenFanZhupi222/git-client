@@ -91,8 +91,9 @@ impl RepoService {
         repo_path: &Path,
         limit: usize,
         skip: usize,
+        cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<CommitDto>, GitError> {
-        let commits = self.backend.log(repo_path, limit, skip)?;
+        let commits = self.backend.log(repo_path, limit, skip, cancelled)?;
         Ok(commits.into_iter().map(CommitDto::from).collect())
     }
 
@@ -103,8 +104,9 @@ impl RepoService {
         &self,
         repo_path: &Path,
         limit: usize,
+        cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<GraphRowDto>, GitError> {
-        let commits = self.backend.log(repo_path, limit, 0)?;
+        let commits = self.backend.log(repo_path, limit, 0, cancelled)?;
         let refs = self.backend.refs(repo_path)?;
         let sync = self.backend.sync_commits(repo_path)?;
         let mut rows = crate::graph::layout(&commits);
@@ -278,10 +280,15 @@ impl RepoService {
         .to_string())
     }
     /// 用例:逐行 blame。
-    pub fn blame(&self, repo_path: &Path, file: &str) -> Result<Vec<BlameLineDto>, GitError> {
+    pub fn blame(
+        &self,
+        repo_path: &Path,
+        file: &str,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<BlameLineDto>, GitError> {
         Ok(self
             .backend
-            .blame(repo_path, file)?
+            .blame(repo_path, file, cancelled)?
             .into_iter()
             .map(BlameLineDto::from)
             .collect())
@@ -516,7 +523,7 @@ mod tests {
     fn log_returns_commit_dtos() {
         let fb = FakeBackend::default().with_log(vec![fake_commit("hi")]);
         let svc = RepoService::new(Arc::new(fb));
-        let dtos = svc.log(Path::new("/r"), 10, 0).unwrap();
+        let dtos = svc.log(Path::new("/r"), 10, 0, &|| false).unwrap();
         assert_eq!(dtos.len(), 1);
         assert_eq!(dtos[0].summary, "hi");
     }
@@ -561,7 +568,7 @@ mod tests {
         };
         let fb = FakeBackend::default().with_log(vec![mk("a", vec!["b"]), mk("b", vec![])]);
         let svc = RepoService::new(Arc::new(fb));
-        let rows = svc.commit_graph(Path::new("/r"), 10).unwrap();
+        let rows = svc.commit_graph(Path::new("/r"), 10, &|| false).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].commit.id, "a");
         assert_eq!(rows[0].commit.parents, vec!["b".to_string()]);
@@ -598,7 +605,7 @@ mod tests {
                 },
             ]);
         let svc = RepoService::new(Arc::new(fb));
-        let rows = svc.commit_graph(Path::new("/r"), 10).unwrap();
+        let rows = svc.commit_graph(Path::new("/r"), 10, &|| false).unwrap();
         // a 行挂 HEAD(kind=head, name=main)
         assert_eq!(rows[0].commit.id, "a");
         assert_eq!(rows[0].refs.len(), 1);
@@ -690,7 +697,7 @@ mod tests {
                 incoming: HashSet::from(["d".to_string()]),
             });
         let svc = RepoService::new(Arc::new(fb));
-        let rows = svc.commit_graph(Path::new("/r"), 10).unwrap();
+        let rows = svc.commit_graph(Path::new("/r"), 10, &|| false).unwrap();
         let by_id = |id: &str| rows.iter().find(|r| r.commit.id == id).unwrap();
         assert_eq!(by_id("a").sync, "outgoing");
         assert_eq!(by_id("d").sync, "incoming");
