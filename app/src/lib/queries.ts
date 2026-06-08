@@ -5,7 +5,7 @@
 import { useQuery, useQueryClient, keepPreviousData, type QueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import {
-  getStatus, getWorkingDiff, getCommitGraph, searchCommits, getCommitFiles, getCommitFileDiff,
+  getStatus, getWorkingDiff, getCommitGraph, searchCommits, getReflog, getCommitFiles, getCommitFileDiff,
   compareFiles, compareFileDiff,
   getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
   getRepoState, readWorkingFile, blame, conflictSides,
@@ -29,6 +29,7 @@ export const qk = {
   blame: (repo: string) => ["blame", repo] as const,
   conflictSides: (repo: string) => ["conflictSides", repo] as const,
   search: (repo: string) => ["search", repo] as const,
+  reflog: (repo: string) => ["reflog", repo] as const,
   compareFiles: (repo: string) => ["compareFiles", repo] as const,
   compareDiff: (repo: string) => ["compareDiff", repo] as const,
   refs: (repo: string) => ["refs", repo] as const,
@@ -63,6 +64,15 @@ export function useCommitSearch(repo: string, query: string, limit: number) {
     queryFn: () => searchCommits(repo, q, limit),
     enabled: !!repo && q.length > 0,
     placeholderData: keepPreviousData, // 连续输入时不闪空
+  });
+}
+
+/** HEAD 的 reflog;enabled 控制按需取(仅面板打开时拉)。 */
+export function useReflog(repo: string, limit: number, enabled: boolean) {
+  return useQuery({
+    queryKey: [...qk.reflog(repo), limit],
+    queryFn: () => getReflog(repo, limit),
+    enabled: enabled && !!repo,
   });
 }
 

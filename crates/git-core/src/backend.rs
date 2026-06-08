@@ -1,8 +1,8 @@
 use crate::error::GitError;
 use crate::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, PullOutcome, PushOutcome, RebaseStep, RepoState, ResetMode, StashEntry, SyncCommits,
-    WorkingTreeStatus,
+    FileDiff, PullOutcome, PushOutcome, RebaseStep, ReflogEntry, RepoState, ResetMode, StashEntry,
+    SyncCommits, WorkingTreeStatus,
 };
 use std::path::Path;
 
@@ -37,6 +37,13 @@ pub trait GitBackend: Send + Sync {
 
     /// 提交历史,时间倒序(新→旧)。limit/skip 分页。
     fn log(&self, repo: &Path, limit: usize, skip: usize) -> Result<Vec<Commit>, GitError>;
+
+    /// HEAD 的 reflog(最近在前),最多 limit 条。无 reflog(如刚 init 的空仓库)→ 空。
+    /// 每条的 `new_oid` 即该步后 HEAD 指向的提交,可作为 reset 的目标(找回丢失提交)。
+    /// 默认 Unsupported。
+    fn reflog(&self, _repo: &Path, _limit: usize) -> Result<Vec<ReflogEntry>, GitError> {
+        Err(GitError::Unsupported)
+    }
 
     /// 从 HEAD 搜索提交(时间倒序),大小写不敏感匹配 summary/body/作者名/邮箱/SHA 前缀。
     /// 最多返回 limit 条。空 query / 不支持 → 空。默认 Unsupported。

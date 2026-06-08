@@ -4,7 +4,7 @@ use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组�
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDto, CommitDto, ConflictSidesDto, FetchResultDto,
     FileChangeDto, FileDiffDto, GraphRowDto, IpcError, PullResultDto, PushResultDto, RefDto,
-    StashDto, StatusDto,
+    ReflogEntryDto, StashDto, StatusDto,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -290,6 +290,17 @@ async fn search_commits(
         let service = RepoService::new(Arc::new(CompositeBackend::default()));
         let cancelled = || generation.load(Ordering::SeqCst) != mine;
         service.search_commits(&PathBuf::from(repo_path), &query, limit, &cancelled)
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn get_reflog(repo_path: String, limit: usize) -> Result<Vec<ReflogEntryDto>, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        let service = RepoService::new(Arc::new(CompositeBackend::default()));
+        service.reflog(&PathBuf::from(repo_path), limit)
     })
     .await
     .map_err(join_panic)?
@@ -786,6 +797,7 @@ pub fn run() {
             get_working_diff,
             get_commit_graph,
             search_commits,
+            get_reflog,
             compare_files,
             compare_file_diff,
             get_current_branch,
