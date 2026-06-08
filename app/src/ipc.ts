@@ -145,6 +145,16 @@ export async function deleteBranch(repoPath: string, name: string): Promise<void
   await invoke("delete_branch", { repoPath, name });
 }
 
+export interface BranchDeleteImpactDto {
+  unmerged_commits: number;     // 删后会丢的提交数(0=安全)
+  sample_summaries: string[];   // 这些提交的摘要样本
+}
+
+/** 删某分支前的影响预览(会丢多少提交)。供二次确认。 */
+export async function branchDeleteImpact(repoPath: string, name: string): Promise<BranchDeleteImpactDto> {
+  return await invoke<BranchDeleteImpactDto>("branch_delete_impact", { repoPath, name });
+}
+
 // ── 远程(阶段 2d-1) ──
 export interface FetchResultDto {
   remote: string;

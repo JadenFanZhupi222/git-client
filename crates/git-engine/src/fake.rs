@@ -1,7 +1,8 @@
 use git_core::model::{
-    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, FileEntry, PullOutcome, PushOutcome, RebaseAction, RebaseStep, ReflogEntry,
-    RepoState, ResetMode, Signature, StashEntry, SyncCommits, WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
+    FetchOutcome, FileChange, FileDiff, FileEntry, PullOutcome, PushOutcome, RebaseAction,
+    RebaseStep, ReflogEntry, RepoState, ResetMode, Signature, StashEntry, SyncCommits,
+    WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -45,6 +46,7 @@ pub struct FakeBackend {
     tag_ops: Mutex<Vec<String>>,
     rebase_ops: Mutex<Vec<String>>,
     canned_reflog: Mutex<Vec<ReflogEntry>>,
+    canned_branch_delete_impact: Mutex<BranchDeleteImpact>,
     // 可移动的 HEAD oid:Some 时 head_commit 返回它;reset 会把它设到目标。
     // 供 RepoContext 的 Undo/Redo 时间线测试模拟 HEAD 真实移动。
     head_oid: Mutex<Option<String>>,
@@ -111,6 +113,11 @@ impl FakeBackend {
     }
     pub fn with_reflog(self, entries: Vec<ReflogEntry>) -> Self {
         *self.canned_reflog.lock().unwrap() = entries;
+        self
+    }
+    /// 预置某次「删分支影响预览」的返回。供二次确认 / 未合并安全网测试。
+    pub fn with_branch_delete_impact(self, impact: BranchDeleteImpact) -> Self {
+        *self.canned_branch_delete_impact.lock().unwrap() = impact;
         self
     }
     /// 预置可移动 HEAD 的初始 oid(之后 reset 会改它)。供 Undo/Redo 时间线测试。
@@ -561,6 +568,13 @@ impl GitBackend for FakeBackend {
     fn delete_branch(&self, _path: &Path, name: &str) -> Result<(), GitError> {
         self.deleted.lock().unwrap().push(name.to_string());
         Ok(())
+    }
+    fn branch_delete_impact(
+        &self,
+        _path: &Path,
+        _name: &str,
+    ) -> Result<BranchDeleteImpact, GitError> {
+        Ok(self.canned_branch_delete_impact.lock().unwrap().clone())
     }
     fn fetch(&self, _path: &Path, remote: Option<&str>) -> Result<FetchOutcome, GitError> {
         *self.fetch_calls.lock().unwrap() += 1;

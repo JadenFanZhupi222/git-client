@@ -1,7 +1,7 @@
 use git_core::model::{
-    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, DiffLine, DiffLineKind,
-    FileChange, FileDiff, FileEntry, FileState, Hunk, RefKind, ReflogEntry, RepoState, ResetMode,
-    Signature, SyncCommits, WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
+    DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry, FileState, Hunk, RefKind, ReflogEntry,
+    RepoState, ResetMode, Signature, SyncCommits, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::collections::HashSet;
@@ -1011,6 +1011,66 @@ impl GitBackend for Git2Backend {
             .delete()
             .map_err(|e| GitError::Backend(e.to_string()))?;
         Ok(())
+    }
+
+    fn branch_delete_impact(
+        &self,
+        path: &Path,
+        name: &str,
+    ) -> Result<BranchDeleteImpact, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let full = format!("refs/heads/{name}");
+        let tip = repo
+            .find_branch(name, git2::BranchType::Local)
+            .map_err(|_| GitError::BranchNotFound(name.to_string()))?
+            .get()
+            .target()
+            .ok_or_else(|| GitError::Backend("分支无目标提交".into()))?;
+
+        // rev-list <name> --not <所有其它引用>:只在该分支、别处不可达的提交 = 删后会丢。
+        let mut walk = repo
+            .revwalk()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        walk.push(tip)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        // 隐藏除「待删分支」外的每一个引用(本地/远程/标签),annotated tag 用 peel 解到 commit。
+        for r in repo
+            .references()
+            .map_err(|e| GitError::Backend(e.to_string()))?
+            .flatten()
+        {
+            if r.name() == Some(full.as_str()) {
+                continue; // 别隐藏自己,否则全被抵消
+            }
+            if let Ok(commit) = r.peel_to_commit() {
+                walk.hide(commit.id())
+                    .map_err(|e| GitError::Backend(e.to_string()))?;
+            }
+        }
+        // HEAD(可能是分离头,不在 references() 里)也要隐藏。
+        if let Ok(head) = repo.head()
+            && let Ok(commit) = head.peel_to_commit()
+        {
+            walk.hide(commit.id())
+                .map_err(|e| GitError::Backend(e.to_string()))?;
+        }
+
+        let mut unmerged_commits = 0usize;
+        let mut sample_summaries = Vec::new();
+        for oid in walk {
+            let oid = oid.map_err(|e| GitError::Backend(e.to_string()))?;
+            unmerged_commits += 1;
+            if sample_summaries.len() < 5
+                && let Ok(commit) = repo.find_commit(oid)
+            {
+                sample_summaries.push(commit.summary().unwrap_or("").to_string());
+            }
+        }
+        Ok(BranchDeleteImpact {
+            unmerged_commits,
+            sample_summaries,
+        })
     }
 
     fn commit_file_diff(
@@ -2276,6 +2336,45 @@ mod tests {
             .map(|x| x.name)
             .collect();
         assert!(!names.contains(&"tmp".to_string()));
+    }
+
+    #[test]
+    fn branch_delete_impact_counts_only_orphaned_commits() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        let base = b.current_branch(&repo).unwrap().unwrap(); // 默认分支名(master/main 不定)
+
+        // feat 上多两个提交 c2、c3(仅 feat 可达)。
+        b.create_branch(&repo, "feat").unwrap();
+        b.checkout_branch(&repo, "feat").unwrap();
+        stage(&repo, "a.txt", "2");
+        commit_index(&repo, "c2", 2000);
+        stage(&repo, "a.txt", "3");
+        commit_index(&repo, "c3", 3000);
+        // 回基线分支(删别的分支时 HEAD 必然在别处;且不能删当前分支)。
+        b.checkout_branch(&repo, &base).unwrap();
+
+        let impact = b.branch_delete_impact(&repo, "feat").unwrap();
+        assert_eq!(impact.unmerged_commits, 2, "c2/c3 只在 feat 上,删后会丢");
+        // 摘要按新→旧。
+        assert_eq!(impact.sample_summaries, vec!["c3", "c2"]);
+
+        // 在 main 当前位置开个分支:它没有独有提交 → 删除安全(0)。
+        b.create_branch(&repo, "atmain").unwrap();
+        let safe = b.branch_delete_impact(&repo, "atmain").unwrap();
+        assert_eq!(safe.unmerged_commits, 0, "已并入别处的分支删除无损失");
+        assert!(safe.sample_summaries.is_empty());
+    }
+
+    #[test]
+    fn branch_delete_impact_missing_branch_errors() {
+        let (_tmp, repo) = init_repo();
+        stage(&repo, "a.txt", "1");
+        commit_index(&repo, "c1", 1000);
+        let err = Git2Backend.branch_delete_impact(&repo, "nope").unwrap_err();
+        assert!(matches!(err, GitError::BranchNotFound(_)));
     }
 
     #[test]

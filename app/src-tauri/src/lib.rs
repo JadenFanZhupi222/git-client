@@ -2,9 +2,9 @@ use app_service::RepoRegistry;
 use app_service::watcher::{ChangeKind, RepoWatcher};
 use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组合
 use ipc_types::{
-    AheadBehindDto, BlameLineDto, BranchDto, CommitDto, ConflictSidesDto, FetchResultDto,
-    FileChangeDto, FileDiffDto, GraphRowDto, IpcError, PullResultDto, PushResultDto, RefDto,
-    ReflogEntryDto, StashDto, StatusDto, UndoStateDto, UndoStepDto,
+    AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
+    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError, PullResultDto,
+    PushResultDto, RefDto, ReflogEntryDto, StashDto, StatusDto, UndoStateDto, UndoStepDto,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -431,6 +431,20 @@ async fn delete_branch(
 ) -> Result<(), IpcError> {
     let ctx = registry.context(&PathBuf::from(repo_path));
     tokio::task::spawn_blocking(move || ctx.delete_branch(&name))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+/// 删某分支前的影响预览(只读):会丢多少提交 + 摘要样本。供二次确认。
+#[tauri::command]
+async fn branch_delete_impact(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    name: String,
+) -> Result<BranchDeleteImpactDto, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.branch_delete_impact(&name))
         .await
         .map_err(join_panic)?
         .map_err(to_ipc)
@@ -915,6 +929,7 @@ pub fn run() {
             checkout_branch,
             create_branch,
             delete_branch,
+            branch_delete_impact,
             fetch,
             pull,
             push,

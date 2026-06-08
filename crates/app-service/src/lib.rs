@@ -4,9 +4,9 @@
 
 use git_core::{GitBackend, GitError};
 use ipc_types::{
-    AheadBehindDto, BlameLineDto, BranchDto, CommitDto, ConflictSidesDto, FetchResultDto,
-    FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto,
-    StashDto, StatusDto,
+    AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
+    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto,
+    ReflogEntryDto, StashDto, StatusDto,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -471,6 +471,20 @@ impl RepoService {
             return Err(GitError::InvalidBranchName);
         }
         self.backend.delete_branch(repo_path, name)
+    }
+
+    /// 用例:删某分支的影响预览(会丢多少提交)。供删除前二次确认。
+    pub fn branch_delete_impact(
+        &self,
+        repo_path: &Path,
+        name: &str,
+    ) -> Result<BranchDeleteImpactDto, GitError> {
+        if name.trim().is_empty() {
+            return Err(GitError::InvalidBranchName);
+        }
+        Ok(BranchDeleteImpactDto::from(
+            self.backend.branch_delete_impact(repo_path, name)?,
+        ))
     }
 
     /// 用例:从远程 fetch。remote=None 用默认远程。
@@ -1085,6 +1099,24 @@ mod tests {
         let svc = RepoService::new(fb.clone());
         svc.delete_branch(Path::new("/r"), "old").unwrap();
         assert_eq!(fb.deleted_branches(), vec!["old".to_string()]);
+    }
+
+    #[test]
+    fn branch_delete_impact_maps_dto_and_validates() {
+        use git_core::model::BranchDeleteImpact;
+        let fb = FakeBackend::default().with_branch_delete_impact(BranchDeleteImpact {
+            unmerged_commits: 3,
+            sample_summaries: vec!["feat: x".into(), "fix: y".into()],
+        });
+        let svc = RepoService::new(Arc::new(fb));
+        let dto = svc.branch_delete_impact(Path::new("/r"), "feat").unwrap();
+        assert_eq!(dto.unmerged_commits, 3);
+        assert_eq!(dto.sample_summaries, vec!["feat: x", "fix: y"]);
+        // 空名拦截
+        assert!(matches!(
+            svc.branch_delete_impact(Path::new("/r"), " "),
+            Err(GitError::InvalidBranchName)
+        ));
     }
 
     #[test]

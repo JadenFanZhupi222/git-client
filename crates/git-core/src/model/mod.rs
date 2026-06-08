@@ -11,7 +11,8 @@ mod status;
 
 pub use blame::BlameLine;
 pub use branch::{
-    AheadBehind, BranchInfo, CommitRef, RebaseAction, RebaseStep, RefKind, ResetMode, SyncCommits,
+    AheadBehind, BranchDeleteImpact, BranchInfo, CommitRef, RebaseAction, RebaseStep, RefKind,
+    ResetMode, SyncCommits,
 };
 pub use commit::{Commit, Signature};
 pub use conflict::ConflictSides;

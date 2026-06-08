@@ -3,9 +3,9 @@
 //! 让前后端类型在编译期对齐。阶段 0 先保持简单。
 
 use git_core::model::{
-    AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, DiffLine, DiffLineKind,
-    FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk, PullOutcome, PushOutcome,
-    RefKind, ReflogEntry, StashEntry, WorkingTreeStatus,
+    AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
+    DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk,
+    PullOutcome, PushOutcome, RefKind, ReflogEntry, StashEntry, WorkingTreeStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -245,6 +245,22 @@ impl From<BranchInfo> for BranchDto {
         BranchDto {
             name: b.name,
             is_head: b.is_head,
+        }
+    }
+}
+
+/// 删分支影响预览 DTO:`unmerged_commits`>0 时前端做强危险二次确认。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BranchDeleteImpactDto {
+    pub unmerged_commits: usize,
+    pub sample_summaries: Vec<String>,
+}
+
+impl From<BranchDeleteImpact> for BranchDeleteImpactDto {
+    fn from(i: BranchDeleteImpact) -> Self {
+        BranchDeleteImpactDto {
+            unmerged_commits: i.unmerged_commits,
+            sample_summaries: i.sample_summaries,
         }
     }
 }
