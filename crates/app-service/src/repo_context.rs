@@ -20,8 +20,8 @@ use git_core::{GitBackend, GitError, UndoKind};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
     FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, OpLogDto, OpLogEntryDto,
-    PullResultDto, PushResultDto, RefDto, ReflogEntryDto, StashDto, StatusDto, UndoStateDto,
-    UndoStepDto,
+    PullResultDto, PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto,
+    UndoStateDto, UndoStepDto,
 };
 use lru::LruCache;
 use std::collections::HashMap;
@@ -309,6 +309,11 @@ impl RepoContext {
         let v = self.service.working_diff(&self.path, file, staged)?;
         self.cache.working_diff.lock().unwrap().put(key, v.clone());
         Ok(v)
+    }
+    /// 某提交的签名状态。一次 CLI 调用、签名按 SHA 不变,前端 query 已按 commit 缓存,
+    /// 这里不再额外缓存(避免给 RepoCache 加字段),按需直读。
+    pub fn commit_signature(&self, commit_id: &str) -> Result<SignatureInfoDto, GitError> {
+        self.service.commit_signature(&self.path, commit_id)
     }
     pub fn current_branch(&self) -> Result<Option<String>, GitError> {
         if let Some(hit) = self.cache.current_branch.lock().unwrap().clone() {

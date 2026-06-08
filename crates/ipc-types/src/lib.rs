@@ -5,7 +5,8 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk,
-    PullOutcome, PushOutcome, RefKind, ReflogEntry, StashEntry, WorkingTreeStatus,
+    PullOutcome, PushOutcome, RefKind, ReflogEntry, SignatureInfo, SignatureStatus, StashEntry,
+    WorkingTreeStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -218,6 +219,28 @@ impl From<BlameLine> for BlameLineDto {
             author_name: l.author_name,
             timestamp: l.timestamp,
             content: l.content,
+        }
+    }
+}
+
+/// 提交签名 DTO。status: "none" | "good" | "unverified" | "bad"。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignatureInfoDto {
+    pub status: String,
+    pub signer: String,
+}
+
+impl From<SignatureInfo> for SignatureInfoDto {
+    fn from(s: SignatureInfo) -> Self {
+        let status = match s.status {
+            SignatureStatus::None => "none",
+            SignatureStatus::Good => "good",
+            SignatureStatus::Unverified => "unverified",
+            SignatureStatus::Bad => "bad",
+        };
+        SignatureInfoDto {
+            status: status.into(),
+            signer: s.signer,
         }
     }
 }

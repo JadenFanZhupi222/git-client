@@ -4,7 +4,8 @@ use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组�
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
     FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError, OpLogDto, PullResultDto,
-    PushResultDto, RefDto, ReflogEntryDto, StashDto, StatusDto, UndoStateDto, UndoStepDto,
+    PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto, UndoStateDto,
+    UndoStepDto,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -231,6 +232,19 @@ async fn get_commit_file_diff(
 ) -> Result<FileDiffDto, IpcError> {
     let ctx = registry.context(&PathBuf::from(repo_path));
     tokio::task::spawn_blocking(move || ctx.commit_file_diff(&commit_id, &file))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn get_commit_signature(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    commit_id: String,
+) -> Result<SignatureInfoDto, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.commit_signature(&commit_id))
         .await
         .map_err(join_panic)?
         .map_err(to_ipc)
@@ -944,6 +958,7 @@ pub fn run() {
             get_log,
             get_commit_files,
             get_commit_file_diff,
+            get_commit_signature,
             get_working_diff,
             get_commit_graph,
             search_commits,

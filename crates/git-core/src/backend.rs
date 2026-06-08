@@ -2,7 +2,7 @@ use crate::error::GitError;
 use crate::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     FetchOutcome, FileChange, FileDiff, PullOutcome, PushOutcome, RebaseStep, ReflogEntry,
-    RepoState, ResetMode, StashEntry, SyncCommits, WorkingTreeStatus,
+    RepoState, ResetMode, SignatureInfo, StashEntry, SyncCommits, WorkingTreeStatus,
 };
 use std::path::Path;
 
@@ -127,6 +127,12 @@ pub trait GitBackend: Send + Sync {
         file: &str,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<BlameLine>, GitError>;
+
+    /// 读某提交的签名验证状态(GPG/SSH)。git2 不便做验证,走 CLI(`%G?`/`%GS`)。
+    /// 默认 Unsupported(纯 git2 后端不实现)。
+    fn commit_signature(&self, _repo: &Path, _commit_id: &str) -> Result<SignatureInfo, GitError> {
+        Err(GitError::Unsupported)
+    }
 
     // ---- 冲突解决:整文件采用一边走 CLI;默认 Unsupported ----
 
