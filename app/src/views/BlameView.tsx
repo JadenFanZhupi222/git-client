@@ -33,7 +33,7 @@ export function BlameView({ repo }: { repo: string }) {
   }
 
   const lines = q.data ?? [];
-  const err = pickError ?? (q.error as IpcError | null)?.message ?? null;
+  const queryErr = (q.error as IpcError | null)?.message ?? null;
 
   return (
     <div className="flex h-full flex-col">
@@ -45,13 +45,16 @@ export function BlameView({ repo }: { repo: string }) {
         {file && <span className="truncate font-mono text-xs text-fg" title={file}>{file}</span>}
       </div>
 
-      {err && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{err}</p>}
+      {pickError && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{pickError}</p>}
 
       {/* 内容 */}
       {!file ? (
         <Center>选择一个文件查看逐行追溯(blame)</Center>
       ) : q.isLoading ? (
         <Center>加载中…</Center>
+      ) : queryErr ? (
+        // 超大 / 二进制文件等:后端返回友好错误,居中显示(而不是误报「空文件」)
+        <Center>{queryErr}</Center>
       ) : lines.length === 0 ? (
         <Center>空文件或无追溯信息</Center>
       ) : (

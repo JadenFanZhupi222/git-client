@@ -422,6 +422,7 @@ impl From<Hunk> for HunkDto {
 pub struct FileDiffDto {
     pub path: String,
     pub is_binary: bool,
+    pub too_large: bool,
     pub hunks: Vec<HunkDto>,
 }
 
@@ -430,6 +431,7 @@ impl From<FileDiff> for FileDiffDto {
         FileDiffDto {
             path: d.path,
             is_binary: d.is_binary,
+            too_large: d.too_large,
             hunks: d.hunks.into_iter().map(HunkDto::from).collect(),
         }
     }

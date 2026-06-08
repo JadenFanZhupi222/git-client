@@ -37,10 +37,13 @@ pub struct Hunk {
     pub lines: Vec<DiffLine>,
 }
 
-/// 单个文件的行级 diff。二进制文件 is_binary=true 且 hunks 为空。
+/// 单个文件的行级 diff。
+/// - 二进制文件 is_binary=true 且 hunks 为空。
+/// - 超大文件 too_large=true 且 hunks 为空(为防卡死/爆内存,故意不计算逐行 diff)。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FileDiff {
     pub path: String,
     pub is_binary: bool,
+    pub too_large: bool,
     pub hunks: Vec<Hunk>,
 }

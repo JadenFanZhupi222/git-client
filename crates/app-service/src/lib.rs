@@ -748,6 +748,7 @@ mod tests {
         let fb = FakeBackend::default().with_file_diff(FileDiff {
             path: "a.txt".into(),
             is_binary: false,
+            too_large: false,
             hunks: vec![Hunk {
                 header: "@@ -1 +1 @@".into(),
                 lines: vec![DiffLine {

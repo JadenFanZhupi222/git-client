@@ -115,11 +115,24 @@ fn resolve_tree<'r>(repo: &'r git2::Repository, rev: &str) -> Result<git2::Tree<
 
 /// 从一个 git2::Diff 里抽出指定文件的行级 FileDiff。
 /// commit_file_diff(树↔树)与 working_diff(工作区/index)共用,保证渲染一致。
+/// 一个文件 diff 的总行数(上下文+增+删)超过此阈值就标 too_large、不回逐行内容。
+/// 真正的卡点是前端渲染几万个 DOM 行;几万行的 diff 也没人会逐行读。
+const MAX_DIFF_LINES: usize = 20_000;
+
+/// blame 比 diff 更重,阈值放宽一些但仍要挡住巨型文件。
+const MAX_BLAME_BYTES: u64 = 2_000_000;
+
+/// 二进制嗅探:和 git 一样的朴素判据——前若干字节里出现 NUL 就当二进制。
+fn is_binary(bytes: &[u8]) -> bool {
+    bytes.iter().take(8000).any(|&b| b == 0)
+}
+
 fn file_diff_from(diff: &git2::Diff, file: &str) -> Result<FileDiff, GitError> {
     let target = Path::new(file);
     let mut result = FileDiff {
         path: file.to_string(),
         is_binary: false,
+        too_large: false,
         hunks: Vec::new(),
     };
 
@@ -134,6 +147,14 @@ fn file_diff_from(diff: &git2::Diff, file: &str) -> Result<FileDiff, GitError> {
                 result.is_binary = true;
             }
             Some(patch) => {
+                // 防卡死:先用 line_stats 廉价算总行数,超阈值就跳过,不构建几万行 Vec。
+                let (ctx, adds, dels) = patch
+                    .line_stats()
+                    .map_err(|e| GitError::Backend(e.to_string()))?;
+                if ctx + adds + dels > MAX_DIFF_LINES {
+                    result.too_large = true;
+                    break;
+                }
                 for h in 0..patch.num_hunks() {
                     let (hunk, line_count) = patch
                         .hunk(h)
@@ -822,14 +843,26 @@ impl GitBackend for Git2Backend {
         }
         let repo =
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
-        let blame = repo
-            .blame_file(Path::new(file), None)
-            .map_err(|e| GitError::Backend(e.to_string()))?;
         let workdir = repo
             .workdir()
             .ok_or_else(|| GitError::Backend("裸仓库无工作区".into()))?;
         let bytes =
             std::fs::read(workdir.join(file)).map_err(|e| GitError::Backend(e.to_string()))?;
+
+        // 防卡死:blame 比 diff 更重(逐行回溯历史)。先挡掉超大文件与二进制,
+        // 再调 blame_file——否则一个大文件能把 UI 冻死。
+        if bytes.len() as u64 > MAX_BLAME_BYTES {
+            return Err(GitError::FileTooLarge {
+                limit: MAX_BLAME_BYTES as usize,
+            });
+        }
+        if is_binary(&bytes) {
+            return Err(GitError::BinaryFile);
+        }
+
+        let blame = repo
+            .blame_file(Path::new(file), None)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
         let text = String::from_utf8_lossy(&bytes);
 
         let mut out = Vec::new();
@@ -2169,6 +2202,57 @@ mod tests {
         let err = b.blame(&repo, "f.txt", &|| true).unwrap_err();
         assert!(matches!(err, GitError::Cancelled));
         assert_eq!(b.blame(&repo, "f.txt", &|| false).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn diff_skips_oversized_file() {
+        // M4.1:超大文本文件不计算逐行 diff,标 too_large 且无 hunk。
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        let big = "x\n".repeat(MAX_DIFF_LINES + 10); // 超过行数阈值
+        stage(&repo, "big.txt", &big);
+        let sha = commit_index(&repo, "c1", 1000);
+
+        let diff = b.commit_file_diff(&repo, &sha, "big.txt").unwrap();
+        assert!(diff.too_large, "超阈值文件应标 too_large");
+        assert!(diff.hunks.is_empty(), "too_large 时不应有 hunk");
+        assert!(!diff.is_binary);
+
+        // 对照:小文件正常出 hunk。
+        stage(&repo, "small.txt", "hi\n");
+        let sha2 = commit_index(&repo, "c2", 1001);
+        let small = b.commit_file_diff(&repo, &sha2, "small.txt").unwrap();
+        assert!(!small.too_large);
+        assert!(!small.hunks.is_empty());
+    }
+
+    #[test]
+    fn blame_rejects_oversized_and_binary() {
+        // M4.1:blame 先挡掉超大与二进制,不跑昂贵的 blame_file。
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+
+        let big = "y\n".repeat((MAX_BLAME_BYTES as usize / 2) + 10); // 字节数超阈值
+        stage(&repo, "big.txt", &big);
+        commit_index(&repo, "c1", 1000);
+        assert!(matches!(
+            b.blame(&repo, "big.txt", &|| false).unwrap_err(),
+            GitError::FileTooLarge { .. }
+        ));
+
+        // 含 NUL 的二进制文件:直接写真实字节再加索引提交。
+        std::fs::write(repo.join("bin.dat"), [0u8, 1, 2, 0, 3]).unwrap();
+        {
+            let r = git2::Repository::open(&repo).unwrap();
+            let mut idx = r.index().unwrap();
+            idx.add_path(Path::new("bin.dat")).unwrap();
+            idx.write().unwrap();
+        }
+        commit_index(&repo, "c2", 1001);
+        assert!(matches!(
+            b.blame(&repo, "bin.dat", &|| false).unwrap_err(),
+            GitError::BinaryFile
+        ));
     }
 
     #[test]

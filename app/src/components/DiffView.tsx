@@ -44,6 +44,9 @@ export function DiffView({
   if (diff.is_binary) {
     return <Center>二进制文件,无法显示行级 diff</Center>;
   }
+  if (diff.too_large) {
+    return <Center>文件过大,已跳过逐行 diff(避免卡顿)</Center>;
+  }
   if (diff.hunks.length === 0) {
     return <Center>该文件在此提交中无文本改动</Center>;
   }
