@@ -43,7 +43,7 @@ jobs:
         run: cargo test --workspace
 
   frontend:
-    name: Frontend(tsc + build)
+    name: Frontend(test + tsc + build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -62,6 +62,10 @@ jobs:
 
       - name: Install deps
         run: pnpm -C app install --frozen-lockfile
+
+      # vitest:纯逻辑(mergeModel / graphGeometry)+ 组件回归(比较页默认两端)。
+      - name: Test
+        run: pnpm -C app test
 
       # build = `tsc && vite build`:tsc 即类型卡口,vite build 确保产物可构建。
       - name: Type-check & build
