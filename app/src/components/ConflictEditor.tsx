@@ -6,6 +6,7 @@ import { writeResolved, type IpcError } from "../ipc";
 import { useConflictSides, useFileText, invalidateWorktree, qk } from "../lib/queries";
 import { buildMergeModel, type MergeModel, type MergeRegion, type Spacer } from "../lib/mergeModel";
 import { useToast } from "./Toast";
+import { Button } from "./ui/Button";
 
 const LH = 18; // 行高(px),与下方 theme 里的 line-height 严格一致,占位行高度据此换算
 
@@ -333,20 +334,21 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
         </span>
         <span className="text-fg-subtle">· 每块「用我方/用对方」一键并入,中间结果可直接编辑</span>
         <div className="ml-auto flex items-center gap-1.5">
-          <button onClick={() => replaceAll(oursStr)} className="rounded px-2 py-1 text-fg-muted hover:bg-overlay hover:text-fg">
+          <Button variant="ghost" size="sm" onClick={() => replaceAll(oursStr)}>
             全用我方
-          </button>
-          <button onClick={() => replaceAll(theirsStr)} className="rounded px-2 py-1 text-fg-muted hover:bg-overlay hover:text-fg">
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => replaceAll(theirsStr)}>
             全用对方
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="commit"
+            size="sm"
             onClick={apply}
             disabled={busy}
             title="把结果写回并标记已解决(git add)"
-            className="rounded-md bg-done px-3 py-1 font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
           >
             应用解决
-          </button>
+          </Button>
         </div>
       </div>
 

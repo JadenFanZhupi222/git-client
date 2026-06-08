@@ -7,6 +7,7 @@ import {
   type IpcError,
 } from "../ipc";
 import { useBranches, invalidateHistory } from "../lib/queries";
+import { Button } from "./ui/Button";
 import { BranchIcon, CheckIcon, PlusIcon, TrashIcon } from "./icons";
 
 /**
@@ -219,13 +220,9 @@ export function BranchSwitcher({
                     placeholder="新分支名(基于当前 HEAD)…"
                     className="min-w-0 flex-1 rounded bg-canvas px-2 py-1 font-mono text-xs text-fg placeholder:text-fg-subtle focus:outline-none"
                   />
-                  <button
-                    type="submit"
-                    disabled={!newName.trim() || busy !== null}
-                    className="shrink-0 rounded bg-done px-2 py-1 text-xs text-white transition-opacity hover:opacity-90 disabled:opacity-40"
-                  >
+                  <Button type="submit" variant="commit" size="sm" disabled={!newName.trim() || busy !== null} className="shrink-0">
                     创建
-                  </button>
+                  </Button>
                 </form>
               ) : (
                 <button

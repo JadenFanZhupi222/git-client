@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { stashSave, stashApply, stashPop, stashDrop, type IpcError } from "../ipc";
 import { useStashList, qk, invalidateWorktree } from "../lib/queries";
 import { useToast } from "./Toast";
+import { Button } from "./ui/Button";
 import { StashIcon, ChevronDownIcon, TrashIcon } from "./icons";
 
 /** 顶栏贮藏下拉:贮藏当前改动(可填信息)+ 列出已有贮藏(应用/弹出/删除)。 */
@@ -41,11 +42,13 @@ export function StashMenu({ repo }: { repo: string }) {
 
   return (
     <div className="relative">
-      <button
+      <Button
+        variant="secondary"
+        size="sm"
         onClick={() => setOpen((o) => !o)}
         disabled={busy}
         title="贮藏(stash)"
-        className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50"
+        className="hover:border-fg-subtle"
       >
         <StashIcon width={13} height={13} />
         贮藏
@@ -55,7 +58,7 @@ export function StashMenu({ repo }: { repo: string }) {
           </span>
         )}
         <ChevronDownIcon width={11} height={11} />
-      </button>
+      </Button>
 
       {open && (
         <>
@@ -72,13 +75,9 @@ export function StashMenu({ repo }: { repo: string }) {
                 placeholder="贮藏信息(可选)…"
                 className="min-w-0 flex-1 rounded bg-canvas px-2 py-1 text-fg placeholder:text-fg-subtle focus:outline-none"
               />
-              <button
-                type="submit"
-                disabled={busy}
-                className="shrink-0 rounded bg-done px-2 py-1 text-white transition-opacity hover:opacity-90 disabled:opacity-40"
-              >
+              <Button type="submit" variant="commit" size="sm" disabled={busy} className="shrink-0">
                 贮藏改动
-              </button>
+              </Button>
             </form>
 
             {/* 贮藏列表 */}

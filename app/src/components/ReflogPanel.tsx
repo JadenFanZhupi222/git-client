@@ -1,6 +1,7 @@
 import { useReflog } from "../lib/queries";
 import { formatRelative } from "../lib/time";
 import { ResetMenu } from "./ResetMenu";
+import { IconButton } from "./ui/IconButton";
 import { CloseIcon } from "./icons";
 
 const REFLOG_LIMIT = 200;
@@ -26,7 +27,7 @@ export function ReflogPanel({
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold text-fg">Reflog · HEAD 移动历史</h2>
-          <button onClick={onClose} className="text-fg-subtle hover:text-fg"><CloseIcon width={15} height={15} /></button>
+          <IconButton aria-label="关闭" onClick={onClose}><CloseIcon width={15} height={15} /></IconButton>
         </div>
 
         <p className="shrink-0 border-b border-line bg-accent/10 px-4 py-2 text-xs text-fg-muted">

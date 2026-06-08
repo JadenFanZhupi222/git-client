@@ -12,6 +12,7 @@ import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
 import { StashMenu } from "./components/StashMenu";
 import { useToast } from "./components/Toast";
+import { Button } from "./components/ui/Button";
 import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, invalidateHistory, qk } from "./lib/queries";
 import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
 
@@ -391,12 +392,9 @@ function EmptyState({ onPick }: { onPick: () => void }) {
         <p className="text-base font-medium text-fg">还没有打开仓库</p>
         <p className="mt-1 text-sm text-fg-muted">选择一个本地 git 仓库开始工作。</p>
       </div>
-      <button
-        onClick={onPick}
-        className="rounded-md bg-done px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
-      >
+      <Button variant="commit" size="md" onClick={onPick}>
         选择仓库
-      </button>
+      </Button>
     </div>
   );
 }

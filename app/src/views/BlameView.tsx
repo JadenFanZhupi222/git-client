@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useBlame } from "../lib/queries";
 import { formatRelative } from "../lib/time";
 import { FileDiffIcon } from "../components/icons";
+import { Button } from "../components/ui/Button";
 import type { IpcError } from "../ipc";
 
 /** 把绝对路径转成仓库根相对路径(正斜杠);不在仓库内返回 null。 */
@@ -38,12 +39,9 @@ export function BlameView({ repo }: { repo: string }) {
     <div className="flex h-full flex-col">
       {/* 工具栏 */}
       <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-1.5">
-        <button
-          onClick={pick}
-          className="flex items-center gap-1.5 rounded px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-elevated hover:text-fg"
-        >
+        <Button variant="ghost" size="sm" onClick={pick}>
           <FileDiffIcon width={13} height={13} /> 选择文件
-        </button>
+        </Button>
         {file && <span className="truncate font-mono text-xs text-fg" title={file}>{file}</span>}
       </div>
 
