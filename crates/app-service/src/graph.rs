@@ -52,10 +52,27 @@ fn pick_color(lanes: &[Option<Lane>]) -> u32 {
     (0..NCOLORS).find(|c| !used.contains(c)).unwrap_or(0)
 }
 
-/// 把按时间倒序(新→旧)的提交列表排成图谱行。
+/// 泳道布局的续算状态:处理完一段提交后仍活跃的 lane 列表。
+///
+/// 第 i 行的泳道只依赖 commits[0..i],故 `layout(100)` 的前 50 行与 `layout(50)`
+/// 逐字节相同。把这份 lane 状态当作断点存下来,「加载更多」时从这里续算尾段即可,
+/// 不必重算全量(O(n²)→O(n))。颜色分配由 lane 状态确定性决定,续算结果与全量一致。
+#[derive(Default, Clone)]
+pub struct LayoutState {
+    lanes: Vec<Option<Lane>>,
+}
+
+/// 把按时间倒序(新→旧)的提交列表排成图谱行(从空状态全量计算)。
 pub fn layout(commits: &[Commit]) -> Vec<GraphRowDto> {
+    layout_into(commits, &mut LayoutState::default())
+}
+
+/// 续算布局:从 `state`(上一段处理完的 lane 状态)起算 `commits`,返回这段的行,
+/// 并把 `state` 推进到末尾供下次续算。`commits` 应紧接 state 已处理的提交之后。
+pub fn layout_into(commits: &[Commit], state: &mut LayoutState) -> Vec<GraphRowDto> {
     // lanes[k] = Some(Lane):第 k 列正等待到达该 sha 的提交;None = 空闲。
-    let mut lanes: Vec<Option<Lane>> = Vec::new();
+    // 取出续算前的状态,沿用原有逐行算法;算完写回 state。
+    let mut lanes: Vec<Option<Lane>> = std::mem::take(&mut state.lanes);
     let mut rows = Vec::with_capacity(commits.len());
 
     for c in commits {
@@ -166,6 +183,7 @@ pub fn layout(commits: &[Commit]) -> Vec<GraphRowDto> {
         });
     }
 
+    state.lanes = lanes; // 写回末尾状态,供下次「加载更多」续算。
     rows
 }
 
@@ -187,6 +205,37 @@ mod tests {
             timestamp: 0,
             parents: parents.iter().map(|s| s.to_string()).collect(),
         }
+    }
+
+    /// 把行投影成可比较的纯数据(忽略 commit/refs/sync,只看泳道几何)。
+    #[allow(clippy::type_complexity)]
+    fn proj(rows: &[GraphRowDto]) -> Vec<(u32, u32, Vec<(u32, u32, u32)>, Vec<(u32, u32, u32)>)> {
+        let segs = |v: &[GraphSegDto]| v.iter().map(|s| (s.from, s.to, s.color)).collect();
+        rows.iter()
+            .map(|r| (r.column, r.color, segs(&r.top), segs(&r.bottom)))
+            .collect()
+    }
+
+    #[test]
+    fn incremental_equals_full_layout() {
+        // 跨越分叉/合并、且在 lane 仍活跃处切断:续算两段应与一次全量逐行一致。
+        //   m(a,b) / a(c) / c(e) / b(e) / e()
+        let commits = vec![
+            commit("m", &["a", "b"]),
+            commit("a", &["c"]),
+            commit("c", &["e"]),
+            commit("b", &["e"]),
+            commit("e", &[]),
+        ];
+        let full = layout(&commits);
+
+        // 在第 3 行处切断(此时第二父 b 的 lane 正活跃,是最严格的边界)。
+        let mut st = LayoutState::default();
+        let mut inc = layout_into(&commits[..3], &mut st);
+        inc.extend(layout_into(&commits[3..], &mut st));
+
+        assert_eq!(proj(&full), proj(&inc), "续算结果应与全量逐行逐段一致");
+        assert_eq!(inc.len(), commits.len());
     }
 
     #[test]
