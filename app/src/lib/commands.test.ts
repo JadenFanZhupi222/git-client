@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fuzzyMatch, rankCommands, type Command } from "./commands";
+import { fuzzyMatch, rankCommands, rankBy, type Command } from "./commands";
 
 // 命令面板纯逻辑回归。锁三件事:① 子序列命中/不命中;② 评分偏好(连续、词首、靠前);
 // ③ rankCommands 的 title 优先 / keywords 回退 / 空 query 原样返回。
@@ -79,5 +79,26 @@ describe("rankCommands", () => {
 
   it("完全无关 query → 空结果", () => {
     expect(rankCommands(list, "zzzzz")).toEqual([]);
+  });
+});
+
+describe("rankBy", () => {
+  const branches = [{ name: "main" }, { name: "feature/login" }, { name: "release-1.0" }];
+  const text = (b: { name: string }) => b.name;
+
+  it("空 query → 原样返回、无高亮", () => {
+    const r = rankBy(branches, text, "");
+    expect(r.map((x) => x.item.name)).toEqual(["main", "feature/login", "release-1.0"]);
+    expect(r.every((x) => x.indices.length === 0)).toBe(true);
+  });
+
+  it("模糊命中过滤并带高亮", () => {
+    const r = rankBy(branches, text, "log");
+    expect(r[0].item.name).toBe("feature/login");
+    expect(r[0].indices.length).toBeGreaterThan(0);
+  });
+
+  it("无命中 → 空", () => {
+    expect(rankBy(branches, text, "zzz")).toEqual([]);
   });
 });
