@@ -9,7 +9,13 @@
 - 分支 `main`,工作区干净。**main 领先 origin 若干 commit(M1 全部 + M2 全部),尚未 push**——
   push 由用户发话才做(铁律)。
 - 五支柱路线图:**M1「Instant」性能地基 ✅ 全完成**、**M2「Fearless」永不丢工作 ✅ 全完成**。
-- 下一支柱:**M3「Fluid」键盘优先的顺手**(未开工)。
+- 当前支柱:**M3「Fluid」键盘优先的顺手**(进行中)。
+  - ✅ **M3.1 命令面板(⌘K)**(已合 main):全局 ⌘K/Ctrl+K → 模糊搜索所有动作 → 键盘执行。
+    纯逻辑 `app/src/lib/commands.ts`(fuzzyMatch + rankCommands,12 vitest);UI `CommandPalette.tsx`;
+    App 顶栏加可发现的「⌘K」按钮。纯前端、后端零改动。
+    **真机待验**:⌘K 打开/关闭、输入过滤高亮、↑↓/回车/Esc、各命令执行(切视图/Fetch/撤销等),
+    不可用项(未开仓库时)灰显。需 `pnpm -C app tauri dev` 整段重启(无 Rust 改动,纯前端 HMR 即可)。
+  - 待做:M3.2 全局列表键盘导航(j/k+回车)、M3.3 分支/文件/提交模糊跳转、M3.4 拖拽。
 
 ## 已完成(本里程碑 M2「Fearless」)
 
@@ -41,11 +47,14 @@
 
 ## 接下来要做(按优先级)
 
-### 首选:M3「Fluid」键盘优先
-让常用流程全程不碰鼠标。建议仍按竖切、一次一小块:
-- **命令面板(⌘K)**:所有动作可搜索、可键盘触发。先搭面板骨架 + 注册表,再逐步把现有动作接进去。
-- **全局键盘导航**:提交列表 / 文件列表 j/k 移动、回车进入、各视图统一快捷键。
-- **模糊跳转**:分支/文件/提交统一 ⌘K 入口(现有 `BranchSwitcher` 升级)。
+### 首选:M3「Fluid」键盘优先(进行中)
+让常用流程全程不碰鼠标。仍按竖切、一次一小块:
+- ✅ **命令面板(⌘K)**:已落地(见上)。新增顶层动作时往 `App.tsx` 的 `commands` 数组加一条即可
+  (run 闭包就地建、拿最新 state;不可用给 `disabled`)。
+- **下一刀 · 全局键盘导航**:提交列表 / 文件列表 j/k 移动、回车进入、各视图统一快捷键。
+  建议抽一个 `useListKeyboardNav(items, onActivate)` hook,先接 HistoryView 的 CommitGraph/SearchList,
+  再推广到 ChangesView 文件列表。注意与命令面板/输入框焦点互斥(输入态不抢 j/k)。
+- **模糊跳转**:分支/文件/提交统一 ⌘K 入口(现有 `BranchSwitcher` 升级,或命令面板二级模式)。
 - **拖拽**(较重,放后):拖提交到分支 = cherry-pick/reset;rebase 列表拖拽重排。
 - 成功标准:切分支、暂存提交、比较、cherry-pick 可全程键盘完成。
 
