@@ -73,6 +73,9 @@ pub struct UndoStepDto {
     pub label: String,
     /// 这一步移动后 HEAD 指向的提交短 SHA(供 toast/tooltip 显示"回到 abc1234")。
     pub target_short: String,
+    /// 这一步用的还原语义:`true` = 忠实还原了工作区(reset --hard,撤销 reset/cherry-pick 等),
+    /// `false` = 只动 HEAD、内容回暂存区(reset --soft,撤销提交)。仅用于 toast 文案精确化。
+    pub worktree_restored: bool,
 }
 
 /// 撤销/重做的当前可用性。驱动顶栏「撤销」「重做」两个按钮的显隐与文案。

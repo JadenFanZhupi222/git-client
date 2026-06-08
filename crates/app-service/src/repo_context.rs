@@ -16,7 +16,7 @@ use crate::RepoService;
 use crate::undo_nav::UndoNav;
 use crate::watcher::ChangeKind;
 use git_core::model::{RebaseStep, ResetMode};
-use git_core::{GitBackend, GitError};
+use git_core::{GitBackend, GitError, UndoKind};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
     FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, OpLogDto, OpLogEntryDto,
@@ -407,14 +407,14 @@ impl RepoContext {
         let before = self.head_oid_opt();
         let out = self.service.commit(&self.path, message)?;
         self.after_write(true, true);
-        self.record_nav(before, "提交");
+        self.record_nav(before, "提交", UndoKind::Uncommit);
         Ok(out)
     }
     pub fn amend_commit(&self, message: Option<&str>) -> Result<String, GitError> {
         let before = self.head_oid_opt();
         let out = self.service.amend_commit(&self.path, message)?;
         self.after_write(true, true);
-        self.record_nav(before, "修改提交(amend)");
+        self.record_nav(before, "修改提交(amend)", UndoKind::Uncommit);
         Ok(out)
     }
     pub fn set_upstream(&self, upstream: &str) -> Result<(), GitError> {
@@ -450,7 +450,7 @@ impl RepoContext {
         let before = self.head_oid_opt();
         let out = self.service.pull(&self.path, remote, rebase)?;
         self.after_write(true, true);
-        self.record_nav(before, "拉取(pull)");
+        self.record_nav(before, "拉取(pull)", UndoKind::Restore);
         Ok(out)
     }
     pub fn push(&self, remote: Option<&str>) -> Result<PushResultDto, GitError> {
@@ -482,14 +482,14 @@ impl RepoContext {
         let before = self.head_oid_opt();
         self.service.cherry_pick(&self.path, commit_id)?;
         self.after_write(true, true);
-        self.record_nav(before, "cherry-pick");
+        self.record_nav(before, "cherry-pick", UndoKind::Restore);
         Ok(())
     }
     pub fn revert(&self, commit_id: &str) -> Result<(), GitError> {
         let before = self.head_oid_opt();
         self.service.revert(&self.path, commit_id)?;
         self.after_write(true, true);
-        self.record_nav(before, "回退提交(revert)");
+        self.record_nav(before, "回退提交(revert)", UndoKind::Restore);
         Ok(())
     }
     pub fn create_tag(
@@ -512,7 +512,7 @@ impl RepoContext {
         let before = self.head_oid_opt();
         self.service.reset(&self.path, commit_id, mode)?;
         self.after_write(true, true);
-        self.record_nav(before, "重置(reset)");
+        self.record_nav(before, "重置(reset)", UndoKind::Restore);
         Ok(())
     }
 
@@ -523,14 +523,15 @@ impl RepoContext {
         self.service.head_commit(&self.path).ok().map(|c| c.id)
     }
 
-    /// 记录一次「我们刚做的」HEAD 移动:捕获操作后 HEAD,连同操作前 `before` 喂给时间线。
-    /// 在写方法成功 + 失效缓存之后调用。HEAD 没动(如 up-to-date 的 pull)由 nav 内部忽略。
-    fn record_nav(&self, before: Option<String>, label: &str) {
+    /// 记录一次「我们刚做的」HEAD 移动:捕获操作后 HEAD,连同操作前 `before` + 还原语义
+    /// `kind` 喂给时间线。在写方法成功 + 失效缓存之后调用。HEAD 没动(如 up-to-date 的
+    /// pull)由 nav 内部忽略。`kind` 决定将来撤销这一步时用 soft(提交类)还是 hard(改写类)。
+    fn record_nav(&self, before: Option<String>, label: &str, kind: UndoKind) {
         if let Some(after) = self.head_oid_opt() {
             self.nav
                 .lock()
                 .unwrap()
-                .record(before.as_deref(), &after, label, Self::now());
+                .record(before.as_deref(), &after, label, kind, Self::now());
         }
     }
 
@@ -543,20 +544,51 @@ impl RepoContext {
     }
 
     /// 冷启动 / 外部改动后重建时间线用的提示:reflog 顶项可安全撤销时给
-    /// `(上一步 oid, 操作中文名)`,供 [`UndoNav::sync`] 兜出一次撤销。
-    fn bootstrap_hint(&self) -> Result<Option<(String, String)>, GitError> {
+    /// `(上一步 oid, 操作中文名, 还原语义)`,供 [`UndoNav::sync`] 兜出一次撤销。
+    /// 带上 `kind`,这样冷启动后撤销一次 reset 也会正确走 hard(而非留残渣的 soft)。
+    fn bootstrap_hint(&self) -> Result<Option<(String, String, UndoKind)>, GitError> {
         let entries = self.service.reflog(&self.path, 2)?;
         let (Some(top), Some(prev)) = (entries.first(), entries.get(1)) else {
             return Ok(None);
         };
-        Ok(
-            git_core::undoable_op_label(&top.message)
-                .map(|l| (prev.new_oid.clone(), l.to_string())),
-        )
+        Ok(git_core::classify_undoable(&top.message)
+            .map(|(l, k)| (prev.new_oid.clone(), l.to_string(), k)))
     }
 
     fn short(oid: &str) -> String {
         oid.chars().take(7).collect()
+    }
+
+    /// 把一步导航(撤销/重做/跳转)落到后端 reset。**核心**:按还原语义选 soft / hard。
+    ///
+    /// - `kind == Uncommit`(撤销提交)→ `reset --soft`:只退 HEAD,内容回暂存区,永不丢活。
+    /// - `kind == Restore`(撤销 reset/cherry-pick/…)或 `force_hard`(操作日志里跨多步跳转)
+    ///   → `reset --hard`:忠实还原工作区到目标点,消除残渣(修掉「撤销 hard reset 后暂存区
+    ///   凭空多文件」的 bug)。**但 hard 会覆盖未提交改动**,故先查工作区:有脏改动就拒绝
+    ///   (`UncommittedChanges`),让用户先提交/贮藏 —— 守住「永不丢工作」。
+    ///
+    /// 返回是否真的还原了工作区(true=走了 hard),供前端 toast 精确措辞。
+    fn apply_nav(
+        &self,
+        target_oid: &str,
+        kind: UndoKind,
+        force_hard: bool,
+    ) -> Result<bool, GitError> {
+        let hard = force_hard || kind == UndoKind::Restore;
+        if hard {
+            // 拿新鲜 status(绕过缓存):hard 会丢弃所有未提交改动,有就拒绝。
+            let dirty = self.service.status(&self.path)?.entries.len();
+            if dirty > 0 {
+                return Err(GitError::UncommittedChanges { count: dirty });
+            }
+        }
+        let mode = if hard {
+            ResetMode::Hard
+        } else {
+            ResetMode::Soft
+        };
+        self.service.reset(&self.path, target_oid, mode)?;
+        Ok(hard)
     }
 
     /// 撤销/重做的当前可用性。先把时间线对齐真实 HEAD(必要时从 reflog 重建),
@@ -580,6 +612,8 @@ impl RepoContext {
         let to_dto = |s: crate::undo_nav::NavStep| UndoStepDto {
             label: s.label,
             target_short: Self::short(&s.target_oid),
+            // 预览:Restore 类撤销会还原工作区(hard),提交类不会(soft)。
+            worktree_restored: s.kind == UndoKind::Restore,
         };
         Ok(UndoStateDto {
             can_undo: nav.can_undo().map(to_dto),
@@ -618,27 +652,32 @@ impl RepoContext {
         })
     }
 
-    /// 跳到操作日志的第 `index` 项:reset --soft 过去(撤销/重做的泛化)。改动回暂存区,
-    /// 不丢工作区。已在该点或越界 → NothingToUndo(无需移动)。
+    /// 跳到操作日志的第 `index` 项。按还原语义 reset(撤销/重做的泛化)。已在该点或越界
+    /// → NothingToUndo(无需移动)。**跨多步跳转一律 hard 忠实还原**:soft 只退 HEAD,跨多个
+    /// 提交后会让中间差异全堆进暂存区。脏工作区时 hard 被拒(`UncommittedChanges`),不丢活。
     pub fn goto(&self, index: usize) -> Result<UndoStepDto, GitError> {
         let head = self.head_oid_opt().ok_or(GitError::NoHead)?;
         let boot = self.bootstrap_hint()?;
-        let step = {
+        let (step, multi) = {
             let mut nav = self.nav.lock().unwrap();
             nav.sync(&head, boot, Self::now());
-            nav.point_at(index).ok_or(GitError::NothingToUndo)?
+            let cur = nav.cursor();
+            let step = nav.point_at(index).ok_or(GitError::NothingToUndo)?;
+            (step, index.abs_diff(cur) > 1)
         };
-        self.service
-            .reset(&self.path, &step.target_oid, ResetMode::Soft)?;
+        // reset 失败(含脏工作区拒绝)→ 提前返回,不动光标、不失效缓存。
+        let restored = self.apply_nav(&step.target_oid, step.kind, multi)?;
         self.nav.lock().unwrap().commit_goto(index);
         self.after_write(true, true);
         Ok(UndoStepDto {
             label: step.label,
             target_short: Self::short(&step.target_oid),
+            worktree_restored: restored,
         })
     }
 
-    /// 撤销一步:reset --soft 到光标左邻点。改动回暂存区,不丢工作区。无可撤销 → NothingToUndo。
+    /// 撤销一步:回到光标左邻点。提交类走 soft(内容回暂存区,保留活);reset/cherry-pick 等
+    /// 改写类走 hard 忠实还原(脏工作区时拒绝,守住不丢活)。无可撤销 → NothingToUndo。
     pub fn undo(&self) -> Result<UndoStepDto, GitError> {
         let head = self.head_oid_opt().ok_or(GitError::NoHead)?;
         let boot = self.bootstrap_hint()?;
@@ -647,18 +686,19 @@ impl RepoContext {
             nav.sync(&head, boot, Self::now());
             nav.can_undo().ok_or(GitError::NothingToUndo)?
         };
-        // git 重活在锁外做;reset --soft 只移动分支指针,永不丢工作区。
-        self.service
-            .reset(&self.path, &step.target_oid, ResetMode::Soft)?;
+        // git 重活在锁外做;模式由 apply_nav 按 step.kind 决定。
+        let restored = self.apply_nav(&step.target_oid, step.kind, false)?;
         self.nav.lock().unwrap().commit_undo();
         self.after_write(true, true);
         Ok(UndoStepDto {
             label: step.label,
             target_short: Self::short(&step.target_oid),
+            worktree_restored: restored,
         })
     }
 
-    /// 重做一步:reset --soft 到光标右邻点。无可重做 → NothingToRedo。
+    /// 重做一步:回到光标右邻点。模式与撤销镜像(被重做的操作是提交类→soft,改写类→hard)。
+    /// 无可重做 → NothingToRedo。
     pub fn redo(&self) -> Result<UndoStepDto, GitError> {
         let head = self.head_oid_opt().ok_or(GitError::NoHead)?;
         let boot = self.bootstrap_hint()?;
@@ -667,13 +707,13 @@ impl RepoContext {
             nav.sync(&head, boot, Self::now());
             nav.can_redo().ok_or(GitError::NothingToRedo)?
         };
-        self.service
-            .reset(&self.path, &step.target_oid, ResetMode::Soft)?;
+        let restored = self.apply_nav(&step.target_oid, step.kind, false)?;
         self.nav.lock().unwrap().commit_redo();
         self.after_write(true, true);
         Ok(UndoStepDto {
             label: step.label,
             target_short: Self::short(&step.target_oid),
+            worktree_restored: restored,
         })
     }
     pub fn interactive_rebase(
@@ -684,7 +724,7 @@ impl RepoContext {
         let before = self.head_oid_opt();
         self.service.interactive_rebase(&self.path, base, steps)?;
         self.after_write(true, true);
-        self.record_nav(before, "变基(rebase)");
+        self.record_nav(before, "变基(rebase)", UndoKind::Restore);
         Ok(())
     }
     pub fn stash_save(&self, message: Option<&str>) -> Result<(), GitError> {
@@ -1085,5 +1125,59 @@ mod tests {
         ctx.goto(1).unwrap();
         assert_eq!(fb.head_oid().as_deref(), Some(b.as_str()));
         assert_eq!(ctx.op_log().unwrap().current, 1);
+    }
+
+    // ---- 还原语义:撤销 reset/cherry-pick 等改写类必须 hard,否则暂存区留残渣 ----
+
+    #[test]
+    fn undo_of_reset_uses_hard_to_faithfully_restore() {
+        let a = "a".repeat(40);
+        let b = "b".repeat(40);
+        // 冷启动:HEAD 在 B,reflog 顶项是一次 reset、上一步是 A。工作区干净。
+        let fb = Arc::new(
+            FakeBackend::default()
+                .with_head(&b)
+                .with_reflog(reflog_top("reset: moving to A", &a)),
+        );
+        let ctx = RepoRegistry::new(fb.clone()).context(Path::new("/r"));
+
+        // 撤销这次 reset:必须走 hard 忠实还原(不是 soft —— soft 会把 A..B 差异留在暂存区,
+        // 正是真机里「撤销 hard reset 后暂存区凭空多文件」的 bug)。
+        let done = ctx.undo().unwrap();
+        assert_eq!(done.label, "重置(reset)");
+        assert!(done.worktree_restored, "撤销 reset 应还原工作区(hard)");
+        assert_eq!(fb.head_oid().as_deref(), Some(a.as_str()));
+        assert_eq!(
+            fb.tag_ops(),
+            vec![format!("reset:hard:{a}")],
+            "撤销 reset 必须 hard,不能 soft"
+        );
+    }
+
+    #[test]
+    fn undo_hard_path_refuses_when_worktree_dirty() {
+        use git_core::model::{FileEntry, FileState};
+        let a = "a".repeat(40);
+        let b = "b".repeat(40);
+        // 顶项是 reset(撤销需 hard),但工作区有 1 处未提交改动 → hard 会冲掉它。
+        let fb = Arc::new(
+            FakeBackend::default()
+                .with_head(&b)
+                .with_reflog(reflog_top("reset: moving to A", &a))
+                .with_status_entries(vec![FileEntry {
+                    path: "dirty.txt".into(),
+                    state: FileState::Modified,
+                    staged: false,
+                }]),
+        );
+        let ctx = RepoRegistry::new(fb.clone()).context(Path::new("/r"));
+
+        // 必须拒绝并报 UncommittedChanges,绝不 reset、绝不动 HEAD(永不丢工作)。
+        assert!(matches!(
+            ctx.undo(),
+            Err(GitError::UncommittedChanges { count: 1 })
+        ));
+        assert!(fb.tag_ops().is_empty(), "拒绝时不该执行任何 reset");
+        assert_eq!(fb.head_oid().as_deref(), Some(b.as_str()), "HEAD 不该移动");
     }
 }

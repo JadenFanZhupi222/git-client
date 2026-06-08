@@ -409,8 +409,9 @@ export async function getReflog(repoPath: string, limit: number): Promise<Reflog
 
 // ── 多级 Undo/Redo(操作时间线 + 光标,reset --soft,永不丢工作区)──
 export interface UndoStepDto {
-  label: string;        // 操作中文名,如 "提交"、"重置(reset)"
-  target_short: string; // 这一步移动后 HEAD 的短 SHA
+  label: string;             // 操作中文名,如 "提交"、"重置(reset)"
+  target_short: string;      // 这一步移动后 HEAD 的短 SHA
+  worktree_restored: boolean; // true=还原了工作区(hard,撤销 reset 等);false=内容回暂存区(soft,撤销提交)
 }
 
 export interface UndoStateDto {

@@ -32,7 +32,7 @@ export function OpLogPanel({
       toast({
         kind: "success",
         title: `${dir === "back" ? "已回到" : "已前进到"}:${label}`,
-        detail: `HEAD → ${info.target_short},改动在暂存区`,
+        detail: `HEAD → ${info.target_short},${info.worktree_restored ? "工作区已还原" : "改动回暂存区"}`,
       });
       onJumped();
     } catch (e) {
@@ -57,7 +57,7 @@ export function OpLogPanel({
         </div>
 
         <p className="shrink-0 border-b border-line bg-accent/10 px-4 py-2 text-xs text-fg-muted">
-          本工具做过的写操作。点任意一项跳过去(reset --soft,改动回暂存区、不丢工作区)。
+          本工具做过的写操作。点任意一项跳过去:撤销提交→改动回暂存区;撤销 reset/cherry-pick 等→忠实还原工作区(有未提交改动会先拦下,不丢活)。
         </p>
 
         <div className="min-h-0 flex-1 overflow-y-auto">

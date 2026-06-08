@@ -70,6 +70,9 @@ pub enum GitError {
     #[error("没有可重做的操作")]
     NothingToRedo,
 
+    #[error("有 {count} 处未提交改动,撤销该操作会还原工作区并丢失它们,请先提交或贮藏")]
+    UncommittedChanges { count: usize },
+
     #[error("该后端不支持此操作")]
     Unsupported,
 

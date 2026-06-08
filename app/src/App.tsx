@@ -143,10 +143,13 @@ export default function App() {
     setUndoing(true);
     try {
       const info = await (dir === "undo" ? undo(repo) : redo(repo));
+      const where = dir === "undo" ? "回到" : "前进到";
+      // soft(撤销提交)内容回暂存区;hard(撤销 reset 等)已忠实还原工作区。
+      const effect = info.worktree_restored ? "工作区已还原到该状态" : "改动回到暂存区";
       toast({
         kind: "success",
         title: `${dir === "undo" ? "已撤销" : "已重做"}:${info.label}`,
-        detail: `HEAD ${dir === "undo" ? "回到" : "前进到"} ${info.target_short},改动在暂存区`,
+        detail: `HEAD ${where} ${info.target_short},${effect}`,
       });
     } catch (e) {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
@@ -218,7 +221,7 @@ export default function App() {
                 <button
                   onClick={() => doNav("undo")}
                   disabled={busy}
-                  title={`撤销刚才的「${canUndo.label}」(reset --soft 到 ${canUndo.target_short};改动回暂存区,不丢工作区)`}
+                  title={`撤销刚才的「${canUndo.label}」(回到 ${canUndo.target_short};${canUndo.worktree_restored ? "还原工作区,有未提交改动会先拦下" : "改动回暂存区,不丢工作区"})`}
                   className="flex items-center gap-1.5 rounded-md border border-accent/60 bg-accent/10 px-2.5 py-1 text-xs text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
                 >
                   {undoing ? <SpinnerIcon width={13} height={13} /> : <UndoIcon width={13} height={13} />}

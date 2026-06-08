@@ -8,4 +8,4 @@ pub mod undo;
 
 pub use backend::GitBackend;
 pub use error::GitError;
-pub use undo::undoable_op_label;
+pub use undo::{UndoKind, classify_undoable, undoable_op_label};

@@ -47,6 +47,7 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         MergeConflict { .. } => ("MERGE_CONFLICT", true),
         NothingToUndo => ("NOTHING_TO_UNDO", false),
         NothingToRedo => ("NOTHING_TO_REDO", false),
+        UncommittedChanges { .. } => ("UNCOMMITTED_CHANGES", true),
         Unsupported => ("UNSUPPORTED", false),
         Backend(_) => ("BACKEND", true),
     };
