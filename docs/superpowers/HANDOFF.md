@@ -28,7 +28,11 @@
     至此键盘流覆盖历史 + 更改两个主视图。
   - **M3 完成**(命令面板 / j・k 导航 + 聚焦面板 / ⌘K 跳转分支 / rebase 拖拽 / 更改视图键盘化)。
     剩极零散续做(非阻塞):跳转到提交/文件(需跨视图选中)、拖提交到分支(意图消歧)。
-  - **下一支柱:M4 · Correct(扛住真实世界 git)**——计划见 world-class-roadmap.md「M4」段。
+  - **M4 · Correct(扛住真实世界 git)进行中**——计划见 world-class-roadmap.md「M4」段。
+    - ✅ **M4.1 超大文件/二进制优雅处理**(已合 main):diff 超 20000 行→`FileDiff.too_large` 跳过逐行
+      (line_stats 廉价判定;注意 git2 `delta.size()` 在 tree-to-tree 返回 0,不可用);blame 调
+      blame_file 前挡超大(>2MB)/二进制(NUL),`GitError::FileTooLarge`/`BinaryFile`。DiffView/BlameView 占位。
+    - 下一刀:M4.2 提交签名验证徽章(CLI `%G?`,纯读)。
 
 ## 已完成(本里程碑 M2「Fearless」)
 

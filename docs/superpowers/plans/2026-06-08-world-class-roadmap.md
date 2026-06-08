@@ -94,11 +94,11 @@ ARCHITECTURE.md 自己把 **actor + 缓存 + 取消** 称为本项目的"成败�
 ### M4 · Correct —— 扛住真实世界 git 【当前支柱 · 计划 2026-06-08】
 按「先防崩 → 再可信 → 后覆盖」排序,每刀仍走竖切 + feat 分支 + 全门绿。
 
-- **M4.1 超大文件 / 二进制优雅处理**(先做:防崩、低风险、立即可感)
-  - diff/blame 前查 blob 大小与是否二进制;超阈值(如 >1MB 或二进制)→ 不计算/不渲染,
-    回一个占位(「文件过大 / 二进制,已跳过」)而不是卡死或灌爆内存。
-  - 竖切:trait 读路径加大小/二进制判断(git2 `blob.is_binary()`/size)→ DTO 加标志 → DiffView/BlameView 占位。
-  - 兼顾 Instant:真实仓库里一个大文件就能冻 UI,这刀同时是性能护栏。
+- ✅ **M4.1 超大文件 / 二进制优雅处理**(已合 main):diff 用 `patch.line_stats` 算总行数,
+  超 20000 行→`FileDiff.too_large`、不构建 Vec(真正卡点是前端渲染几万 DOM 行);DiffView 占位。
+  blame 调 blame_file 前挡掉超大(>2MB→`FileTooLarge`)与二进制(前 8000 字节含 NUL→`BinaryFile`);
+  BlameView 居中显友好错误。GitError +FileTooLarge/BinaryFile,to_ipc 同步。git-engine +2 tempfile 测试。
+  注:`delta.new_file().size()` 在 tree-to-tree diff 返回 0(libgit2 不填),故用 line_stats 而非字节数。
 - **M4.2 提交签名验证徽章**(高可见、对标 GitHub「Verified」)
   - 读签名状态:CLI `git log --format=%G?`(G=good/B=bad/U=unknown/N=none)或 `git verify-commit`;
     git2 读签名不便,走 CliBackend。模型 SignatureStatus → CommitDto/GraphRow 加字段 → 图谱行/提交详情显徽章。
