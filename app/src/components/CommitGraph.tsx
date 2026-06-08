@@ -1,3 +1,5 @@
+import { useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { type CommitDto, type GraphRowDto, type RefDto } from "../ipc";
 import { CommitLines } from "./CommitLines";
 import { ROW_H, cx, gutterWidth, topPath, botPath } from "../lib/graphGeometry";
@@ -54,7 +56,17 @@ export function CommitGraph({
   loading: boolean;
   hasMore: boolean;
 }) {
-  // 首屏加载骨架
+  // 滚动容器:虚拟化以它为测量基准。必须在所有 hook 之后再分支返回,故 ref/虚拟器
+  // 始终调用(React hooks 规则:不能在条件后才调 hook)。
+  const parentRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ROW_H, // 行高固定,估计=实际,无需动态测量
+    overscan: 12, // 视口外多渲染几行,快速滚动不露白
+  });
+
+  // 首屏加载骨架(无数据时):不进虚拟化路径。
   if (loading && rows.length === 0) {
     return (
       <div className="overflow-hidden">
@@ -74,64 +86,76 @@ export function CommitGraph({
   const gutterW = gutterWidth(rows);
 
   return (
-    <div className="fade-in overflow-y-auto">
-      {rows.map((r) => {
-        const on = selectedId === r.commit.id;
-        const cmp = !on && compareId === r.commit.id;
-        const isHead = r.refs.some((x) => x.kind === "head");
-        // 同步状态:未 push=绿 / 未 pull=蓝(与状态栏 SyncBadge 的 ↑绿↓蓝 一致)。
-        const syncColor =
-          r.sync === "outgoing" ? "var(--color-success)"
-          : r.sync === "incoming" ? "var(--color-accent)"
-          : null;
-        const syncTip =
-          r.sync === "outgoing" ? "已提交,尚未 push 到远程"
-          : r.sync === "incoming" ? "已 fetch,尚未 pull/合并到本地"
-          : undefined;
-        return (
-          <div
-            key={r.commit.id}
-            onClick={(e) => onSelect(r.commit, { compare: e.metaKey || e.ctrlKey })}
-            onContextMenu={(e) => { if (onContext) { e.preventDefault(); onSelect(r.commit); onContext(r.commit, e.clientX, e.clientY); } }}
-            title={syncTip}
-            className={`flex cursor-pointer items-stretch border-l-2 transition-colors ${
-              on ? "border-accent-emphasis bg-overlay"
-              : cmp ? "border-accent bg-accent/10"
-              : "border-transparent hover:bg-elevated"
-            }`}
-            style={{ height: ROW_H }}
-          >
-            {/* 左侧同步色条:未 push/未 pull 的提交在行首画一条细竖条,一眼成组识别 */}
+    <div ref={parentRef} className="fade-in overflow-y-auto">
+      {/* 撑出全量高度的占位层;只有可见窗口内的行被真正渲染并绝对定位到各自位置。
+          10 万提交也只挂十几个 DOM 节点,滚动恒定开销。 */}
+      <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        {virtualizer.getVirtualItems().map((vrow) => {
+          const r = rows[vrow.index];
+          const on = selectedId === r.commit.id;
+          const cmp = !on && compareId === r.commit.id;
+          const isHead = r.refs.some((x) => x.kind === "head");
+          // 同步状态:未 push=绿 / 未 pull=蓝(与状态栏 SyncBadge 的 ↑绿↓蓝 一致)。
+          const syncColor =
+            r.sync === "outgoing" ? "var(--color-success)"
+            : r.sync === "incoming" ? "var(--color-accent)"
+            : null;
+          const syncTip =
+            r.sync === "outgoing" ? "已提交,尚未 push 到远程"
+            : r.sync === "incoming" ? "已 fetch,尚未 pull/合并到本地"
+            : undefined;
+          return (
             <div
-              className="w-[3px] shrink-0 self-stretch"
-              style={{ background: syncColor ?? "transparent" }}
-            />
-            {/* 图谱泳道 */}
-            <svg width={gutterW} height={ROW_H} className="shrink-0" style={{ minWidth: gutterW }}>
-              {r.top.map((s, j) => (
-                <path key={`t${j}`} d={topPath(s.from, s.to)} fill="none"
-                  stroke={laneColor(s.color)} strokeWidth={2} strokeLinecap="round" />
-              ))}
-              {r.bottom.map((s, j) => (
-                <path key={`b${j}`} d={botPath(s.from, s.to)} fill="none"
-                  stroke={laneColor(s.color)} strokeWidth={2} strokeLinecap="round" />
-              ))}
-              {/* 光晕:用画布色描边把节点背后的泳道线「挖空」,圆点更干净 */}
-              <circle cx={cx(r.column)} cy={ROW_H / 2} r={6.5} fill="var(--color-canvas)" />
-              {/* 节点:已同步=实心(泳道色);未 push/未 pull=空心环(同步色),仿 JetBrains */}
-              <circle cx={cx(r.column)} cy={ROW_H / 2} r={4.5}
-                fill={syncColor ? "var(--color-canvas)" : laneColor(r.color)}
-                stroke={syncColor ?? (isHead ? "var(--color-accent)" : "transparent")}
-                strokeWidth={syncColor ? 2.5 : isHead ? 2.5 : 0} />
-            </svg>
+              key={r.commit.id}
+              onClick={(e) => onSelect(r.commit, { compare: e.metaKey || e.ctrlKey })}
+              onContextMenu={(e) => { if (onContext) { e.preventDefault(); onSelect(r.commit); onContext(r.commit, e.clientX, e.clientY); } }}
+              title={syncTip}
+              className={`flex cursor-pointer items-stretch border-l-2 transition-colors ${
+                on ? "border-accent-emphasis bg-overlay"
+                : cmp ? "border-accent bg-accent/10"
+                : "border-transparent hover:bg-elevated"
+              }`}
+              style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                height: ROW_H,
+                transform: `translateY(${vrow.start}px)`,
+              }}
+            >
+              {/* 左侧同步色条:未 push/未 pull 的提交在行首画一条细竖条,一眼成组识别 */}
+              <div
+                className="w-[3px] shrink-0 self-stretch"
+                style={{ background: syncColor ?? "transparent" }}
+              />
+              {/* 图谱泳道 */}
+              <svg width={gutterW} height={ROW_H} className="shrink-0" style={{ minWidth: gutterW }}>
+                {r.top.map((s, j) => (
+                  <path key={`t${j}`} d={topPath(s.from, s.to)} fill="none"
+                    stroke={laneColor(s.color)} strokeWidth={2} strokeLinecap="round" />
+                ))}
+                {r.bottom.map((s, j) => (
+                  <path key={`b${j}`} d={botPath(s.from, s.to)} fill="none"
+                    stroke={laneColor(s.color)} strokeWidth={2} strokeLinecap="round" />
+                ))}
+                {/* 光晕:用画布色描边把节点背后的泳道线「挖空」,圆点更干净 */}
+                <circle cx={cx(r.column)} cy={ROW_H / 2} r={6.5} fill="var(--color-canvas)" />
+                {/* 节点:已同步=实心(泳道色);未 push/未 pull=空心环(同步色),仿 JetBrains */}
+                <circle cx={cx(r.column)} cy={ROW_H / 2} r={4.5}
+                  fill={syncColor ? "var(--color-canvas)" : laneColor(r.color)}
+                  stroke={syncColor ?? (isHead ? "var(--color-accent)" : "transparent")}
+                  strokeWidth={syncColor ? 2.5 : isHead ? 2.5 : 0} />
+              </svg>
 
-            {/* 提交信息 */}
-            <div className="flex min-w-0 flex-1 flex-col justify-center pr-3">
-              <CommitLines commit={r.commit} badges={<RefBadges refs={r.refs} />} />
+              {/* 提交信息 */}
+              <div className="flex min-w-0 flex-1 flex-col justify-center pr-3">
+                <CommitLines commit={r.commit} badges={<RefBadges refs={r.refs} />} />
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
 
       {hasMore ? (
         <button
