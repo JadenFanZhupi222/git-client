@@ -91,11 +91,29 @@ ARCHITECTURE.md 自己把 **actor + 缓存 + 取消** 称为本项目的"成败�
 **进度**:命令面板 ⌘K、提交/文件列表 j/k 导航 + 聚焦面板、⌘K 跳转到分支、rebase 拖拽重排均已落地;
 键盘流主体打通。剩零散续做(ChangesView 文件键盘化、跳转到提交/文件、拖提交到分支)。
 
-### M4 · Correct —— 扛住真实世界 git 【第四】
-- 子模块、worktree、LFS 感知、稀疏检出、超大文件优雅处理。
-- 提交签名(GPG/SSH)创建与验证徽章;尊重 hooks。
+### M4 · Correct —— 扛住真实世界 git 【当前支柱 · 计划 2026-06-08】
+按「先防崩 → 再可信 → 后覆盖」排序,每刀仍走竖切 + feat 分支 + 全门绿。
 
-**成功标准**:在带子模块/LFS/签名的真实大型仓库上不崩、不误判。
+- **M4.1 超大文件 / 二进制优雅处理**(先做:防崩、低风险、立即可感)
+  - diff/blame 前查 blob 大小与是否二进制;超阈值(如 >1MB 或二进制)→ 不计算/不渲染,
+    回一个占位(「文件过大 / 二进制,已跳过」)而不是卡死或灌爆内存。
+  - 竖切:trait 读路径加大小/二进制判断(git2 `blob.is_binary()`/size)→ DTO 加标志 → DiffView/BlameView 占位。
+  - 兼顾 Instant:真实仓库里一个大文件就能冻 UI,这刀同时是性能护栏。
+- **M4.2 提交签名验证徽章**(高可见、对标 GitHub「Verified」)
+  - 读签名状态:CLI `git log --format=%G?`(G=good/B=bad/U=unknown/N=none)或 `git verify-commit`;
+    git2 读签名不便,走 CliBackend。模型 SignatureStatus → CommitDto/GraphRow 加字段 → 图谱行/提交详情显徽章。
+  - 仅读、不改写,风险低。
+- **M4.3 尊重 hooks 与签名的提交路径**(修正确性硬伤)
+  - 现状:commit/amend 走 git2,**绕过 pre-commit/commit-msg hooks 与 commit.gpgsign 签名**。
+  - 改:检测到仓库配了 hooks 或 `commit.gpgsign=true`(或用户开「签名提交」)时,提交走 CliBackend
+    (`git commit`,原生跑 hooks + 签名);否则保持 git2 快路径。需谨慎,有真机验收清单。
+- **M4.4 子模块感知**:读 `.gitmodules` + 子模块状态(未初始化/有改动/落后);UI 列出,支持 init/update(CLI)。
+- **M4.5 worktree 列表**(niche):`git worktree list` 展示;切换/新建留后。
+- **M4.6 LFS 感知 / 稀疏检出**(niche、检测优先):识别 LFS 指针文件(别把指针当内容 diff)、
+  显示稀疏检出范围;完整管理留后。
+
+**成功标准**:在带子模块/LFS/签名的真实大型仓库上不崩、不误判;签名提交与 hooks 正常生效。
+**建议起点**:M4.1(防崩)→ M4.2(签名徽章)。
 
 ### M5 · 更深的 diff 与历史 【第五】
 - 并排(side-by-side)diff、行内/词级 diff(`similar`)、图片/二进制 diff。
