@@ -45,6 +45,9 @@ pub struct FakeBackend {
     tag_ops: Mutex<Vec<String>>,
     rebase_ops: Mutex<Vec<String>>,
     canned_reflog: Mutex<Vec<ReflogEntry>>,
+    // 读路径调用计数:供缓存测试断言「命中不打后端 / 失效后重打」。
+    status_calls: Mutex<u32>,
+    log_calls: Mutex<u32>,
 }
 
 impl FakeBackend {
@@ -134,6 +137,12 @@ impl FakeBackend {
     pub fn push_call_count(&self) -> u32 {
         *self.push_calls.lock().unwrap()
     }
+    pub fn status_call_count(&self) -> u32 {
+        *self.status_calls.lock().unwrap()
+    }
+    pub fn log_call_count(&self) -> u32 {
+        *self.log_calls.lock().unwrap()
+    }
     pub fn staged_hunks(&self) -> Vec<(String, usize)> {
         self.staged_hunks.lock().unwrap().clone()
     }
@@ -190,6 +199,7 @@ impl GitBackend for FakeBackend {
     }
 
     fn status(&self, _path: &Path) -> Result<WorkingTreeStatus, GitError> {
+        *self.status_calls.lock().unwrap() += 1;
         Ok(WorkingTreeStatus {
             entries: self.canned_status.lock().unwrap().clone(),
         })
@@ -218,6 +228,7 @@ impl GitBackend for FakeBackend {
     }
 
     fn log(&self, _path: &Path, _limit: usize, _skip: usize) -> Result<Vec<Commit>, GitError> {
+        *self.log_calls.lock().unwrap() += 1;
         Ok(self.canned_log.lock().unwrap().clone())
     }
     fn reflog(&self, _path: &Path, limit: usize) -> Result<Vec<ReflogEntry>, GitError> {

@@ -805,13 +805,19 @@ async fn stash_drop(
 #[tauri::command]
 fn watch_repo(
     app: tauri::AppHandle,
+    registry: tauri::State<'_, RepoRegistry>,
     state: tauri::State<'_, WatcherState>,
     repo_path: String,
 ) -> Result<(), IpcError> {
+    // 失效源 #2(外部改动:IDE 改文件 / 命令行 git):变化经分类后,先失效该仓库
+    // 的后端读缓存(M1.2),再 emit 给前端触发重取。把长驻上下文的 Arc move 进回调
+    // (回调在 watcher 后台线程跑,缓存 Mutex 保护,安全)。
+    let ctx = registry.context(&PathBuf::from(&repo_path));
     let watcher = RepoWatcher::new(
         PathBuf::from(&repo_path),
         Duration::from_millis(200),
         move |kind| {
+            ctx.invalidate(kind);
             let label = match kind {
                 ChangeKind::WorkingTree => "worktree",
                 ChangeKind::Index => "index",
