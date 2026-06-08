@@ -29,24 +29,60 @@ use std::sync::{Arc, Mutex};
 
 /// 同时缓存几个不同 limit 的图谱(「加载更多」会换 limit)。LRU 控上限防内存膨胀。
 const GRAPH_CACHE_CAP: usize = 8;
+/// 按 key 缓存的多条目缓存(diff/blame/log/compare)的容量上限:浏览多文件时够用。
+const ENTRY_CACHE_CAP: usize = 32;
+
+fn lru<K: std::hash::Hash + Eq, V>(cap: usize) -> Mutex<LruCache<K, V>> {
+    Mutex::new(LruCache::new(NonZeroUsize::new(cap).unwrap()))
+}
 
 /// 每个仓库一份读缓存(M1.2)。挂在 [`RepoContext`] 内,随上下文长驻。
 ///
 /// 切 tab / 重渲染会反复读同样的数据,这里命中即瞬回;失效由 [`RepoContext::invalidate`]
 /// (文件监听 + 自身写操作)按「变化域」精准驱动。`LruCache` 非线程安全,故各包一层
 /// `Mutex` —— 锁只在查/存的一瞬持有,后端调用本身不持锁(不违反「慢操作持锁」铁律)。
+///
+/// 三类失效语义:
+/// - **不可变(按 SHA 寻址)**:`commit_files`/`commit_diff` —— 提交内容永不变,永不失效,只靠 LRU 淘汰。
+/// - **worktree 域**:`status`/`working_diff` —— 工作区/暂存区变化即失效。
+/// - **ref 域**:`graph`/`log`/`refs`/`branches`/`current_branch`/`ahead_behind`/`compare_*` —— 引用/提交变化即失效。
+/// - `blame` 两域都清(未提交改动会改变它的「尚未提交」行)。
 struct RepoCache {
-    /// 工作区状态(单值)。工作区/暂存区变化即失效。
+    // 不可变(SHA 寻址,永不失效)
+    commit_files: Mutex<LruCache<String, Vec<FileChangeDto>>>,
+    commit_diff: Mutex<LruCache<(String, String), FileDiffDto>>,
+    // worktree 域
     status: Mutex<Option<StatusDto>>,
-    /// 提交图谱,按 limit 缓存。引用/提交变化即整体失效。
+    working_diff: Mutex<LruCache<(String, bool), FileDiffDto>>,
+    // ref 域
     graph: Mutex<LruCache<usize, Vec<GraphRowDto>>>,
+    log: Mutex<LruCache<(usize, usize), Vec<CommitDto>>>,
+    refs: Mutex<Option<Vec<RefDto>>>,
+    branches: Mutex<Option<Vec<BranchDto>>>,
+    current_branch: Mutex<Option<Option<String>>>,
+    ahead_behind: Mutex<Option<Option<AheadBehindDto>>>,
+    compare_files: Mutex<LruCache<(String, String), Vec<FileChangeDto>>>,
+    compare_diff: Mutex<LruCache<(String, String, String), FileDiffDto>>,
+    // 两域都清
+    blame: Mutex<LruCache<String, Vec<BlameLineDto>>>,
 }
 
 impl Default for RepoCache {
     fn default() -> Self {
         Self {
+            commit_files: lru(ENTRY_CACHE_CAP),
+            commit_diff: lru(ENTRY_CACHE_CAP),
             status: Mutex::new(None),
-            graph: Mutex::new(LruCache::new(NonZeroUsize::new(GRAPH_CACHE_CAP).unwrap())),
+            working_diff: lru(ENTRY_CACHE_CAP),
+            graph: lru(GRAPH_CACHE_CAP),
+            log: lru(GRAPH_CACHE_CAP),
+            refs: Mutex::new(None),
+            branches: Mutex::new(None),
+            current_branch: Mutex::new(None),
+            ahead_behind: Mutex::new(None),
+            compare_files: lru(ENTRY_CACHE_CAP),
+            compare_diff: lru(ENTRY_CACHE_CAP),
+            blame: lru(ENTRY_CACHE_CAP),
         }
     }
 }
@@ -75,18 +111,28 @@ impl RepoContext {
         &self.path
     }
 
-    /// 按「变化域」失效缓存。文件监听(外部改动)与自身写操作共用一套语义:
-    /// - 工作区/暂存区变 → `status` 失效(不动 graph,免得切个文件就重算图谱);
-    /// - 引用/提交变 → `graph` 失效。
-    ///
-    /// 后续 slice 会把更多缓存(diff/blame/log/refs…)按同样的域接进来。
+    /// 按「变化域」失效缓存。文件监听(外部改动)与自身写操作共用一套语义。
+    /// 不可变缓存(commit_files/commit_diff,按 SHA 寻址)永不在此清除。
     pub fn invalidate(&self, kind: ChangeKind) {
+        let c = &self.cache;
         match kind {
+            // 工作区/暂存区变 → status / 工作区 diff 失效(不动 graph/log,免得切个文件就重算)。
             ChangeKind::WorkingTree | ChangeKind::Index => {
-                *self.cache.status.lock().unwrap() = None;
+                *c.status.lock().unwrap() = None;
+                c.working_diff.lock().unwrap().clear();
+                c.blame.lock().unwrap().clear();
             }
+            // 引用/提交变(commit/切分支/fetch)→ 历史、引用、比较类全失效。
             ChangeKind::GitRef => {
-                self.cache.graph.lock().unwrap().clear();
+                c.graph.lock().unwrap().clear();
+                c.log.lock().unwrap().clear();
+                *c.refs.lock().unwrap() = None;
+                *c.branches.lock().unwrap() = None;
+                *c.current_branch.lock().unwrap() = None;
+                *c.ahead_behind.lock().unwrap() = None;
+                c.compare_files.lock().unwrap().clear();
+                c.compare_diff.lock().unwrap().clear();
+                c.blame.lock().unwrap().clear();
             }
         }
     }
@@ -115,7 +161,13 @@ impl RepoContext {
         Ok(st)
     }
     pub fn log(&self, limit: usize, skip: usize) -> Result<Vec<CommitDto>, GitError> {
-        self.service.log(&self.path, limit, skip)
+        let key = (limit, skip);
+        if let Some(hit) = self.cache.log.lock().unwrap().get(&key).cloned() {
+            return Ok(hit);
+        }
+        let v = self.service.log(&self.path, limit, skip)?;
+        self.cache.log.lock().unwrap().put(key, v.clone());
+        Ok(v)
     }
     pub fn commit_graph(&self, limit: usize) -> Result<Vec<GraphRowDto>, GitError> {
         if let Some(cached) = self.cache.graph.lock().unwrap().get(&limit).cloned() {
@@ -137,14 +189,44 @@ impl RepoContext {
     pub fn reflog(&self, limit: usize) -> Result<Vec<ReflogEntryDto>, GitError> {
         self.service.reflog(&self.path, limit)
     }
+    /// 不可变:某提交的文件列表按 SHA 缓存,永不失效(提交内容不变)。
     pub fn commit_files(&self, commit_id: &str) -> Result<Vec<FileChangeDto>, GitError> {
-        self.service.commit_files(&self.path, commit_id)
+        if let Some(hit) = self
+            .cache
+            .commit_files
+            .lock()
+            .unwrap()
+            .get(commit_id)
+            .cloned()
+        {
+            return Ok(hit);
+        }
+        let v = self.service.commit_files(&self.path, commit_id)?;
+        self.cache
+            .commit_files
+            .lock()
+            .unwrap()
+            .put(commit_id.to_string(), v.clone());
+        Ok(v)
     }
+    /// 不可变:某提交中单文件的 diff 按 (SHA, file) 缓存,永不失效。
     pub fn commit_file_diff(&self, commit_id: &str, file: &str) -> Result<FileDiffDto, GitError> {
-        self.service.commit_file_diff(&self.path, commit_id, file)
+        let key = (commit_id.to_string(), file.to_string());
+        if let Some(hit) = self.cache.commit_diff.lock().unwrap().get(&key).cloned() {
+            return Ok(hit);
+        }
+        let v = self.service.commit_file_diff(&self.path, commit_id, file)?;
+        self.cache.commit_diff.lock().unwrap().put(key, v.clone());
+        Ok(v)
     }
     pub fn compare_files(&self, from: &str, to: &str) -> Result<Vec<FileChangeDto>, GitError> {
-        self.service.compare_files(&self.path, from, to)
+        let key = (from.to_string(), to.to_string());
+        if let Some(hit) = self.cache.compare_files.lock().unwrap().get(&key).cloned() {
+            return Ok(hit);
+        }
+        let v = self.service.compare_files(&self.path, from, to)?;
+        self.cache.compare_files.lock().unwrap().put(key, v.clone());
+        Ok(v)
     }
     pub fn compare_file_diff(
         &self,
@@ -152,31 +234,72 @@ impl RepoContext {
         to: &str,
         file: &str,
     ) -> Result<FileDiffDto, GitError> {
-        self.service.compare_file_diff(&self.path, from, to, file)
+        let key = (from.to_string(), to.to_string(), file.to_string());
+        if let Some(hit) = self.cache.compare_diff.lock().unwrap().get(&key).cloned() {
+            return Ok(hit);
+        }
+        let v = self.service.compare_file_diff(&self.path, from, to, file)?;
+        self.cache.compare_diff.lock().unwrap().put(key, v.clone());
+        Ok(v)
     }
     pub fn working_diff(&self, file: &str, staged: bool) -> Result<FileDiffDto, GitError> {
-        self.service.working_diff(&self.path, file, staged)
+        let key = (file.to_string(), staged);
+        if let Some(hit) = self.cache.working_diff.lock().unwrap().get(&key).cloned() {
+            return Ok(hit);
+        }
+        let v = self.service.working_diff(&self.path, file, staged)?;
+        self.cache.working_diff.lock().unwrap().put(key, v.clone());
+        Ok(v)
     }
     pub fn current_branch(&self) -> Result<Option<String>, GitError> {
-        self.service.current_branch(&self.path)
+        if let Some(hit) = self.cache.current_branch.lock().unwrap().clone() {
+            return Ok(hit);
+        }
+        let v = self.service.current_branch(&self.path)?;
+        *self.cache.current_branch.lock().unwrap() = Some(v.clone());
+        Ok(v)
     }
     pub fn branches(&self) -> Result<Vec<BranchDto>, GitError> {
-        self.service.branches(&self.path)
+        if let Some(hit) = self.cache.branches.lock().unwrap().clone() {
+            return Ok(hit);
+        }
+        let v = self.service.branches(&self.path)?;
+        *self.cache.branches.lock().unwrap() = Some(v.clone());
+        Ok(v)
     }
     pub fn ahead_behind(&self) -> Result<Option<AheadBehindDto>, GitError> {
-        self.service.ahead_behind(&self.path)
+        if let Some(hit) = self.cache.ahead_behind.lock().unwrap().clone() {
+            return Ok(hit);
+        }
+        let v = self.service.ahead_behind(&self.path)?;
+        *self.cache.ahead_behind.lock().unwrap() = Some(v.clone());
+        Ok(v)
     }
     pub fn remotes(&self) -> Result<Vec<String>, GitError> {
         self.service.remotes(&self.path)
     }
     pub fn refs(&self) -> Result<Vec<RefDto>, GitError> {
-        self.service.refs(&self.path)
+        if let Some(hit) = self.cache.refs.lock().unwrap().clone() {
+            return Ok(hit);
+        }
+        let v = self.service.refs(&self.path)?;
+        *self.cache.refs.lock().unwrap() = Some(v.clone());
+        Ok(v)
     }
     pub fn repo_state(&self) -> Result<String, GitError> {
         self.service.repo_state(&self.path)
     }
     pub fn blame(&self, file: &str) -> Result<Vec<BlameLineDto>, GitError> {
-        self.service.blame(&self.path, file)
+        if let Some(hit) = self.cache.blame.lock().unwrap().get(file).cloned() {
+            return Ok(hit);
+        }
+        let v = self.service.blame(&self.path, file)?;
+        self.cache
+            .blame
+            .lock()
+            .unwrap()
+            .put(file.to_string(), v.clone());
+        Ok(v)
     }
     pub fn conflict_sides(&self, file: &str) -> Result<ConflictSidesDto, GitError> {
         self.service.conflict_sides(&self.path, file)
@@ -482,5 +605,88 @@ mod tests {
         ctx.commit_graph(50).unwrap();
         assert_eq!(fb.status_call_count(), 3, "commit 后 status 应重打");
         assert_eq!(fb.log_call_count(), 2, "commit 后 graph 应重算");
+    }
+
+    // ---- slice 2:其余读路径 ----
+
+    #[test]
+    fn commit_diff_is_immutable_never_invalidated() {
+        let fb = Arc::new(FakeBackend::default());
+        let ctx = RepoRegistry::new(fb.clone()).context(Path::new("/r"));
+        ctx.commit_file_diff("sha1", "a.txt").unwrap();
+        ctx.commit_file_diff("sha1", "a.txt").unwrap();
+        assert_eq!(
+            fb.commit_file_diff_call_count(),
+            1,
+            "同 (SHA,file) 命中缓存"
+        );
+        // 即便引用变化,按 SHA 寻址的内容永不变 → 不失效
+        ctx.invalidate(ChangeKind::GitRef);
+        ctx.commit_file_diff("sha1", "a.txt").unwrap();
+        assert_eq!(
+            fb.commit_file_diff_call_count(),
+            1,
+            "不可变缓存不该被 ref 失效"
+        );
+        // 不同 file 是不同 key
+        ctx.commit_file_diff("sha1", "b.txt").unwrap();
+        assert_eq!(fb.commit_file_diff_call_count(), 2);
+    }
+
+    #[test]
+    fn working_diff_is_worktree_domain() {
+        let fb = Arc::new(FakeBackend::default());
+        let ctx = RepoRegistry::new(fb.clone()).context(Path::new("/r"));
+        ctx.working_diff("a.txt", false).unwrap();
+        ctx.working_diff("a.txt", false).unwrap();
+        assert_eq!(fb.working_diff_call_count(), 1);
+        // ref 域变化不该动工作区 diff
+        ctx.invalidate(ChangeKind::GitRef);
+        ctx.working_diff("a.txt", false).unwrap();
+        assert_eq!(
+            fb.working_diff_call_count(),
+            1,
+            "GitRef 不该使 working_diff 失效"
+        );
+        // 工作区变化才失效
+        ctx.invalidate(ChangeKind::WorkingTree);
+        ctx.working_diff("a.txt", false).unwrap();
+        assert_eq!(fb.working_diff_call_count(), 2);
+        // staged 不同是不同 key
+        ctx.working_diff("a.txt", true).unwrap();
+        assert_eq!(fb.working_diff_call_count(), 3);
+    }
+
+    #[test]
+    fn blame_cleared_by_both_domains() {
+        let fb = Arc::new(FakeBackend::default());
+        let ctx = RepoRegistry::new(fb.clone()).context(Path::new("/r"));
+        ctx.blame("a.txt").unwrap();
+        ctx.blame("a.txt").unwrap();
+        assert_eq!(fb.blame_call_count(), 1);
+        // 未提交改动会改变 blame 的「尚未提交」行 → 工作区域也清
+        ctx.invalidate(ChangeKind::WorkingTree);
+        ctx.blame("a.txt").unwrap();
+        assert_eq!(fb.blame_call_count(), 2);
+        ctx.invalidate(ChangeKind::GitRef);
+        ctx.blame("a.txt").unwrap();
+        assert_eq!(fb.blame_call_count(), 3);
+    }
+
+    #[test]
+    fn refs_is_single_value_ref_domain() {
+        let fb = Arc::new(FakeBackend::default());
+        let ctx = RepoRegistry::new(fb.clone()).context(Path::new("/r"));
+        ctx.refs().unwrap();
+        ctx.refs().unwrap();
+        assert_eq!(fb.refs_call_count(), 1);
+        // 工作区变化不该动 refs
+        ctx.invalidate(ChangeKind::WorkingTree);
+        ctx.refs().unwrap();
+        assert_eq!(fb.refs_call_count(), 1, "WorkingTree 不该使 refs 失效");
+        // 引用变化才失效
+        ctx.invalidate(ChangeKind::GitRef);
+        ctx.refs().unwrap();
+        assert_eq!(fb.refs_call_count(), 2);
     }
 }
