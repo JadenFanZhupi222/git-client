@@ -35,7 +35,10 @@
     - ✅ **M4.2 提交签名验证徽章**(已合 main):CliBackend `git show -s --format=%G?<NUL>%GS`→
       `SignatureInfo`{status,signer};trait commit_signature(默认 Unsupported,Composite 委托 cli);
       CommitDetail 选中提交显徽章(绿已验证/黄已签名未验证/红无效),无签名不显。待续:图谱行批量徽章。
-    - 下一刀:M4.3 尊重 hooks/签名的提交(commit 走 git2 绕过了 hooks+gpgsign,检测到配置时改走 CLI)。
+    - ✅ **M4.3 提交走 CLI(尊重 hooks + 签名)**(已合 main):commit/amend 从 git2 改路由到 CliBackend
+      (`git commit`),原生跑 pre-commit/commit-msg hooks + 按 commit.gpgsign 签名。决策是「总是走 CLI」
+      (比条件分支更简单/更正确)。cli +3 测试(含失败 hook 拦提交)。**行为变更,需真机验收常规提交/amend。**
+    - 下一刀:M4.4 子模块感知(读 .gitmodules + 状态,UI 列出 + init/update)。
 
 ## 已完成(本里程碑 M2「Fearless」)
 

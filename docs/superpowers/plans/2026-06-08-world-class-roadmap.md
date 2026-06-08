@@ -104,10 +104,11 @@ ARCHITECTURE.md 自己把 **actor + 缓存 + 取消** 称为本项目的"成败�
   Composite 委托 cli);竖切到 CommitDetail——选中提交显徽章(绿已验证/黄已签名未验证/红无效 + 签名者),
   无签名不显。按 SHA 不变,不额外缓存(前端 query 已缓存)。cli + app-service 各 1 测试。
   **待续:图谱行也显徽章(需对可见提交批量取签名)。**
-- **M4.3 尊重 hooks 与签名的提交路径**(修正确性硬伤)
-  - 现状:commit/amend 走 git2,**绕过 pre-commit/commit-msg hooks 与 commit.gpgsign 签名**。
-  - 改:检测到仓库配了 hooks 或 `commit.gpgsign=true`(或用户开「签名提交」)时,提交走 CliBackend
-    (`git commit`,原生跑 hooks + 签名);否则保持 git2 快路径。需谨慎,有真机验收清单。
+- ✅ **M4.3 提交走 CLI(尊重 hooks + 签名)**(已合 main):决策——**总是**走 CLI(而非条件分支),
+  更简单、严格更正确。CliBackend.commit/amend_commit(`git commit -m` / `--amend`)原生跑 hooks +
+  按 gpgsign 签名,成功 rev-parse HEAD;Composite 把 commit/amend 从 git2 改路由到 cli。
+  classify_commit_error:nothing→NothingToCommit、缺身份→EmptySignature、hook 拦截/其它→Backend(原文)。
+  cli +3 测试(含失败 pre-commit hook 拦提交,Windows 本机已验 hooks 生效)。**行为变更,需真机验收常规提交。**
 - **M4.4 子模块感知**:读 `.gitmodules` + 子模块状态(未初始化/有改动/落后);UI 列出,支持 init/update(CLI)。
 - **M4.5 worktree 列表**(niche):`git worktree list` 展示;切换/新建留后。
 - **M4.6 LFS 感知 / 稀疏检出**(niche、检测优先):识别 LFS 指针文件(别把指针当内容 diff)、
