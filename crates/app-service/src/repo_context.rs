@@ -50,6 +50,16 @@ fn lru<K: std::hash::Hash + Eq, V>(cap: usize) -> Mutex<LruCache<K, V>> {
     Mutex::new(LruCache::new(NonZeroUsize::new(cap).unwrap()))
 }
 
+/// 图谱累加器(M1.5 增量泳道):`rows` 是已算好的前缀(含 refs/sync),`state` 是
+/// 续算泳道的断点,`complete` 表示已到历史开端。「加载更多」时只续算尾段并 append,
+/// 不重算全量;`GitRef` 失效时整体重置。
+#[derive(Default)]
+struct GraphAccum {
+    rows: Vec<GraphRowDto>,
+    state: crate::graph::LayoutState,
+    complete: bool,
+}
+
 /// 每个仓库一份读缓存(M1.2)。挂在 [`RepoContext`] 内,随上下文长驻。
 ///
 /// 切 tab / 重渲染会反复读同样的数据,这里命中即瞬回;失效由 [`RepoContext::invalidate`]
@@ -69,7 +79,7 @@ struct RepoCache {
     status: Mutex<Option<StatusDto>>,
     working_diff: Mutex<LruCache<(String, bool), FileDiffDto>>,
     // ref 域
-    graph: Mutex<LruCache<usize, Vec<GraphRowDto>>>,
+    graph: Mutex<GraphAccum>, // M1.5:增量累加器(非 LRU)
     log: Mutex<LruCache<(usize, usize), Vec<CommitDto>>>,
     refs: Mutex<Option<Vec<RefDto>>>,
     branches: Mutex<Option<Vec<BranchDto>>>,
@@ -88,7 +98,7 @@ impl Default for RepoCache {
             commit_diff: lru(ENTRY_CACHE_CAP),
             status: Mutex::new(None),
             working_diff: lru(ENTRY_CACHE_CAP),
-            graph: lru(GRAPH_CACHE_CAP),
+            graph: Mutex::new(GraphAccum::default()),
             log: lru(GRAPH_CACHE_CAP),
             refs: Mutex::new(None),
             branches: Mutex::new(None),
@@ -140,7 +150,7 @@ impl RepoContext {
             }
             // 引用/提交变(commit/切分支/fetch)→ 历史、引用、比较类全失效。
             ChangeKind::GitRef => {
-                c.graph.lock().unwrap().clear();
+                *c.graph.lock().unwrap() = GraphAccum::default();
                 c.log.lock().unwrap().clear();
                 *c.refs.lock().unwrap() = None;
                 *c.branches.lock().unwrap() = None;
@@ -189,15 +199,36 @@ impl RepoContext {
         self.cache.log.lock().unwrap().put(key, v.clone());
         Ok(v)
     }
+    /// 增量图谱(M1.5):已算够 / 已到底则切片瞬回;否则只续算尾段 [已算..limit]。
     pub fn commit_graph(&self, limit: usize) -> Result<Vec<GraphRowDto>, GitError> {
-        if let Some(cached) = self.cache.graph.lock().unwrap().get(&limit).cloned() {
-            return Ok(cached);
-        }
+        // 快路径:持锁极短。够了或已到历史开端 → 切片返回,零计算、不取消任何在跑请求。
+        let (skip, mut state) = {
+            let accum = self.cache.graph.lock().unwrap();
+            if accum.complete || limit <= accum.rows.len() {
+                let n = limit.min(accum.rows.len());
+                return Ok(accum.rows[..n].to_vec());
+            }
+            (accum.rows.len(), accum.state.clone())
+        };
+        // 续算尾段(真正的重读):**锁外**计算,不阻塞其它 graph 请求,且可被新请求取消。
         let mine = self.cancel.graph.fetch_add(1, Ordering::SeqCst) + 1;
         let cancelled = || self.cancel.graph.load(Ordering::SeqCst) != mine;
-        let rows = self.service.commit_graph(&self.path, limit, &cancelled)?;
-        self.cache.graph.lock().unwrap().put(limit, rows.clone());
-        Ok(rows)
+        let take = limit - skip;
+        let new_rows = self
+            .service
+            .commit_graph_page(&self.path, skip, take, &mut state, &cancelled)?;
+        // 提交:重新持锁。若期间 accum 被失效清空 / 被另一请求推进(len 变了),丢弃本次
+        // 结果(失效后前端会重新请求,自愈),只返回当前能给的切片,绝不错拼。
+        let mut accum = self.cache.graph.lock().unwrap();
+        if accum.rows.len() == skip {
+            if new_rows.len() < take {
+                accum.complete = true; // log 返回不足请求数 → 已到历史开端
+            }
+            accum.state = state;
+            accum.rows.extend(new_rows);
+        }
+        let n = limit.min(accum.rows.len());
+        Ok(accum.rows[..n].to_vec())
     }
     pub fn search_commits(
         &self,
@@ -593,22 +624,55 @@ mod tests {
     }
 
     #[test]
-    fn graph_cached_per_limit_until_ref_change() {
-        let fb = Arc::new(FakeBackend::default().with_log(vec![fake_commit()]));
+    fn graph_increments_and_invalidates() {
+        // M1.5:limit 增长只续算新尾段;切片不打后端;探到底标记 complete;
+        // GitRef 失效后重算;WorkingTree 不影响 graph。
+        let mk = |id: &str| {
+            use git_core::model::{Commit, Signature};
+            Commit {
+                id: id.into(),
+                short_id: id.into(),
+                summary: String::new(),
+                body: String::new(),
+                author: Signature {
+                    name: "n".into(),
+                    email: "e".into(),
+                },
+                timestamp: 0,
+                parents: vec![],
+            }
+        };
+        let fb = Arc::new(FakeBackend::default().with_log(vec![mk("a"), mk("b"), mk("c")]));
         let ctx = RepoRegistry::new(fb.clone()).context(Path::new("/r"));
-        ctx.commit_graph(50).unwrap();
-        ctx.commit_graph(50).unwrap();
-        assert_eq!(fb.log_call_count(), 1, "同 limit 第二次命中缓存");
-        ctx.commit_graph(100).unwrap();
-        assert_eq!(fb.log_call_count(), 2, "不同 limit 是不同 key,需重算");
-        // 引用变化(commit / 切分支 / fetch)→ graph 失效
-        ctx.invalidate(ChangeKind::GitRef);
-        ctx.commit_graph(50).unwrap();
-        assert_eq!(fb.log_call_count(), 3, "ref 失效后重算");
-        // 工作区变化不应动 graph
+
+        assert_eq!(ctx.commit_graph(2).unwrap().len(), 2);
+        assert_eq!(fb.log_call_count(), 1, "首次取 2 条:log 一次");
+        assert_eq!(ctx.commit_graph(2).unwrap().len(), 2);
+        assert_eq!(fb.log_call_count(), 1, "limit 不变:切片命中,不打后端");
+        assert_eq!(ctx.commit_graph(3).unwrap().len(), 3);
+        assert_eq!(
+            fb.log_call_count(),
+            2,
+            "加载更多:只续算尾段 [2..3],再 log 一次"
+        );
+        assert_eq!(ctx.commit_graph(10).unwrap().len(), 3);
+        assert_eq!(
+            fb.log_call_count(),
+            3,
+            "探到历史开端再 log 一次(随后标记 complete)"
+        );
+        assert_eq!(ctx.commit_graph(10).unwrap().len(), 3);
+        assert_eq!(fb.log_call_count(), 3, "complete 后切片,不再 log");
+
+        // 工作区变化不该动 graph
         ctx.invalidate(ChangeKind::WorkingTree);
-        ctx.commit_graph(50).unwrap();
+        ctx.commit_graph(2).unwrap();
         assert_eq!(fb.log_call_count(), 3, "WorkingTree 失效不该影响 graph");
+
+        // 引用变化(commit / 切分支 / fetch)→ 累加器重置,重算
+        ctx.invalidate(ChangeKind::GitRef);
+        assert_eq!(ctx.commit_graph(2).unwrap().len(), 2);
+        assert_eq!(fb.log_call_count(), 4, "GitRef 失效后重算");
     }
 
     #[test]

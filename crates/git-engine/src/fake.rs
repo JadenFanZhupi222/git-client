@@ -246,15 +246,24 @@ impl GitBackend for FakeBackend {
     fn log(
         &self,
         _path: &Path,
-        _limit: usize,
-        _skip: usize,
+        limit: usize,
+        skip: usize,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<Commit>, GitError> {
         if cancelled() {
             return Err(GitError::Cancelled);
         }
         *self.log_calls.lock().unwrap() += 1;
-        Ok(self.canned_log.lock().unwrap().clone())
+        // 尊重 skip/limit,使增量分页(commit_graph_page)在测试里可被真实驱动。
+        Ok(self
+            .canned_log
+            .lock()
+            .unwrap()
+            .iter()
+            .skip(skip)
+            .take(limit)
+            .cloned()
+            .collect())
     }
     fn reflog(&self, _path: &Path, limit: usize) -> Result<Vec<ReflogEntry>, GitError> {
         Ok(self

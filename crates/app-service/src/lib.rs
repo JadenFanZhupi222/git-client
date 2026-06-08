@@ -98,20 +98,43 @@ impl RepoService {
     }
 
     /// 用例:提交图谱。取 HEAD 起 limit 条提交,算 lane 布局后返回。
-    /// 从头(skip=0)整段计算,保证泳道一致。再把引用(分支/远程/HEAD)
-    /// 按 SHA 挂到对应行,供前端渲染标签。
+    /// 从头(skip=0)整段计算 = `commit_graph_page` 从空状态起。
     pub fn commit_graph(
         &self,
         repo_path: &Path,
         limit: usize,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<GraphRowDto>, GitError> {
-        let commits = self.backend.log(repo_path, limit, 0, cancelled)?;
+        let mut state = crate::graph::LayoutState::default();
+        self.commit_graph_page(repo_path, 0, limit, &mut state, cancelled)
+    }
+
+    /// 用例:续算图谱尾段。从 HEAD 跳过 `skip` 条、再取 `take` 条,用 `state`
+    /// 续算泳道(并把 state 推进到末尾),给这批新行挂上引用 / 未 push 未 pull 标记。
+    /// 供 RepoContext 增量「加载更多」:已缓存前缀不重算,只算新尾段(O(可见))。
+    pub fn commit_graph_page(
+        &self,
+        repo_path: &Path,
+        skip: usize,
+        take: usize,
+        state: &mut crate::graph::LayoutState,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<GraphRowDto>, GitError> {
+        let commits = self.backend.log(repo_path, take, skip, cancelled)?;
         let refs = self.backend.refs(repo_path)?;
         let sync = self.backend.sync_commits(repo_path)?;
-        let mut rows = crate::graph::layout(&commits);
+        let mut rows = crate::graph::layout_into(&commits, state);
+        Self::attach_refs_sync(&mut rows, refs, sync);
+        Ok(rows)
+    }
 
-        // 按目标 SHA 分组引用,然后挂到可见行上(指向窗口外提交的引用自然落空)。
+    /// 给一批图谱行挂引用(按 SHA 分组)+ 未 push/未 pull 标记。指向这批行之外提交的
+    /// 引用自然落空(留给它真正所在的那批行)。
+    fn attach_refs_sync(
+        rows: &mut [GraphRowDto],
+        refs: Vec<git_core::model::CommitRef>,
+        sync: git_core::model::SyncCommits,
+    ) {
         let mut by_sha: HashMap<String, Vec<RefDto>> = HashMap::new();
         for r in refs {
             by_sha
@@ -119,7 +142,7 @@ impl RepoService {
                 .or_default()
                 .push(RefDto::from(r));
         }
-        for row in &mut rows {
+        for row in rows.iter_mut() {
             if let Some(rs) = by_sha.remove(&row.commit.id) {
                 row.refs = rs;
             }
@@ -130,7 +153,6 @@ impl RepoService {
                 row.sync = "incoming".to_string();
             }
         }
-        Ok(rows)
     }
 
     /// 用例:从 HEAD 搜索提交(匹配 message/作者/SHA),扁平列表。空 query 返回空。
