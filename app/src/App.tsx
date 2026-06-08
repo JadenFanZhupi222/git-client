@@ -7,11 +7,13 @@ import { CompareView } from "./views/CompareView";
 import { BlameView } from "./views/BlameView";
 import { useQueryClient } from "@tanstack/react-query";
 import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, type IpcError } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon } from "./components/icons";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
 import { StashMenu } from "./components/StashMenu";
 import { OpLogPanel } from "./components/OpLogPanel";
+import { CommandPalette } from "./components/CommandPalette";
+import type { Command } from "./lib/commands";
 import { useToast } from "./components/Toast";
 import { Button } from "./components/ui/Button";
 import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
@@ -39,6 +41,7 @@ export default function App() {
   const [upMenu, setUpMenu] = useState(false);
   const [undoing, setUndoing] = useState(false);
   const [opLogOpen, setOpLogOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const toast = useToast();
   const qc = useQueryClient();
 
@@ -168,6 +171,74 @@ export default function App() {
 
   // 切仓库时重置远程选择(回到默认)
   useEffect(() => { setSelectedRemote(null); }, [repo]);
+
+  // 全局 ⌘K / Ctrl+K 开关命令面板(M3 键盘优先入口)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const isMac = navigator.platform.toLowerCase().includes("mac");
+  const modLabel = isMac ? "⌘K" : "Ctrl K";
+
+  // 命令面板的命令清单。每次渲染重建,保证 run() 闭包拿到最新 state(如 selectedRemote),
+  // 避免 useMemo 漏依赖导致的陈旧闭包;十来条命令,重建成本可忽略。
+  const commands: Command[] = [];
+  const views: { id: Tab; label: string }[] = [
+    { id: "changes", label: "更改" },
+    { id: "history", label: "历史" },
+    { id: "compare", label: "比较" },
+    { id: "blame", label: "追溯" },
+  ];
+  for (const v of views) {
+    commands.push({
+      id: `view:${v.id}`,
+      title: `切换到「${v.label}」`,
+      group: "视图",
+      keywords: `view tab ${v.id} ${v.label}`,
+      disabled: !repo || tab === v.id,
+      run: () => setTab(v.id),
+    });
+  }
+  commands.push({
+    id: "repo:pick",
+    title: repo ? "切换仓库" : "选择仓库",
+    group: "仓库",
+    keywords: "open repo folder 打开 仓库 切换",
+    run: pickRepo,
+  });
+  commands.push({
+    id: "theme:toggle",
+    title: theme === "dark" ? "切换到浅色主题" : "切换到暗色主题",
+    group: "外观",
+    keywords: "theme dark light 主题 暗色 浅色 切换",
+    run: toggleTheme,
+  });
+  commands.push(
+    { id: "remote:fetch", title: "Fetch", subtitle: "从远程拉取更新", group: "远程", keywords: "拉取 远程 fetch", disabled: !repo || busy, run: doFetch },
+    { id: "remote:pull-merge", title: "Pull · 合并", group: "远程", keywords: "拉取 合并 merge pull", disabled: !repo || busy, run: () => doPull(false) },
+    { id: "remote:pull-rebase", title: "Pull · 变基", group: "远程", keywords: "拉取 变基 rebase pull", disabled: !repo || busy, run: () => doPull(true) },
+    { id: "remote:push", title: "Push", subtitle: "推送当前分支", group: "远程", keywords: "推送 push", disabled: !repo || busy, run: doPush },
+  );
+  commands.push(
+    { id: "undo", title: canUndo ? `撤销:${canUndo.label}` : "撤销", group: "撤销", keywords: "undo 撤销 回退", disabled: !repo || busy || !canUndo, run: () => doNav("undo") },
+    { id: "redo", title: canRedo ? `重做:${canRedo.label}` : "重做", group: "撤销", keywords: "redo 重做 前进", disabled: !repo || busy || !canRedo, run: () => doNav("redo") },
+  );
+  commands.push({
+    id: "panel:oplog",
+    title: "操作日志",
+    subtitle: "本会话写操作时间线",
+    group: "面板",
+    keywords: "operation log history 操作 日志 时间线",
+    disabled: !repo,
+    run: () => setOpLogOpen(true),
+  });
 
   // 仓库路径只显示尾部目录名,完整路径放 title 悬浮
   const repoName = repo?.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? null;
@@ -333,6 +404,15 @@ export default function App() {
             </span>
           )}
           <button
+            onClick={() => setPaletteOpen(true)}
+            title="命令面板"
+            aria-label="命令面板"
+            className="hidden items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2 py-1 text-fg-subtle transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle sm:flex"
+          >
+            <SearchIcon width={13} height={13} />
+            <kbd className="font-mono text-[10px]">{modLabel}</kbd>
+          </button>
+          <button
             onClick={toggleTheme}
             title={theme === "dark" ? "切换到浅色" : "切换到暗色"}
             aria-label="切换主题"
@@ -399,6 +479,8 @@ export default function App() {
           </span>
         </footer>
       )}
+
+      {paletteOpen && <CommandPalette commands={commands} onClose={() => setPaletteOpen(false)} />}
 
       {repo && opLogOpen && (
         <OpLogPanel
