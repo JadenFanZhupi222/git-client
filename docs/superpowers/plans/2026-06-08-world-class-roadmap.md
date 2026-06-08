@@ -99,10 +99,11 @@ ARCHITECTURE.md 自己把 **actor + 缓存 + 取消** 称为本项目的"成败�
   blame 调 blame_file 前挡掉超大(>2MB→`FileTooLarge`)与二进制(前 8000 字节含 NUL→`BinaryFile`);
   BlameView 居中显友好错误。GitError +FileTooLarge/BinaryFile,to_ipc 同步。git-engine +2 tempfile 测试。
   注:`delta.new_file().size()` 在 tree-to-tree diff 返回 0(libgit2 不填),故用 line_stats 而非字节数。
-- **M4.2 提交签名验证徽章**(高可见、对标 GitHub「Verified」)
-  - 读签名状态:CLI `git log --format=%G?`(G=good/B=bad/U=unknown/N=none)或 `git verify-commit`;
-    git2 读签名不便,走 CliBackend。模型 SignatureStatus → CommitDto/GraphRow 加字段 → 图谱行/提交详情显徽章。
-  - 仅读、不改写,风险低。
+- ✅ **M4.2 提交签名验证徽章**(已合 main):CliBackend `git show -s --format=%G?<NUL>%GS` 解析
+  (G/B/U·X·Y·R·E/N→good/bad/unverified/none);model SignatureInfo + trait commit_signature(默认 Unsupported,
+  Composite 委托 cli);竖切到 CommitDetail——选中提交显徽章(绿已验证/黄已签名未验证/红无效 + 签名者),
+  无签名不显。按 SHA 不变,不额外缓存(前端 query 已缓存)。cli + app-service 各 1 测试。
+  **待续:图谱行也显徽章(需对可见提交批量取签名)。**
 - **M4.3 尊重 hooks 与签名的提交路径**(修正确性硬伤)
   - 现状:commit/amend 走 git2,**绕过 pre-commit/commit-msg hooks 与 commit.gpgsign 签名**。
   - 改:检测到仓库配了 hooks 或 `commit.gpgsign=true`(或用户开「签名提交」)时,提交走 CliBackend

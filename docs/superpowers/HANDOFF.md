@@ -32,7 +32,10 @@
     - ✅ **M4.1 超大文件/二进制优雅处理**(已合 main):diff 超 20000 行→`FileDiff.too_large` 跳过逐行
       (line_stats 廉价判定;注意 git2 `delta.size()` 在 tree-to-tree 返回 0,不可用);blame 调
       blame_file 前挡超大(>2MB)/二进制(NUL),`GitError::FileTooLarge`/`BinaryFile`。DiffView/BlameView 占位。
-    - 下一刀:M4.2 提交签名验证徽章(CLI `%G?`,纯读)。
+    - ✅ **M4.2 提交签名验证徽章**(已合 main):CliBackend `git show -s --format=%G?<NUL>%GS`→
+      `SignatureInfo`{status,signer};trait commit_signature(默认 Unsupported,Composite 委托 cli);
+      CommitDetail 选中提交显徽章(绿已验证/黄已签名未验证/红无效),无签名不显。待续:图谱行批量徽章。
+    - 下一刀:M4.3 尊重 hooks/签名的提交(commit 走 git2 绕过了 hooks+gpgsign,检测到配置时改走 CLI)。
 
 ## 已完成(本里程碑 M2「Fearless」)
 
