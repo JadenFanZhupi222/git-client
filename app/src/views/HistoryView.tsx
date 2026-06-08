@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cherryPick, revert, type CommitDto, type GraphRowDto, type FileChangeDto, type IpcError } from "../ipc";
 import { useGraph, useCommitSearch, useCommitFiles, useCommitDiff, useCurrentBranch, invalidateHistory, invalidateWorktree, qk } from "../lib/queries";
+import { useListKeyboardNav } from "../lib/listNav";
 import { CommitGraph } from "../components/CommitGraph";
 import { CommitLines } from "../components/CommitLines";
 import { TagManager } from "../components/TagManager";
@@ -99,6 +100,17 @@ export function HistoryView({ repo }: { repo: string }) {
   const cmpOlderFirst = comparing && selected!.timestamp <= compareWith!.timestamp;
   const cmpFrom = comparing ? (cmpOlderFirst ? selected! : compareWith!) : null;
   const cmpTo = comparing ? (cmpOlderFirst ? compareWith! : selected!) : null;
+
+  // 键盘导航(j/k/↑/↓/g/G):在当前可见的提交列表上移动选中(搜索时=搜索结果,否则=图谱行)。
+  // 选中即驱动中/右栏详情与 diff。弹层/比较/右键菜单打开时让出键盘。
+  const navList: CommitDto[] = searching ? (searchQ.data ?? []) : rows.map((r) => r.commit);
+  const navIndex = selected ? navList.findIndex((c) => c.id === selected.id) : -1;
+  useListKeyboardNav({
+    count: navList.length,
+    index: navIndex,
+    enabled: !comparing && !rebaseOpen && !reflogOpen && !menu,
+    onSelect: (i) => selectCommit(navList[i]),
+  });
 
   async function doCherryPick(commit: CommitDto) {
     setBusy(true);
@@ -321,6 +333,7 @@ function GraphColumn({
             rows={rows}
             selectedId={selectedId}
             compareId={compareId}
+            scrollToId={selectedId}
             onSelect={onSelect}
             onContext={onContext}
             onLoadMore={onLoadMore}
@@ -344,6 +357,13 @@ function SearchList({
   onSelect: (c: CommitDto) => void;
   onContext: (c: CommitDto, x: number, y: number) => void;
 }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  // 键盘选中变化 → 把该行滚进可视区(block nearest:已可见则不动)。
+  useEffect(() => {
+    if (!selectedId) return;
+    boxRef.current?.querySelector<HTMLElement>(`[data-id="${selectedId}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [selectedId]);
+
   if (loading && results.length === 0) {
     return <div className="p-3 text-xs text-fg-subtle">搜索中…</div>;
   }
@@ -351,13 +371,14 @@ function SearchList({
     return <div className="p-3 text-xs text-fg-subtle">没有匹配的提交</div>;
   }
   return (
-    <div className="fade-in overflow-y-auto">
+    <div ref={boxRef} className="fade-in overflow-y-auto">
       <div className="px-3 py-1.5 text-[11px] text-fg-subtle">{results.length} 条匹配{results.length >= SEARCH_LIMIT ? "(已截断)" : ""}</div>
       {results.map((c) => {
         const on = selectedId === c.id;
         return (
           <div
             key={c.id}
+            data-id={c.id}
             onClick={() => onSelect(c)}
             onContextMenu={(e) => { e.preventDefault(); onSelect(c); onContext(c, e.clientX, e.clientY); }}
             className={`flex cursor-pointer items-center gap-2 border-l-2 px-3 py-2 transition-colors ${
