@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cherryPick, revert, type CommitDto, type GraphRowDto, type FileChangeDto, type IpcError } from "../ipc";
 import { useGraph, useCommitSearch, useCommitFiles, useCommitDiff, useCurrentBranch, invalidateHistory, invalidateWorktree, qk } from "../lib/queries";
-import { useListKeyboardNav } from "../lib/listNav";
+import { useListKeyboardNav, isTypingTarget } from "../lib/listNav";
 import { CommitGraph } from "../components/CommitGraph";
 import { CommitLines } from "../components/CommitLines";
 import { TagManager } from "../components/TagManager";
@@ -44,6 +44,7 @@ export function HistoryView({ repo }: { repo: string }) {
   const [reflogOpen, setReflogOpen] = useState(false);
   const [compareWith, setCompareWith] = useState<CommitDto | null>(null); // 比较模式的第二个提交
   const [menu, setMenu] = useState<{ commit: CommitDto; x: number; y: number } | null>(null);
+  const [focusedPane, setFocusedPane] = useState<"commits" | "files">("commits"); // 键盘焦点在哪个列表
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -82,7 +83,7 @@ export function HistoryView({ repo }: { repo: string }) {
   const afterRebase = () => { setRebaseOpen(false); refresh(); };
 
   // 切仓库:重置分页、选择与搜索
-  useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); setSearchInput(""); setQuery(""); setRebaseOpen(false); setCompareWith(null); setMenu(null); }, [repo]);
+  useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); setSearchInput(""); setQuery(""); setRebaseOpen(false); setCompareWith(null); setMenu(null); setFocusedPane("commits"); }, [repo]);
 
   // Cmd/Ctrl+点击第二个提交 → 进入比较模式;普通点击 → 单选并退出比较。
   function selectCommit(c: CommitDto, opts?: { compare?: boolean }) {
@@ -93,6 +94,13 @@ export function HistoryView({ repo }: { repo: string }) {
     setSelected(c);
     setSelectedFile(null);
     setCompareWith(null);
+    setFocusedPane("commits"); // 选提交把键盘焦点带回提交列表
+  }
+
+  // 点文件:选中并把键盘焦点移到文件列表
+  function selectFile(path: string) {
+    setSelectedFile(path);
+    setFocusedPane("files");
   }
 
   // 比较两端按时间定序:旧 = from,新 = to(diff 读作 旧→新)。
@@ -101,16 +109,52 @@ export function HistoryView({ repo }: { repo: string }) {
   const cmpFrom = comparing ? (cmpOlderFirst ? selected! : compareWith!) : null;
   const cmpTo = comparing ? (cmpOlderFirst ? compareWith! : selected!) : null;
 
-  // 键盘导航(j/k/↑/↓/g/G):在当前可见的提交列表上移动选中(搜索时=搜索结果,否则=图谱行)。
-  // 选中即驱动中/右栏详情与 diff。弹层/比较/右键菜单打开时让出键盘。
+  // 键盘导航。两个可导航列表:提交列表(commits)与改动文件列表(files);j/k 作用于「聚焦的」那个。
+  // 弹层/比较/右键菜单打开时整体让出键盘。
+  const modalsOpen = comparing || rebaseOpen || reflogOpen || !!menu;
+  const files = filesQ.data ?? [];
+
+  // ① 提交列表:搜索态=搜索结果,否则=图谱行。
   const navList: CommitDto[] = searching ? (searchQ.data ?? []) : rows.map((r) => r.commit);
   const navIndex = selected ? navList.findIndex((c) => c.id === selected.id) : -1;
   useListKeyboardNav({
     count: navList.length,
     index: navIndex,
-    enabled: !comparing && !rebaseOpen && !reflogOpen && !menu,
+    enabled: !modalsOpen && focusedPane === "commits",
     onSelect: (i) => selectCommit(navList[i]),
   });
+
+  // ② 改动文件列表。
+  const fileIndex = selectedFile ? files.findIndex((f) => f.path === selectedFile) : -1;
+  useListKeyboardNav({
+    count: files.length,
+    index: fileIndex,
+    enabled: !modalsOpen && focusedPane === "files",
+    onSelect: (i) => selectFile(files[i].path),
+  });
+
+  // 面板间切焦点:Tab 来回切;l/→/Enter 从提交进文件,h/← 从文件回提交。
+  // 与 j/k/g/G 用的是不相交的键,两个 window 监听不打架。
+  useEffect(() => {
+    if (modalsOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTypingTarget(document.activeElement)) return;
+      const hasFiles = files.length > 0;
+      if (e.key === "Tab") {
+        e.preventDefault();
+        setFocusedPane((p) => (p === "commits" ? (hasFiles ? "files" : "commits") : "commits"));
+      } else if ((e.key === "l" || e.key === "ArrowRight" || e.key === "Enter") && focusedPane === "commits" && hasFiles) {
+        e.preventDefault();
+        setFocusedPane("files");
+      } else if ((e.key === "h" || e.key === "ArrowLeft") && focusedPane === "files") {
+        e.preventDefault();
+        setFocusedPane("commits");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [modalsOpen, files.length, focusedPane]);
 
   async function doCherryPick(commit: CommitDto) {
     setBusy(true);
@@ -164,6 +208,7 @@ export function HistoryView({ repo }: { repo: string }) {
         rows={rows}
         selectedId={selected?.id ?? null}
         compareId={compareWith?.id ?? null}
+        focused={focusedPane === "commits"}
         onSelect={selectCommit}
         onContext={(c, x, y) => setMenu({ commit: c, x, y })}
         onLoadMore={() => setLimit((l) => l + PAGE)}
@@ -202,7 +247,8 @@ export function HistoryView({ repo }: { repo: string }) {
             commit={selected}
             files={filesQ.data ?? []}
             selectedFile={selectedFile}
-            onSelectFile={setSelectedFile}
+            focused={focusedPane === "files"}
+            onSelectFile={selectFile}
             onCherryPick={selected ? () => doCherryPick(selected) : undefined}
             onRevert={selected ? () => doRevert(selected) : undefined}
             onRebase={selIdx >= 0 ? () => setRebaseOpen(true) : undefined}
@@ -273,13 +319,14 @@ export function HistoryView({ repo }: { repo: string }) {
 
 /** 图谱列(含可拖拽宽度 + 提交搜索)。搜索时切扁平匹配列表,清空回到图谱。 */
 function GraphColumn({
-  branch, rows, selectedId, compareId, onSelect, onContext, onLoadMore, loading, firstLoad, hasMore, error,
+  branch, rows, selectedId, compareId, focused, onSelect, onContext, onLoadMore, loading, firstLoad, hasMore, error,
   searchInput, onSearchChange, searching, searchResults, searchLoading, onOpenReflog,
 }: {
   branch: string | null;
   rows: GraphRowDto[];
   selectedId: string | null;
   compareId: string | null;
+  focused: boolean;
   onSelect: (c: CommitDto, opts?: { compare?: boolean }) => void;
   onContext: (c: CommitDto, x: number, y: number) => void;
   onLoadMore: () => void;
@@ -297,7 +344,7 @@ function GraphColumn({
   const col = useResizableWidth("history.graphW", 320, 220, 640);
   return (
     <>
-      <div className="flex shrink-0 flex-col overflow-hidden" style={{ width: col.w }}>
+      <div className={`flex shrink-0 flex-col overflow-hidden ${focused ? "ring-1 ring-inset ring-accent/50" : ""}`} style={{ width: col.w }}>
         <ColumnHead icon={<BranchIcon width={13} height={13} />}>
           {branch ? <span className="font-mono normal-case tracking-normal text-fg">{branch}</span> : "提交历史"}
           <Button
@@ -398,12 +445,13 @@ function SearchList({
 
 /** 中间列:提交详情 + 改动文件(含可拖拽宽度) */
 function MidColumn({
-  repo, commit, files, selectedFile, onSelectFile, onCherryPick, onRevert, onRebase, onResetDone, tags, onTagsChanged, busy,
+  repo, commit, files, selectedFile, focused, onSelectFile, onCherryPick, onRevert, onRebase, onResetDone, tags, onTagsChanged, busy,
 }: {
   repo: string;
   commit: CommitDto | null;
   files: FileChangeDto[];
   selectedFile: string | null;
+  focused: boolean;
   onSelectFile: (path: string) => void;
   onCherryPick?: () => void;
   onRevert?: () => void;
@@ -417,7 +465,7 @@ function MidColumn({
   const list = files;
   return (
     <>
-      <div className="flex shrink-0 flex-col overflow-hidden" style={{ width: col.w }}>
+      <div className={`flex shrink-0 flex-col overflow-hidden ${focused ? "ring-1 ring-inset ring-accent/50" : ""}`} style={{ width: col.w }}>
         <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
           <CommitIcon width={13} height={13} />
           <span>提交详情</span>

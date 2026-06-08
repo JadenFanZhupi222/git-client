@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { type FileChangeDto } from "../ipc";
 
 /** 提交内文件状态 → 颜色 + 单字母 */
@@ -11,9 +12,16 @@ const STYLE: Record<string, { letter: string; cls: string }> = {
 export function CommitFileList({
   files, selected, onSelect,
 }: { files: FileChangeDto[]; selected: string | null; onSelect: (path: string) => void }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  // 键盘选中变化 → 把该行滚进可视区(已可见则不动)。
+  useEffect(() => {
+    if (!selected) return;
+    boxRef.current?.querySelector<HTMLElement>(`[data-path="${CSS.escape(selected)}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
+
   if (files.length === 0) return <div className="p-3 text-xs text-fg-subtle">无改动文件</div>;
   return (
-    <div className="h-full overflow-y-auto">
+    <div ref={boxRef} className="h-full overflow-y-auto">
       {files.map((f) => {
         const s = STYLE[f.status] ?? { letter: "?", cls: "text-fg-muted" };
         const on = selected === f.path;
@@ -24,6 +32,7 @@ export function CommitFileList({
         return (
           <div
             key={f.path}
+            data-path={f.path}
             onClick={() => onSelect(f.path)}
             title={f.path}
             className={`flex cursor-pointer items-center gap-2 px-3 py-1.5 font-mono text-[13px] transition-colors ${
