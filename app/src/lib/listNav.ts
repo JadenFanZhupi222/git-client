@@ -45,6 +45,18 @@ export function navTarget(key: string, index: number, count: number): number | n
   return next === index ? null : next;
 }
 
+/**
+ * 把数组里 from 处的元素移动到 to 处(标准列表重排语义,用于拖拽排序)。
+ * 越界或原地返回原数组(引用不变,便于 setState 跳过无效更新)。
+ */
+export function moveItem<T>(arr: T[], from: number, to: number): T[] {
+  if (from === to || from < 0 || to < 0 || from >= arr.length || to >= arr.length) return arr;
+  const next = [...arr];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
 export interface ListNavOptions {
   /** 列表项数量 */
   count: number;
