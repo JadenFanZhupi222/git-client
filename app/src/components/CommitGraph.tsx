@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { type CommitDto, type GraphRowDto, type RefDto } from "../ipc";
 import { CommitLines } from "./CommitLines";
@@ -43,12 +43,14 @@ function RefBadges({ refs }: { refs: RefDto[] }) {
 }
 
 export function CommitGraph({
-  rows, selectedId, compareId, onSelect, onContext, onLoadMore, loading, hasMore,
+  rows, selectedId, compareId, onSelect, onContext, onLoadMore, loading, hasMore, scrollToId,
 }: {
   rows: GraphRowDto[];
   selectedId: string | null;
   /** 比较模式下的第二个提交(对比目标),与 selectedId 一起高亮。 */
   compareId?: string | null;
+  /** 键盘导航选中的提交 id:变化时把对应行滚进可视区(align auto:已可见则不动,不抖)。 */
+  scrollToId?: string | null;
   /** opts.compare=true 表示按下了 Cmd/Ctrl(请求与已选提交比较)。 */
   onSelect: (c: CommitDto, opts?: { compare?: boolean }) => void;
   onContext?: (c: CommitDto, x: number, y: number) => void;
@@ -65,6 +67,14 @@ export function CommitGraph({
     estimateSize: () => ROW_H, // 行高固定,估计=实际,无需动态测量
     overscan: 12, // 视口外多渲染几行,快速滚动不露白
   });
+
+  // 键盘选中变化 → 把该行滚进可视区。align "auto" 只在行不可见时滚动,鼠标点选/已可见不抖。
+  useEffect(() => {
+    if (!scrollToId) return;
+    const idx = rows.findIndex((r) => r.commit.id === scrollToId);
+    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "auto" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollToId]);
 
   // 首屏加载骨架(无数据时):不进虚拟化路径。
   if (loading && rows.length === 0) {
