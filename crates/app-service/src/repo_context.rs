@@ -13,13 +13,14 @@
 //! 在锁释放后才在拿到的 `Arc<RepoContext>` 上跑 —— 绝不持锁做阻塞操作。
 
 use crate::RepoService;
+use crate::undo_nav::UndoNav;
 use crate::watcher::ChangeKind;
 use git_core::model::{RebaseStep, ResetMode};
 use git_core::{GitBackend, GitError};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDto, CommitDto, ConflictSidesDto, FetchResultDto,
     FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto,
-    StashDto, StatusDto, UndoInfoDto,
+    StashDto, StatusDto, UndoStateDto, UndoStepDto,
 };
 use lru::LruCache;
 use std::collections::HashMap;
@@ -120,6 +121,9 @@ pub struct RepoContext {
     path: PathBuf,
     cache: RepoCache,
     cancel: CancelGens,
+    /// 多级 Undo/Redo 的操作时间线 + 光标(M2.1)。本工具做的写操作记进来,
+    /// 撤销/重做沿它移动光标。`Mutex` 保护:写操作罕见、用户串行,无锁竞争。
+    nav: Mutex<UndoNav>,
 }
 
 impl RepoContext {
@@ -129,6 +133,7 @@ impl RepoContext {
             path,
             cache: RepoCache::default(),
             cancel: CancelGens::default(),
+            nav: Mutex::new(UndoNav::default()),
         }
     }
 
@@ -398,13 +403,17 @@ impl RepoContext {
         Ok(())
     }
     pub fn commit(&self, message: &str) -> Result<String, GitError> {
+        let before = self.head_oid_opt();
         let out = self.service.commit(&self.path, message)?;
         self.after_write(true, true);
+        self.record_nav(before, "提交");
         Ok(out)
     }
     pub fn amend_commit(&self, message: Option<&str>) -> Result<String, GitError> {
+        let before = self.head_oid_opt();
         let out = self.service.amend_commit(&self.path, message)?;
         self.after_write(true, true);
+        self.record_nav(before, "修改提交(amend)");
         Ok(out)
     }
     pub fn set_upstream(&self, upstream: &str) -> Result<(), GitError> {
@@ -433,8 +442,10 @@ impl RepoContext {
         Ok(out)
     }
     pub fn pull(&self, remote: Option<&str>, rebase: bool) -> Result<PullResultDto, GitError> {
+        let before = self.head_oid_opt();
         let out = self.service.pull(&self.path, remote, rebase)?;
         self.after_write(true, true);
+        self.record_nav(before, "拉取(pull)");
         Ok(out)
     }
     pub fn push(&self, remote: Option<&str>) -> Result<PushResultDto, GitError> {
@@ -463,13 +474,17 @@ impl RepoContext {
         Ok(())
     }
     pub fn cherry_pick(&self, commit_id: &str) -> Result<(), GitError> {
+        let before = self.head_oid_opt();
         self.service.cherry_pick(&self.path, commit_id)?;
         self.after_write(true, true);
+        self.record_nav(before, "cherry-pick");
         Ok(())
     }
     pub fn revert(&self, commit_id: &str) -> Result<(), GitError> {
+        let before = self.head_oid_opt();
         self.service.revert(&self.path, commit_id)?;
         self.after_write(true, true);
+        self.record_nav(before, "回退提交(revert)");
         Ok(())
     }
     pub fn create_tag(
@@ -489,27 +504,123 @@ impl RepoContext {
         Ok(())
     }
     pub fn reset(&self, commit_id: &str, mode: ResetMode) -> Result<(), GitError> {
+        let before = self.head_oid_opt();
         self.service.reset(&self.path, commit_id, mode)?;
         self.after_write(true, true);
+        self.record_nav(before, "重置(reset)");
         Ok(())
     }
-    /// 预览"撤销上一步":只读 reflog,不写,无需失效缓存。
-    pub fn undo_preview(&self) -> Result<Option<UndoInfoDto>, GitError> {
-        self.service.undo_preview(&self.path)
+
+    // ---- 多级 Undo/Redo(M2.1)----
+
+    /// 读当前 HEAD 的完整 oid;空仓库(无 HEAD)→ None。
+    fn head_oid_opt(&self) -> Option<String> {
+        self.service.head_commit(&self.path).ok().map(|c| c.id)
     }
-    /// 撤销上一步(reset --soft 到 HEAD@{1})。同 reset:工作区 + ref 域都要失效。
-    pub fn undo_last(&self) -> Result<UndoInfoDto, GitError> {
-        let out = self.service.undo_last(&self.path)?;
+
+    /// 记录一次「我们刚做的」HEAD 移动:捕获操作后 HEAD,连同操作前 `before` 喂给时间线。
+    /// 在写方法成功 + 失效缓存之后调用。HEAD 没动(如 up-to-date 的 pull)由 nav 内部忽略。
+    fn record_nav(&self, before: Option<String>, label: &str) {
+        if let Some(after) = self.head_oid_opt() {
+            self.nav
+                .lock()
+                .unwrap()
+                .record(before.as_deref(), &after, label);
+        }
+    }
+
+    /// 冷启动 / 外部改动后重建时间线用的提示:reflog 顶项可安全撤销时给
+    /// `(上一步 oid, 操作中文名)`,供 [`UndoNav::sync`] 兜出一次撤销。
+    fn bootstrap_hint(&self) -> Result<Option<(String, String)>, GitError> {
+        let entries = self.service.reflog(&self.path, 2)?;
+        let (Some(top), Some(prev)) = (entries.first(), entries.get(1)) else {
+            return Ok(None);
+        };
+        Ok(
+            git_core::undoable_op_label(&top.message)
+                .map(|l| (prev.new_oid.clone(), l.to_string())),
+        )
+    }
+
+    fn short(oid: &str) -> String {
+        oid.chars().take(7).collect()
+    }
+
+    /// 撤销/重做的当前可用性。先把时间线对齐真实 HEAD(必要时从 reflog 重建),
+    /// 再读出前后两个方向。只读,不改仓库。
+    pub fn undo_state(&self) -> Result<UndoStateDto, GitError> {
+        let Some(head) = self.head_oid_opt() else {
+            return Ok(UndoStateDto {
+                can_undo: None,
+                can_redo: None,
+            });
+        };
+        // 已对齐则免读 reflog(切 tab/历史刷新会频繁调到这里)。
+        let aligned = self.nav.lock().unwrap().is_aligned(&head);
+        let boot = if aligned {
+            None
+        } else {
+            self.bootstrap_hint()?
+        };
+        let mut nav = self.nav.lock().unwrap();
+        nav.sync(&head, boot);
+        let to_dto = |s: crate::undo_nav::NavStep| UndoStepDto {
+            label: s.label,
+            target_short: Self::short(&s.target_oid),
+        };
+        Ok(UndoStateDto {
+            can_undo: nav.can_undo().map(to_dto),
+            can_redo: nav.can_redo().map(to_dto),
+        })
+    }
+
+    /// 撤销一步:reset --soft 到光标左邻点。改动回暂存区,不丢工作区。无可撤销 → NothingToUndo。
+    pub fn undo(&self) -> Result<UndoStepDto, GitError> {
+        let head = self.head_oid_opt().ok_or(GitError::NoHead)?;
+        let boot = self.bootstrap_hint()?;
+        let step = {
+            let mut nav = self.nav.lock().unwrap();
+            nav.sync(&head, boot);
+            nav.can_undo().ok_or(GitError::NothingToUndo)?
+        };
+        // git 重活在锁外做;reset --soft 只移动分支指针,永不丢工作区。
+        self.service
+            .reset(&self.path, &step.target_oid, ResetMode::Soft)?;
+        self.nav.lock().unwrap().commit_undo();
         self.after_write(true, true);
-        Ok(out)
+        Ok(UndoStepDto {
+            label: step.label,
+            target_short: Self::short(&step.target_oid),
+        })
+    }
+
+    /// 重做一步:reset --soft 到光标右邻点。无可重做 → NothingToRedo。
+    pub fn redo(&self) -> Result<UndoStepDto, GitError> {
+        let head = self.head_oid_opt().ok_or(GitError::NoHead)?;
+        let boot = self.bootstrap_hint()?;
+        let step = {
+            let mut nav = self.nav.lock().unwrap();
+            nav.sync(&head, boot);
+            nav.can_redo().ok_or(GitError::NothingToRedo)?
+        };
+        self.service
+            .reset(&self.path, &step.target_oid, ResetMode::Soft)?;
+        self.nav.lock().unwrap().commit_redo();
+        self.after_write(true, true);
+        Ok(UndoStepDto {
+            label: step.label,
+            target_short: Self::short(&step.target_oid),
+        })
     }
     pub fn interactive_rebase(
         &self,
         base: Option<&str>,
         steps: &[RebaseStep],
     ) -> Result<(), GitError> {
+        let before = self.head_oid_opt();
         self.service.interactive_rebase(&self.path, base, steps)?;
         self.after_write(true, true);
+        self.record_nav(before, "变基(rebase)");
         Ok(())
     }
     pub fn stash_save(&self, message: Option<&str>) -> Result<(), GitError> {
@@ -786,5 +897,92 @@ mod tests {
         ctx.invalidate(ChangeKind::GitRef);
         ctx.refs().unwrap();
         assert_eq!(fb.refs_call_count(), 2);
+    }
+
+    // ---- M2.1 多级 Undo/Redo(RepoContext 把纯时间线接到后端 reset)----
+
+    fn reflog_top(msg: &str, prev_oid: &str) -> Vec<git_core::model::ReflogEntry> {
+        use git_core::model::{ReflogEntry, Signature};
+        let sig = Signature {
+            name: "n".into(),
+            email: "e".into(),
+        };
+        vec![
+            ReflogEntry {
+                index: 0,
+                selector: "HEAD@{0}".into(),
+                new_oid: "head".into(),
+                new_short: "head".into(),
+                message: msg.into(),
+                committer: sig.clone(),
+                timestamp: 0,
+            },
+            ReflogEntry {
+                index: 1,
+                selector: "HEAD@{1}".into(),
+                new_oid: prev_oid.into(),
+                new_short: prev_oid.chars().take(7).collect(),
+                message: "older".into(),
+                committer: sig,
+                timestamp: 0,
+            },
+        ]
+    }
+
+    #[test]
+    fn undo_then_redo_walks_head_via_reset_soft() {
+        let a = "a".repeat(40);
+        let b = "b".repeat(40);
+        // 冷启动:HEAD 在 B,reflog 顶项是可撤销的 commit、上一步是 A。
+        let fb = Arc::new(
+            FakeBackend::default()
+                .with_head(&b)
+                .with_reflog(reflog_top("commit: 改了点东西", &a)),
+        );
+        let ctx = RepoRegistry::new(fb.clone()).context(Path::new("/r"));
+
+        // 初始:可撤销那次提交,暂无重做。
+        let st = ctx.undo_state().unwrap();
+        assert_eq!(st.can_undo.as_ref().map(|s| s.label.as_str()), Some("提交"));
+        assert_eq!(st.can_undo.unwrap().target_short, "aaaaaaa");
+        assert!(st.can_redo.is_none());
+
+        // 撤销 → reset --soft 到 A,HEAD 移到 A。
+        let done = ctx.undo().unwrap();
+        assert_eq!(done.label, "提交");
+        assert_eq!(done.target_short, "aaaaaaa");
+        assert_eq!(fb.head_oid().as_deref(), Some(a.as_str()));
+        assert_eq!(fb.tag_ops(), vec![format!("reset:soft:{a}")]);
+
+        // 撤销后:不能再撤(已到底),但能重做回 B。
+        let st = ctx.undo_state().unwrap();
+        assert!(st.can_undo.is_none());
+        assert_eq!(st.can_redo.as_ref().map(|s| s.label.as_str()), Some("提交"));
+        assert_eq!(st.can_redo.unwrap().target_short, "bbbbbbb");
+
+        // 重做 → reset --soft 回 B。
+        let done = ctx.redo().unwrap();
+        assert_eq!(done.target_short, "bbbbbbb");
+        assert_eq!(fb.head_oid().as_deref(), Some(b.as_str()));
+
+        // 回到原位:又能撤销、不能重做。无重做时再 redo → NothingToRedo。
+        let st = ctx.undo_state().unwrap();
+        assert!(st.can_undo.is_some());
+        assert!(st.can_redo.is_none());
+        assert!(matches!(ctx.redo(), Err(GitError::NothingToRedo)));
+    }
+
+    #[test]
+    fn undo_unavailable_when_top_op_not_undoable() {
+        let fb = Arc::new(
+            FakeBackend::default()
+                .with_head(&"b".repeat(40))
+                .with_reflog(reflog_top("checkout: moving from x to y", &"a".repeat(40))),
+        );
+        let ctx = RepoRegistry::new(fb.clone()).context(Path::new("/r"));
+        // checkout 不可用 reset 撤销 → 无撤销项,且 undo 报错、绝不动 HEAD。
+        assert!(ctx.undo_state().unwrap().can_undo.is_none());
+        assert!(matches!(ctx.undo(), Err(GitError::NothingToUndo)));
+        assert!(fb.tag_ops().is_empty());
     }
 }

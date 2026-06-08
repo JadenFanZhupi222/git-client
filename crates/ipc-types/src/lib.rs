@@ -65,14 +65,24 @@ impl From<ReflogEntry> for ReflogEntryDto {
     }
 }
 
-/// 「撤销上一步」的信息。`undo_preview` 返回 `Option<UndoInfoDto>`(None=无可撤销),
-/// `undo_last` 成功后返回它(已撤销)。两处共用同一结构,文案一致。
+/// 一步 Undo / Redo 的描述:`label`=操作中文名,`target_short`=移动后 HEAD 的短 SHA。
+/// 既用于 `undo`/`redo` 的返回(已执行),也用于 [`UndoStateDto`] 里描述「下一步能做什么」。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UndoInfoDto {
-    /// 将被 / 已被撤销的操作的中文名,如 "提交"、"重置(reset)"。
+pub struct UndoStepDto {
+    /// 操作的中文名,如 "提交"、"重置(reset)"。
     pub label: String,
-    /// 撤销后 HEAD 指向的提交短 SHA(供 toast/tooltip 显示"回到 abc1234")。
+    /// 这一步移动后 HEAD 指向的提交短 SHA(供 toast/tooltip 显示"回到 abc1234")。
     pub target_short: String,
+}
+
+/// 撤销/重做的当前可用性。驱动顶栏「撤销」「重做」两个按钮的显隐与文案。
+/// `None` = 该方向无可用项(按钮不显);来自 `RepoContext` 内的操作时间线 + 光标。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoStateDto {
+    /// 后退一步(撤销最近一次操作)。
+    pub can_undo: Option<UndoStepDto>,
+    /// 前进一步(重做刚撤销的操作)。
+    pub can_redo: Option<UndoStepDto>,
 }
 
 /// 跨 IPC 边界的错误:带错误码(前端做逻辑分支)+ 友好信息 + 是否可重试。

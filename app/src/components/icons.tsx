@@ -36,6 +36,14 @@ export const UndoIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+// 重做:UndoIcon 的水平镜像(arrow-uturn-right 风格)。
+export const RedoIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M13.5 6.5H6a3.5 3.5 0 0 0 0 7h4" />
+    <path d="M11 3.5l3 3-3 3" />
+  </svg>
+);
+
 export const BranchIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
     <circle cx="4" cy="3.5" r="1.5" />

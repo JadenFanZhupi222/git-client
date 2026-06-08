@@ -6,14 +6,14 @@ import { HistoryView } from "./views/HistoryView";
 import { CompareView } from "./views/CompareView";
 import { BlameView } from "./views/BlameView";
 import { useQueryClient } from "@tanstack/react-query";
-import { setUpstream, fetchRemote, pullRemote, pushRemote, undoLast, type IpcError } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon } from "./components/icons";
+import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, type IpcError } from "./ipc";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
 import { StashMenu } from "./components/StashMenu";
 import { useToast } from "./components/Toast";
 import { Button } from "./components/ui/Button";
-import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoPreview, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
+import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
 import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
 
 /** 把 git fetch 的原始摘要提炼成简洁细节:优先取 "->" 更新行。 */
@@ -45,7 +45,9 @@ export default function App() {
   const branch = useCurrentBranch(repo ?? "").data ?? null;
   const sync = useAheadBehind(repo ?? "").data ?? null;
   const remotes = useRemotes(repo ?? "").data ?? [];
-  const undoInfo = useUndoPreview(repo ?? "").data ?? null;
+  const undoState = useUndoState(repo ?? "").data ?? null;
+  const canUndo = undoState?.can_undo ?? null;
+  const canRedo = undoState?.can_redo ?? null;
 
   const busy = fetching || pulling || pushing || undoing;
   // 同步提示:落后 → 建议 Pull;领先 → 建议 Push(无上游时 sync 为 null,不提示)
@@ -133,22 +135,22 @@ export default function App() {
     }
   }
 
-  async function doUndo() {
-    if (!repo || !undoInfo) return;
+  // 撤销/重做共用:沿操作时间线移动 HEAD(reset --soft),成功后刷新历史 + 工作区。
+  async function doNav(dir: "undo" | "redo") {
+    if (!repo) return;
     setUndoing(true);
     try {
-      const info = await undoLast(repo);
-      // reset --soft:被撤销操作的改动回到暂存区,工作区不丢。
+      const info = await (dir === "undo" ? undo(repo) : redo(repo));
       toast({
         kind: "success",
-        title: `已撤销:${info.label}`,
-        detail: `HEAD 回到 ${info.target_short},改动已放回暂存区`,
+        title: `${dir === "undo" ? "已撤销" : "已重做"}:${info.label}`,
+        detail: `HEAD ${dir === "undo" ? "回到" : "前进到"} ${info.target_short},改动在暂存区`,
       });
     } catch (e) {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
       setUndoing(false);
-      // 撤销动了 HEAD + 暂存区:历史(含可否再撤销)与工作区都要刷新。
+      // 动了 HEAD + 暂存区:历史(含可否再撤销/重做)与工作区都要刷新。
       invalidateHistory(qc, repo);
       invalidateWorktree(qc, repo);
     }
@@ -210,15 +212,26 @@ export default function App() {
                   )}
                 </div>
               )}
-              {undoInfo && (
+              {canUndo && (
                 <button
-                  onClick={doUndo}
+                  onClick={() => doNav("undo")}
                   disabled={busy}
-                  title={`撤销刚才的「${undoInfo.label}」(reset --soft 到 ${undoInfo.target_short};改动回暂存区,不丢工作区)`}
+                  title={`撤销刚才的「${canUndo.label}」(reset --soft 到 ${canUndo.target_short};改动回暂存区,不丢工作区)`}
                   className="flex items-center gap-1.5 rounded-md border border-accent/60 bg-accent/10 px-2.5 py-1 text-xs text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
                 >
                   {undoing ? <SpinnerIcon width={13} height={13} /> : <UndoIcon width={13} height={13} />}
-                  {undoing ? "撤销…" : `撤销${undoInfo.label}`}
+                  {`撤销${canUndo.label}`}
+                </button>
+              )}
+              {canRedo && (
+                <button
+                  onClick={() => doNav("redo")}
+                  disabled={busy}
+                  title={`重做「${canRedo.label}」(前进到 ${canRedo.target_short})`}
+                  className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle disabled:opacity-50"
+                >
+                  <RedoIcon width={13} height={13} />
+                  {`重做${canRedo.label}`}
                 </button>
               )}
               <button

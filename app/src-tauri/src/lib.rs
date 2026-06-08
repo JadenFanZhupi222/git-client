@@ -4,7 +4,7 @@ use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组�
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDto, CommitDto, ConflictSidesDto, FetchResultDto,
     FileChangeDto, FileDiffDto, GraphRowDto, IpcError, PullResultDto, PushResultDto, RefDto,
-    ReflogEntryDto, StashDto, StatusDto, UndoInfoDto,
+    ReflogEntryDto, StashDto, StatusDto, UndoStateDto, UndoStepDto,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -46,6 +46,7 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         PushRejected => ("PUSH_REJECTED", true),
         MergeConflict { .. } => ("MERGE_CONFLICT", true),
         NothingToUndo => ("NOTHING_TO_UNDO", false),
+        NothingToRedo => ("NOTHING_TO_REDO", false),
         Unsupported => ("UNSUPPORTED", false),
         Backend(_) => ("BACKEND", true),
     };
@@ -668,27 +669,40 @@ async fn reset(
         .map_err(to_ipc)
 }
 
-/// 预览"撤销上一步"(只读):返回可撤销操作信息,或 null(无可撤销)。
+/// 撤销/重做的当前可用性(只读),驱动顶栏两个按钮的显隐。
 #[tauri::command]
-async fn undo_preview(
+async fn undo_state(
     registry: tauri::State<'_, RepoRegistry>,
     repo_path: String,
-) -> Result<Option<UndoInfoDto>, IpcError> {
+) -> Result<UndoStateDto, IpcError> {
     let ctx = registry.context(&PathBuf::from(repo_path));
-    tokio::task::spawn_blocking(move || ctx.undo_preview())
+    tokio::task::spawn_blocking(move || ctx.undo_state())
         .await
         .map_err(join_panic)?
         .map_err(to_ipc)
 }
 
-/// 撤销上一步:reset --soft 到 HEAD@{1}。改动回暂存区,不丢工作区。
+/// 撤销一步:沿操作时间线后退,reset --soft。改动回暂存区,不丢工作区。
 #[tauri::command]
-async fn undo_last(
+async fn undo(
     registry: tauri::State<'_, RepoRegistry>,
     repo_path: String,
-) -> Result<UndoInfoDto, IpcError> {
+) -> Result<UndoStepDto, IpcError> {
     let ctx = registry.context(&PathBuf::from(repo_path));
-    tokio::task::spawn_blocking(move || ctx.undo_last())
+    tokio::task::spawn_blocking(move || ctx.undo())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+/// 重做一步:沿操作时间线前进,reset --soft。
+#[tauri::command]
+async fn redo(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<UndoStepDto, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.redo())
         .await
         .map_err(join_panic)?
         .map_err(to_ipc)
@@ -914,8 +928,9 @@ pub fn run() {
             create_tag,
             delete_tag,
             reset,
-            undo_preview,
-            undo_last,
+            undo_state,
+            undo,
+            redo,
             interactive_rebase,
             blame,
             conflict_sides,
