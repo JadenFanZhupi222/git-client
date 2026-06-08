@@ -43,18 +43,21 @@ ARCHITECTURE.md 自己把 **actor + 缓存 + 取消** 称为本项目的"成败�
 
 ## 三、里程碑(最重要优先)
 
-### M1 · Instant —— 性能与响应的地基 【最高优先】
+### M1 · Instant —— 性能与响应的地基 【✅ 已完成】
 > 为什么第一:所有功能都坐在它上面;是和世界级差距最大的维度;也是 Rust 概念最密集
 > 的部分(Arc / channel / Mutex / lru / CancellationToken),贴合学习目标。
+>
+> 状态:六刀全部完成并 merge 入 main(未 push)。每刀竖切 + 测试兜底 + 全门绿。
 
-- **M1.0 测试网先行(去风险)**:接入 vitest + React Testing Library;先把刚修的"比较页默认值"写成回归测试 + 几个纯逻辑测试(graph/mergeModel)。**理由**:M1 要重构核心,先有网再动刀。轻量、半天。
-- **M1.1 RepoActor / 长驻仓库上下文**:每个打开的仓库一个长驻上下文(持 `Arc<dyn GitBackend>` + 路径 + 缓存),经 Tauri `State` 注入;命令路由到它,不再每次新建。行为不变,是后续一切的前提。
-- **M1.2 读缓存 + 失效**:在上下文里用 `lru` 缓存 status/graph/diff/blame;文件监听(已有)+ 自身写操作驱动失效。**交付**:切 tab / 重渲染瞬间返回。
-- **M1.3 全面取消**:把 `CancellationToken` 推广到 log/graph/diff/blame;新请求取消被取代的旧请求。**交付**:快速切换时跟手不卡。
-- **M1.4 虚拟滚动**:提交图谱/列表只渲染可见行(`@tanstack/react-virtual`)。**交付**:10 万提交滚动顺滑。
-- **M1.5 增量泳道布局**:lane assignment 支持"加载更多"时增量追加,不重算全量。**交付**:分页 O(可见)。
+- ✅ **M1.0 测试网先行**:接入 vitest + RTL + jsdom,12 测试(mergeModel / graphGeometry / 比较页默认值回归),CI 前端 job 跑 `pnpm test`。
+- ✅ **M1.1 长驻仓库上下文**:`RepoRegistry`(Tauri `State`)+ `RepoContext`(repo_path→`Arc<RepoContext>`,共享后端建一次);49 命令路由到它,行为零变化。
+- ✅ **M1.2 读缓存 + 失效**:`RepoContext` 内 `lru` 缓存 status/graph/log/diff/blame/refs/…;三类失效语义(不可变 SHA 寻址 / worktree 域 / ref 域,blame 双域),双源失效(自身写 `after_write` + 文件监听回调 `invalidate`)。
+- ✅ **M1.3 全面取消**:`GitBackend::log/blame` 加 `cancelled` 闭包,git2 循环里 honor;`RepoContext` 每操作类代次计数,新请求取消旧。单文件 diff(很快)暂未纳入。
+- ✅ **M1.4 虚拟滚动**:`CommitGraph` 用 `@tanstack/react-virtual` 只渲染可见行(+overscan)。
+- ✅ **M1.5 增量泳道布局**:`graph.rs` 可续算(`LayoutState` + `layout_into`),`RepoContext` graph 缓存换 `GraphAccum` 累加器,加载更多 O(可见)、锁外可取消。
 
 **成功标准**:在合成的大仓库(10 万提交 / 数万文件)上,首屏 < 1s,切 tab/切分支无可感卡顿,滚动 60fps,切换时旧任务即时取消。
+> 注:合成大仓库压测基准尚未建(贯穿全程 Trustworthy 项),真机已用 git-client 自身仓库验证滚动/切换跟手。
 
 ### M2 · Fearless —— 永不丢工作的信任 【次高】
 > 为什么第二:在已有 reflog 之上很便宜,却带来巨大信任(GitButler 的核心卖点)。
