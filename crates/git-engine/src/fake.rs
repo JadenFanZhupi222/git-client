@@ -45,6 +45,9 @@ pub struct FakeBackend {
     tag_ops: Mutex<Vec<String>>,
     rebase_ops: Mutex<Vec<String>>,
     canned_reflog: Mutex<Vec<ReflogEntry>>,
+    // 可移动的 HEAD oid:Some 时 head_commit 返回它;reset 会把它设到目标。
+    // 供 RepoContext 的 Undo/Redo 时间线测试模拟 HEAD 真实移动。
+    head_oid: Mutex<Option<String>>,
     // 读路径调用计数:供缓存测试断言「命中不打后端 / 失效后重打」。
     status_calls: Mutex<u32>,
     log_calls: Mutex<u32>,
@@ -109,6 +112,15 @@ impl FakeBackend {
     pub fn with_reflog(self, entries: Vec<ReflogEntry>) -> Self {
         *self.canned_reflog.lock().unwrap() = entries;
         self
+    }
+    /// 预置可移动 HEAD 的初始 oid(之后 reset 会改它)。供 Undo/Redo 时间线测试。
+    pub fn with_head(self, oid: &str) -> Self {
+        *self.head_oid.lock().unwrap() = Some(oid.to_string());
+        self
+    }
+    /// 断言用:当前(可能被 reset 移动过的)HEAD oid。
+    pub fn head_oid(&self) -> Option<String> {
+        self.head_oid.lock().unwrap().clone()
     }
     /// 断言用:记录被 checkout 的分支名(按调用顺序)。
     pub fn checked_out_branches(&self) -> Vec<String> {
@@ -200,9 +212,15 @@ impl GitBackend for FakeBackend {
     }
 
     fn head_commit(&self, _path: &Path) -> Result<Commit, GitError> {
+        let id = self
+            .head_oid
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| "0123456789abcdef0123456789abcdef01234567".into());
         Ok(Commit {
-            id: "0123456789abcdef0123456789abcdef01234567".into(),
-            short_id: "0123456".into(),
+            short_id: id.chars().take(7).collect(),
+            id,
             summary: "这是来自 FakeBackend 的假提交".into(),
             body: String::new(),
             author: Signature {
@@ -467,6 +485,8 @@ impl GitBackend for FakeBackend {
             .lock()
             .unwrap()
             .push(format!("reset:{m}:{commit_id}"));
+        // 模拟 reset 移动 HEAD 到目标(供 Undo/Redo 时间线测试)。
+        *self.head_oid.lock().unwrap() = Some(commit_id.to_string());
         Ok(())
     }
     fn interactive_rebase(

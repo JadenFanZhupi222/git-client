@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 pub mod graph;
 pub mod repo_context;
+pub mod undo_nav;
 pub mod watcher;
 
 pub use repo_context::{RepoContext, RepoRegistry};

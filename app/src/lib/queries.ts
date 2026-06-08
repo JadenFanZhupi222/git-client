@@ -8,7 +8,7 @@ import {
   getStatus, getWorkingDiff, getCommitGraph, searchCommits, getReflog, getCommitFiles, getCommitFileDiff,
   compareFiles, compareFileDiff,
   getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
-  getRepoState, readWorkingFile, blame, conflictSides,
+  getRepoState, readWorkingFile, blame, conflictSides, undoState,
   watchRepo, onRepoChanged,
 } from "../ipc";
 
@@ -33,6 +33,7 @@ export const qk = {
   compareFiles: (repo: string) => ["compareFiles", repo] as const,
   compareDiff: (repo: string) => ["compareDiff", repo] as const,
   refs: (repo: string) => ["refs", repo] as const,
+  undoState: (repo: string) => ["undoState", repo] as const,
 };
 
 // ---- 读 hooks ----
@@ -114,6 +115,11 @@ export function useCurrentBranch(repo: string) {
   return useQuery({ queryKey: qk.currentBranch(repo), queryFn: () => getCurrentBranch(repo), enabled: !!repo });
 }
 
+/** 撤销/重做的当前可用性。随历史变化失效;驱动顶栏「撤销」「重做」按钮。 */
+export function useUndoState(repo: string) {
+  return useQuery({ queryKey: qk.undoState(repo), queryFn: () => undoState(repo), enabled: !!repo });
+}
+
 export function useAheadBehind(repo: string) {
   return useQuery({ queryKey: qk.aheadBehind(repo), queryFn: () => getAheadBehind(repo), enabled: !!repo });
 }
@@ -178,6 +184,7 @@ export function invalidateHistory(qc: QueryClient, repo: string) {
   qc.invalidateQueries({ queryKey: qk.branches(repo) });
   qc.invalidateQueries({ queryKey: qk.currentBranch(repo) });
   qc.invalidateQueries({ queryKey: qk.aheadBehind(repo) });
+  qc.invalidateQueries({ queryKey: qk.undoState(repo) }); // HEAD 动了 → 重算可否撤销/重做
 }
 
 // ---- 一处监听文件变化 → 失效对应查询(取代各 view 的订阅+重载)----

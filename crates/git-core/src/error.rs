@@ -64,6 +64,12 @@ pub enum GitError {
     #[error("合并冲突,涉及 {files} 个文件,请手动解决后提交")]
     MergeConflict { files: usize },
 
+    #[error("没有可撤销的上一步操作")]
+    NothingToUndo,
+
+    #[error("没有可重做的操作")]
+    NothingToRedo,
+
     #[error("该后端不支持此操作")]
     Unsupported,
 

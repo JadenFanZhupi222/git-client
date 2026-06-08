@@ -1397,6 +1397,35 @@ mod tests {
         assert!(Git2Backend.reflog(&repo, 10).unwrap().is_empty());
     }
 
+    /// 校验「撤销」分类器对**真实 git2 reflog 文案**成立——这是唯一靠肉眼看不出、
+    /// 必须真机验的假设(reflog message 是否真的形如 "commit: ..." / "reset: ...")。
+    #[test]
+    fn real_reflog_messages_classify_for_undo() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "1");
+        let c1 = commit_index(&repo, "c1", 1000);
+        stage(&repo, "a.txt", "2");
+        commit_index(&repo, "c2", 2000);
+
+        // 顶项是真实的 commit reflog → 分类为「提交」。
+        let top = &b.reflog(&repo, 1).unwrap()[0].message;
+        assert_eq!(
+            git_core::undoable_op_label(top),
+            Some("提交"),
+            "真实 commit reflog 文案应被识别为可撤销: {top}"
+        );
+
+        // 做一次真实 reset,顶项变成 reset reflog → 分类为「重置(reset)」。
+        b.reset(&repo, &c1, ResetMode::Soft).unwrap();
+        let top = &b.reflog(&repo, 1).unwrap()[0].message;
+        assert_eq!(
+            git_core::undoable_op_label(top),
+            Some("重置(reset)"),
+            "真实 reset reflog 文案应被识别为可撤销: {top}"
+        );
+    }
+
     #[test]
     fn log_paginates_lazily() {
         let (_tmp, repo) = init_repo();

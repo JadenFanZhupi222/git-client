@@ -397,6 +397,32 @@ export async function getReflog(repoPath: string, limit: number): Promise<Reflog
   return await invoke<ReflogEntryDto[]>("get_reflog", { repoPath, limit });
 }
 
+// ── 多级 Undo/Redo(操作时间线 + 光标,reset --soft,永不丢工作区)──
+export interface UndoStepDto {
+  label: string;        // 操作中文名,如 "提交"、"重置(reset)"
+  target_short: string; // 这一步移动后 HEAD 的短 SHA
+}
+
+export interface UndoStateDto {
+  can_undo: UndoStepDto | null; // 后退一步(撤销),null=不可
+  can_redo: UndoStepDto | null; // 前进一步(重做),null=不可
+}
+
+/** 撤销/重做的当前可用性(只读),驱动顶栏按钮的显隐与文案。 */
+export async function undoState(repoPath: string): Promise<UndoStateDto> {
+  return await invoke<UndoStateDto>("undo_state", { repoPath });
+}
+
+/** 撤销一步:沿时间线后退,reset --soft。改动回暂存区,不丢工作区。 */
+export async function undo(repoPath: string): Promise<UndoStepDto> {
+  return await invoke<UndoStepDto>("undo", { repoPath });
+}
+
+/** 重做一步:沿时间线前进,reset --soft。 */
+export async function redo(repoPath: string): Promise<UndoStepDto> {
+  return await invoke<UndoStepDto>("redo", { repoPath });
+}
+
 export async function searchCommits(repoPath: string, query: string, limit: number): Promise<CommitDto[]> {
   return await invoke<CommitDto[]>("search_commits", { repoPath, query, limit });
 }
