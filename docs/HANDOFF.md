@@ -2,7 +2,7 @@
 
 > 这份文件在 git 仓库里,会随 push/pull 跟到新机器。记录当前进度、铁律、下一步。
 > 配套必读:`CLAUDE.md`(铁律)、`ARCHITECTURE.md`(架构)、`README.md`(启动)。
-> 最近更新:2026-06-09(M4 · Correct 全部完成:子模块 / 工作树 / LFS / 稀疏检出)。
+> 最近更新:2026-06-09(M5.1 词级 diff 完成:unified diff 行内高亮改动的词)。
 
 ## 当前状态
 - 阶段 0/1/2/3 全部完成,**阶段 4 核心(交互式 rebase)已落地**。
@@ -47,8 +47,13 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
     新增此类标签照此办理:加 use*hook → App 算 has* → TabBar 加 prop+push → 渲染分支 + 复位 effect。
 
 ## 下一步候选(按价值/风险)
-- **M5 · 更深的 diff 与历史(建议下一支柱)**:并排/词级 diff(`similar`)、文件历史 / 行历史
-  (`log -L`)、pickaxe 搜索(`-S`/`-G` 按代码内容找提交)。比 M4.6 之后的 niche 项价值更高、更高频。
+- **M5 · 更深的 diff 与历史(进行中)**:
+  - ✅ **M5.1 词级 diff**(已合 main):`file_diff_from` 末尾跑纯函数 `annotate_word_level`,
+    对配对的删/增行用 `similar::from_words` 算行内段,标到 `DiffLine.emphasis`(`Vec<Seg{text,changed}>`,
+    传切好的段非字节偏移);相似度 <0.25 视为整行重写不标。DiffView 逐段渲染,changed 段底色深一档。
+    spec/plan 见 `docs/superpowers/specs|plans/2026-06-09-word-level-diff*`。
+  - **下一刀 M5.2 并排 diff**(side-by-side 双栏,复用 5.1 的 emphasis 段)。
+  - 再后:M5.3 文件历史(`log -- <path>`)、M5.4 行历史(`log -L`)、M5.5 pickaxe(`-S`/`-G`)、图片 diff。
 - 零散续做:worktree 切换/新建(M4.5 只做展示);log 里 ctrl-多选两提交→比较。
 - 工程收尾:真机验收交互式 rebase(尤其中途冲突的继续/中止、大仓库 cp/exec 路径);CI 加 `fmt --check` + `clippy -D warnings` 卡口(属 infra,之前没动 .github);push 到 origin。
 - 已知小项:composite 40+ 透传样板(Rust 固有税,可选 delegate crate)。

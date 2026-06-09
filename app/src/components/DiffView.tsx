@@ -117,7 +117,22 @@ export function DiffView({
                 <Gutter n={l.old_lineno} />
                 <Gutter n={l.new_lineno} border />
                 <span className={`w-4 shrink-0 select-none text-center ${signCls}`}>{sign}</span>
-                <span className="flex-1 whitespace-pre pr-3 text-fg">{l.content || " "}</span>
+                <span className="flex-1 whitespace-pre pr-3 text-fg">
+                  {l.emphasis && l.emphasis.length > 0
+                    ? l.emphasis.map((s, si) =>
+                        s.changed ? (
+                          <span
+                            key={si}
+                            className={add ? "bg-success/30" : "bg-danger/30"}
+                          >
+                            {s.text}
+                          </span>
+                        ) : (
+                          <span key={si}>{s.text}</span>
+                        ),
+                      )
+                    : l.content || " "}
+                </span>
               </div>
             );
           })}

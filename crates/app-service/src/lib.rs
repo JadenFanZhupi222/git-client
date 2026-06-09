@@ -802,6 +802,7 @@ mod tests {
                     old_lineno: None,
                     new_lineno: Some(1),
                     content: "hi".into(),
+                    emphasis: None,
                 }],
             }],
         });

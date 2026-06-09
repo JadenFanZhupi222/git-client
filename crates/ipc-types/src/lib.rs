@@ -5,8 +5,8 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk,
-    PullOutcome, PushOutcome, RefKind, ReflogEntry, SignatureInfo, SignatureStatus, StashEntry,
-    SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus, WorktreeInfo,
+    PullOutcome, PushOutcome, RefKind, ReflogEntry, Seg, SignatureInfo, SignatureStatus,
+    StashEntry, SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus, WorktreeInfo,
 };
 use serde::{Deserialize, Serialize};
 
@@ -461,6 +461,22 @@ pub struct GraphRowDto {
     pub sync: String,
 }
 
+/// 行内一段 DTO。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SegDto {
+    pub text: String,
+    pub changed: bool,
+}
+
+impl From<Seg> for SegDto {
+    fn from(s: Seg) -> Self {
+        SegDto {
+            text: s.text,
+            changed: s.changed,
+        }
+    }
+}
+
 /// 行级 diff 的一行 DTO。kind:context | add | del。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiffLineDto {
@@ -468,6 +484,8 @@ pub struct DiffLineDto {
     pub old_lineno: Option<u32>,
     pub new_lineno: Option<u32>,
     pub content: String,
+    /// 行内词级段;None = 整行着色。
+    pub emphasis: Option<Vec<SegDto>>,
 }
 
 impl From<DiffLine> for DiffLineDto {
@@ -482,6 +500,9 @@ impl From<DiffLine> for DiffLineDto {
             old_lineno: l.old_lineno,
             new_lineno: l.new_lineno,
             content: l.content,
+            emphasis: l
+                .emphasis
+                .map(|segs| segs.into_iter().map(SegDto::from).collect()),
         }
     }
 }

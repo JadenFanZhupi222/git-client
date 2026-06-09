@@ -20,6 +20,14 @@ pub enum DiffLineKind {
     Deletion,
 }
 
+/// 行内一段:`text` 是原文片段,`changed` 表示这段相对另一侧是否变化。
+/// 一行的所有 `Seg` 的 `text` 顺序拼接 == 该行 `content`(不变式)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Seg {
+    pub text: String,
+    pub changed: bool,
+}
+
 /// 行级 diff 的一行。old/new 行号在不适用时为 None
 /// (新增行没有 old 行号,删除行没有 new 行号)。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +36,9 @@ pub struct DiffLine {
     pub old_lineno: Option<u32>,
     pub new_lineno: Option<u32>,
     pub content: String,
+    /// 行内词级标注。`None` = 无行内细节(上下文行 / 配不上对的行 / 整行重写),
+    /// 整行按 `kind` 着色;`Some(段)` = 逐段渲染,`changed` 段加重高亮。
+    pub emphasis: Option<Vec<Seg>>,
 }
 
 /// 一个 hunk:`@@ -a,b +c,d @@` 段及其下面的若干行。
