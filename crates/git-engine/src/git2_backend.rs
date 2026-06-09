@@ -161,6 +161,86 @@ fn detect_lfs_pointer(diff: &FileDiff) -> Option<String> {
     lfs_pointer_size(&content)
 }
 
+use git_core::model::Seg;
+use similar::{ChangeTag, TextDiff};
+
+/// 一对行相似度低于此值视为「整行重写」,不出行内段(避免满行高亮噪声)。
+const WORD_DIFF_MIN_RATIO: f32 = 0.25;
+
+/// 把一段文本按 `changed` flag 合并追加进段列表(相邻同 flag 合并;空串跳过)。
+fn push_seg(segs: &mut Vec<Seg>, text: &str, changed: bool) {
+    if text.is_empty() {
+        return;
+    }
+    if let Some(last) = segs.last_mut()
+        && last.changed == changed
+    {
+        last.text.push_str(text);
+        return;
+    }
+    segs.push(Seg {
+        text: text.to_string(),
+        changed,
+    });
+}
+
+/// 对一对(旧行, 新行)算词级 diff,返回 (删行段, 增行段)。
+/// 相似度过低返回 None(整行重写,留整行着色)。
+fn word_segments(old: &str, new: &str) -> Option<(Vec<Seg>, Vec<Seg>)> {
+    let diff = TextDiff::from_words(old, new);
+    if diff.ratio() < WORD_DIFF_MIN_RATIO {
+        return None;
+    }
+    let mut del = Vec::new();
+    let mut add = Vec::new();
+    for change in diff.iter_all_changes() {
+        let text = change.value();
+        match change.tag() {
+            ChangeTag::Equal => {
+                push_seg(&mut del, text, false);
+                push_seg(&mut add, text, false);
+            }
+            ChangeTag::Delete => push_seg(&mut del, text, true),
+            ChangeTag::Insert => push_seg(&mut add, text, true),
+        }
+    }
+    Some((del, add))
+}
+
+/// 给每个 hunk 内「连续删除行 + 紧接的连续新增行」配对,逐对标注行内词级段。
+/// 原地修改;上下文行、配不上对的多余行的 emphasis 保持 None。
+fn annotate_word_level(hunks: &mut [Hunk]) {
+    for hunk in hunks.iter_mut() {
+        let lines = &mut hunk.lines;
+        let mut i = 0;
+        while i < lines.len() {
+            if lines[i].kind != DiffLineKind::Deletion {
+                i += 1;
+                continue;
+            }
+            let del_start = i;
+            while i < lines.len() && lines[i].kind == DiffLineKind::Deletion {
+                i += 1;
+            }
+            let del_end = i;
+            let add_start = i;
+            while i < lines.len() && lines[i].kind == DiffLineKind::Addition {
+                i += 1;
+            }
+            let add_end = i;
+            let pairs = (del_end - del_start).min(add_end - add_start);
+            for k in 0..pairs {
+                let old = lines[del_start + k].content.clone();
+                let new = lines[add_start + k].content.clone();
+                if let Some((del_segs, add_segs)) = word_segments(&old, &new) {
+                    lines[del_start + k].emphasis = Some(del_segs);
+                    lines[add_start + k].emphasis = Some(add_segs);
+                }
+            }
+        }
+    }
+}
+
 fn file_diff_from(diff: &git2::Diff, file: &str) -> Result<FileDiff, GitError> {
     let target = Path::new(file);
     let mut result = FileDiff {
@@ -235,6 +315,8 @@ fn file_diff_from(diff: &git2::Diff, file: &str) -> Result<FileDiff, GitError> {
         result.lfs_size = size;
         result.hunks.clear();
     }
+    // 词级标注:对剩余 hunks 标行内改动段。LFS/二进制/过大文件 hunks 已空 → 自动 no-op。
+    annotate_word_level(&mut result.hunks);
     Ok(result)
 }
 
@@ -2559,5 +2641,118 @@ mod tests {
 
         let err = b.delete_branch(&repo, "ghost").unwrap_err();
         assert!(matches!(err, GitError::BranchNotFound(_)));
+    }
+}
+
+#[cfg(test)]
+mod word_level_tests {
+    use super::*;
+    use git_core::model::{DiffLine, DiffLineKind, Hunk};
+
+    fn line(kind: DiffLineKind, content: &str) -> DiffLine {
+        DiffLine {
+            kind,
+            old_lineno: None,
+            new_lineno: None,
+            content: content.into(),
+            emphasis: None,
+        }
+    }
+
+    fn segs(line: &DiffLine) -> Vec<(String, bool)> {
+        line.emphasis
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|s| (s.text.clone(), s.changed))
+            .collect()
+    }
+
+    #[test]
+    fn pairs_word_level_changes() {
+        let mut hunks = vec![Hunk {
+            header: "@@".into(),
+            lines: vec![
+                line(DiffLineKind::Deletion, "foo bar"),
+                line(DiffLineKind::Addition, "foo baz"),
+            ],
+        }];
+        annotate_word_level(&mut hunks);
+        assert_eq!(
+            segs(&hunks[0].lines[0]),
+            vec![("foo ".into(), false), ("bar".into(), true)]
+        );
+        assert_eq!(
+            segs(&hunks[0].lines[1]),
+            vec![("foo ".into(), false), ("baz".into(), true)]
+        );
+    }
+
+    #[test]
+    fn segments_concat_equals_content() {
+        let mut hunks = vec![Hunk {
+            header: "@@".into(),
+            lines: vec![
+                line(DiffLineKind::Deletion, "let x = compute(a, b);"),
+                line(DiffLineKind::Addition, "let x = compute(a, c);"),
+            ],
+        }];
+        annotate_word_level(&mut hunks);
+        for l in &hunks[0].lines {
+            let joined: String = l
+                .emphasis
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect();
+            assert_eq!(joined, l.content);
+        }
+    }
+
+    #[test]
+    fn whole_line_rewrite_yields_none() {
+        let mut hunks = vec![Hunk {
+            header: "@@".into(),
+            lines: vec![
+                line(DiffLineKind::Deletion, "aaaa"),
+                line(DiffLineKind::Addition, "bbbb"),
+            ],
+        }];
+        annotate_word_level(&mut hunks);
+        assert!(hunks[0].lines[0].emphasis.is_none());
+        assert!(hunks[0].lines[1].emphasis.is_none());
+    }
+
+    #[test]
+    fn unequal_counts_leave_extra_line_none() {
+        let mut hunks = vec![Hunk {
+            header: "@@".into(),
+            lines: vec![
+                line(DiffLineKind::Deletion, "foo one"),
+                line(DiffLineKind::Deletion, "foo two"),
+                line(DiffLineKind::Deletion, "leftover line"),
+                line(DiffLineKind::Addition, "foo ONE"),
+                line(DiffLineKind::Addition, "foo TWO"),
+            ],
+        }];
+        annotate_word_level(&mut hunks);
+        assert!(hunks[0].lines[0].emphasis.is_some());
+        assert!(hunks[0].lines[1].emphasis.is_some());
+        assert!(hunks[0].lines[2].emphasis.is_none());
+    }
+
+    #[test]
+    fn context_lines_stay_none() {
+        let mut hunks = vec![Hunk {
+            header: "@@".into(),
+            lines: vec![
+                line(DiffLineKind::Context, "unchanged"),
+                line(DiffLineKind::Addition, "brand new line"),
+            ],
+        }];
+        annotate_word_level(&mut hunks);
+        assert!(hunks[0].lines[0].emphasis.is_none());
+        assert!(hunks[0].lines[1].emphasis.is_none());
     }
 }
