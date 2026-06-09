@@ -130,7 +130,7 @@ export function RebaseEditor({
         </div>
 
         <p className="shrink-0 border-b border-line bg-warning/10 px-4 py-2 text-xs text-warning">
-          ⚠ 会改写提交历史。若这些提交已 push,变基后需 force push。冲突可在「更改」页解决或中止。
+          ⚠ 会改写提交历史。若这些提交已 push，变基后需 force push。冲突可在「更改」页解决或中止。
         </p>
 
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-2">
