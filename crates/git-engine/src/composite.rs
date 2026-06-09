@@ -3,7 +3,7 @@ use crate::git2_backend::Git2Backend;
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
     FileDiff, PullOutcome, PushOutcome, RebaseStep, ReflogEntry, RepoState, ResetMode,
-    SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus,
+    SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus, WorktreeInfo,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -121,6 +121,9 @@ impl GitBackend for CompositeBackend {
     }
     fn update_submodule(&self, repo: &Path, path: &str) -> Result<(), GitError> {
         self.cli.update_submodule(repo, path)
+    }
+    fn list_worktrees(&self, repo: &Path) -> Result<Vec<WorktreeInfo>, GitError> {
+        self.cli.list_worktrees(repo)
     }
     fn conflict_sides(&self, repo: &Path, file: &str) -> Result<ConflictSides, GitError> {
         self.git2.conflict_sides(repo, file)

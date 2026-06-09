@@ -3,6 +3,7 @@ use crate::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     FetchOutcome, FileChange, FileDiff, PullOutcome, PushOutcome, RebaseStep, ReflogEntry,
     RepoState, ResetMode, SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus,
+    WorktreeInfo,
 };
 use std::path::Path;
 
@@ -143,6 +144,12 @@ pub trait GitBackend: Send + Sync {
     /// 初始化并更新某子模块到超级项目记录的提交(`git submodule update --init -- <path>`)。
     /// 对未初始化的子模块做 clone+checkout,对未同步的检出记录提交。默认 Unsupported。
     fn update_submodule(&self, _repo: &Path, _path: &str) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+
+    /// 列出工作树(`git worktree list`):主工作树 + 链接工作树,含各自路径 / HEAD / 分支。
+    /// 普通仓库只有一个(主工作树)。默认 Unsupported。
+    fn list_worktrees(&self, _repo: &Path) -> Result<Vec<WorktreeInfo>, GitError> {
         Err(GitError::Unsupported)
     }
 

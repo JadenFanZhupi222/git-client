@@ -6,7 +6,7 @@ use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk,
     PullOutcome, PushOutcome, RefKind, ReflogEntry, SignatureInfo, SignatureStatus, StashEntry,
-    SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus,
+    SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus, WorktreeInfo,
 };
 use serde::{Deserialize, Serialize};
 
@@ -271,6 +271,36 @@ impl From<SubmoduleInfo> for SubmoduleInfoDto {
             head_sha: s.head_sha,
             status: status.into(),
             describe: s.describe,
+        }
+    }
+}
+
+/// 工作树 DTO。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorktreeInfoDto {
+    pub path: String,
+    pub head_sha: String,
+    pub short_sha: String,
+    pub branch: String,
+    pub is_main: bool,
+    pub is_current: bool,
+    pub detached: bool,
+    pub locked: bool,
+    pub bare: bool,
+}
+
+impl From<WorktreeInfo> for WorktreeInfoDto {
+    fn from(w: WorktreeInfo) -> Self {
+        WorktreeInfoDto {
+            short_sha: w.head_sha.chars().take(7).collect(),
+            path: w.path,
+            head_sha: w.head_sha,
+            branch: w.branch,
+            is_main: w.is_main,
+            is_current: w.is_current,
+            detached: w.detached,
+            locked: w.locked,
+            bare: w.bare,
         }
     }
 }

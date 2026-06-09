@@ -1,7 +1,7 @@
 use git_core::GitError;
 use git_core::model::{
     FetchOutcome, PullOutcome, PushOutcome, RebaseAction, RebaseStep, RepoState, SignatureInfo,
-    SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus,
+    SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorktreeInfo,
 };
 use std::collections::HashMap;
 use std::io::Write;
@@ -103,6 +103,32 @@ fn submodule_urls(repo: &Path) -> HashMap<String, String> {
         .into_iter()
         .filter_map(|(name, path)| name_url.get(&name).map(|url| (path, url.clone())))
         .collect()
+}
+
+/// 解析 `git worktree list --porcelain` 的一条记录(记录间空行分隔)。行形如:
+///   worktree <绝对路径> / HEAD <sha> / branch refs/heads/<name> / detached / bare / locked。
+/// `is_main` / `is_current` 由调用方填(本函数只解析记录自身字段)。无 `worktree` 行 → None。
+fn parse_worktree_record(record: &str) -> Option<WorktreeInfo> {
+    let mut wt = WorktreeInfo::default();
+    let mut saw_path = false;
+    for line in record.lines() {
+        let line = line.trim_end();
+        if let Some(p) = line.strip_prefix("worktree ") {
+            wt.path = p.to_string();
+            saw_path = true;
+        } else if let Some(sha) = line.strip_prefix("HEAD ") {
+            wt.head_sha = sha.to_string();
+        } else if let Some(b) = line.strip_prefix("branch ") {
+            wt.branch = b.strip_prefix("refs/heads/").unwrap_or(b).to_string();
+        } else if line == "detached" {
+            wt.detached = true;
+        } else if line == "bare" {
+            wt.bare = true;
+        } else if line == "locked" || line.starts_with("locked ") {
+            wt.locked = true;
+        }
+    }
+    saw_path.then_some(wt)
 }
 
 /// 从完整 unified diff 文本里抽出第 `index` 个 hunk,拼上文件头形成可单独 apply 的 patch。
@@ -737,6 +763,39 @@ impl CliBackend {
         Err(GitError::Backend(
             format!("{stdout}\n{stderr}").trim().to_string(),
         ))
+    }
+
+    /// 列出工作树:`git worktree list --porcelain`。第一条为主工作树;路径与打开仓库一致
+    /// 的那条标 `is_current`(canonicalize 抹平 /tmp↔/private/tmp 等符号链接差异)。
+    pub fn list_worktrees(&self, repo: &Path) -> Result<Vec<WorktreeInfo>, GitError> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["worktree", "list", "--porcelain"])
+            .output()
+            .map_err(spawn_err)?;
+        if !out.status.success() {
+            return Err(GitError::Backend(
+                String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            ));
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let current = std::fs::canonicalize(repo).ok();
+        let mut list = Vec::new();
+        for record in stdout.split("\n\n") {
+            if record.trim().is_empty() {
+                continue;
+            }
+            if let Some(mut wt) = parse_worktree_record(record) {
+                wt.is_main = list.is_empty(); // 首条成功解析的记录 = 主工作树
+                wt.is_current = match (&current, std::fs::canonicalize(&wt.path).ok()) {
+                    (Some(cur), Some(p)) => *cur == p,
+                    _ => false,
+                };
+                list.push(wt);
+            }
+        }
+        Ok(list)
     }
 
     /// 交互式 rebase(全程非交互)。base=最旧提交的父(None→--root);steps 为 oldest→newest。
@@ -1848,5 +1907,78 @@ mod tests {
             SubmoduleStatus::UpToDate,
             "update --init 后应已同步"
         );
+    }
+
+    // ---- 工作树(M4.5)----
+
+    #[test]
+    fn parse_worktree_record_variants() {
+        let main = parse_worktree_record(
+            "worktree /repo/main\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/main",
+        )
+        .unwrap();
+        assert_eq!(main.path, "/repo/main");
+        assert_eq!(main.head_sha, "1111111111111111111111111111111111111111");
+        assert_eq!(main.branch, "main", "应剥掉 refs/heads/ 前缀");
+        assert!(!main.detached);
+
+        let detached = parse_worktree_record(
+            "worktree /repo/wt\nHEAD 2222222222222222222222222222222222222222\ndetached",
+        )
+        .unwrap();
+        assert!(detached.detached);
+        assert!(detached.branch.is_empty(), "分离头无分支");
+
+        let locked = parse_worktree_record(
+            "worktree /mnt/usb/wt\nHEAD 3333333333333333333333333333333333333333\nbranch refs/heads/x\nlocked on removable media",
+        )
+        .unwrap();
+        assert!(locked.locked);
+        assert_eq!(locked.branch, "x");
+
+        // 无 worktree 行 → None。
+        assert!(parse_worktree_record("HEAD abc\nbranch refs/heads/y").is_none());
+    }
+
+    #[test]
+    fn list_worktrees_reports_main_and_linked() {
+        let repo = tempfile::tempdir().unwrap();
+        git(repo.path(), &["init", "-b", "main", "."]);
+        git(repo.path(), &["config", "user.email", "t@e"]);
+        git(repo.path(), &["config", "user.name", "t"]);
+        std::fs::write(repo.path().join("a.txt"), "x").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+
+        // 在仓库外加一个链接工作树(检出新分支 feature)。
+        let linked_parent = tempfile::tempdir().unwrap();
+        let linked = linked_parent.path().join("wt");
+        git(
+            repo.path(),
+            &["worktree", "add", linked.to_str().unwrap(), "-b", "feature"],
+        );
+
+        let wts = CliBackend.list_worktrees(repo.path()).unwrap();
+        assert_eq!(wts.len(), 2, "主 + 链接共两个工作树");
+
+        let main = &wts[0];
+        assert!(main.is_main, "第一条为主工作树");
+        assert!(main.is_current, "打开的就是主工作树 → is_current");
+        assert_eq!(main.branch, "main");
+
+        let feat = wts.iter().find(|w| w.branch == "feature").unwrap();
+        assert!(!feat.is_main);
+        assert!(!feat.is_current);
+    }
+
+    #[test]
+    fn list_worktrees_single_for_plain_repo() {
+        let repo = init_repo_for_commit();
+        std::fs::write(repo.path().join("f.txt"), "x").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+        let wts = CliBackend.list_worktrees(repo.path()).unwrap();
+        assert_eq!(wts.len(), 1, "普通仓库只有主工作树");
+        assert!(wts[0].is_main && wts[0].is_current);
     }
 }

@@ -6,7 +6,7 @@ import { useQuery, useQueryClient, keepPreviousData, type QueryClient } from "@t
 import { useEffect } from "react";
 import {
   getStatus, getWorkingDiff, getCommitGraph, searchCommits, getReflog, getCommitFiles, getCommitFileDiff,
-  getCommitSignature, listSubmodules, compareFiles, compareFileDiff,
+  getCommitSignature, listSubmodules, listWorktrees, compareFiles, compareFileDiff,
   getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
   getRepoState, readWorkingFile, blame, conflictSides, undoState, opLog,
   watchRepo, onRepoChanged,
@@ -21,6 +21,7 @@ export const qk = {
   commitDiff: (repo: string) => ["commitDiff", repo] as const,
   commitSignature: (repo: string) => ["commitSignature", repo] as const,
   submodules: (repo: string) => ["submodules", repo] as const,
+  worktrees: (repo: string) => ["worktrees", repo] as const,
   currentBranch: (repo: string) => ["currentBranch", repo] as const,
   aheadBehind: (repo: string) => ["aheadBehind", repo] as const,
   remotes: (repo: string) => ["remotes", repo] as const,
@@ -131,6 +132,11 @@ export function useSubmodules(repo: string) {
   return useQuery({ queryKey: qk.submodules(repo), queryFn: () => listSubmodules(repo), enabled: !!repo });
 }
 
+/** 工作树列表(也用于驱动「工作树」标签的显隐:仅 >=2 个时显示)。 */
+export function useWorktrees(repo: string) {
+  return useQuery({ queryKey: qk.worktrees(repo), queryFn: () => listWorktrees(repo), enabled: !!repo });
+}
+
 /** 撤销/重做的当前可用性。随历史变化失效;驱动顶栏「撤销」「重做」按钮。 */
 export function useUndoState(repo: string) {
   return useQuery({ queryKey: qk.undoState(repo), queryFn: () => undoState(repo), enabled: !!repo });
@@ -221,7 +227,10 @@ export function useRepoWatch(repo: string | null) {
       qc.invalidateQueries({ queryKey: qk.repoState(repo) }); // 合并/变基状态可能变
       qc.invalidateQueries({ queryKey: qk.fileText(repo) }); // 冲突文件内容可能变
       qc.invalidateQueries({ queryKey: qk.submodules(repo) }); // 子模块状态(检出/同步)可能变
-      if (kind === "ref") invalidateHistory(qc, repo);
+      if (kind === "ref") {
+        invalidateHistory(qc, repo);
+        qc.invalidateQueries({ queryKey: qk.worktrees(repo) }); // 工作树的分支/HEAD 可能变
+      }
     }).then((u) => { un = u; });
     return () => un?.();
   }, [repo, qc]);

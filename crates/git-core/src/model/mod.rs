@@ -10,6 +10,7 @@ mod signature;
 mod stash;
 mod status;
 mod submodule;
+mod worktree;
 
 pub use blame::BlameLine;
 pub use branch::{
@@ -26,3 +27,4 @@ pub use signature::{SignatureInfo, SignatureStatus};
 pub use stash::StashEntry;
 pub use status::{FileEntry, FileState, WorkingTreeStatus};
 pub use submodule::{SubmoduleInfo, SubmoduleStatus};
+pub use worktree::WorktreeInfo;

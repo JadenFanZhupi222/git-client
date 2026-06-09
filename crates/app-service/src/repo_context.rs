@@ -21,7 +21,7 @@ use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
     FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, OpLogDto, OpLogEntryDto,
     PullResultDto, PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto,
-    SubmoduleInfoDto, UndoStateDto, UndoStepDto,
+    SubmoduleInfoDto, UndoStateDto, UndoStepDto, WorktreeInfoDto,
 };
 use lru::LruCache;
 use std::collections::HashMap;
@@ -318,6 +318,10 @@ impl RepoContext {
     /// 子模块列表(只读)。一次 CLI 调用,前端 query 已缓存,这里不额外缓存。
     pub fn list_submodules(&self) -> Result<Vec<SubmoduleInfoDto>, GitError> {
         self.service.list_submodules(&self.path)
+    }
+    /// 工作树列表(只读)。前端 query 已缓存,这里不额外缓存。
+    pub fn list_worktrees(&self) -> Result<Vec<WorktreeInfoDto>, GitError> {
+        self.service.list_worktrees(&self.path)
     }
     pub fn current_branch(&self) -> Result<Option<String>, GitError> {
         if let Some(hit) = self.cache.current_branch.lock().unwrap().clone() {
