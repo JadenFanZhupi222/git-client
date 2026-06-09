@@ -217,6 +217,7 @@ fn file_diff_from(diff: &git2::Diff, file: &str) -> Result<FileDiff, GitError> {
                             old_lineno: dl.old_lineno(),
                             new_lineno: dl.new_lineno(),
                             content,
+                            emphasis: None,
                         });
                     }
                     result.hunks.push(Hunk { header, lines });
