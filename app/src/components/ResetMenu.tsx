@@ -7,7 +7,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 
 const MODES: { mode: ResetMode; label: string; desc: string; danger?: boolean }[] = [
   { mode: "soft", label: "Soft", desc: "保留暂存区与工作区(改动转为已暂存)" },
-  { mode: "mixed", label: "Mixed", desc: "保留工作区,重置暂存区(改动转为未暂存)" },
+  { mode: "mixed", label: "Mixed", desc: "保留工作区，重置暂存区(改动转为未暂存)" },
   { mode: "hard", label: "Hard", desc: "丢弃所有未提交改动", danger: true },
 ];
 

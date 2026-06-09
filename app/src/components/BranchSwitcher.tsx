@@ -254,14 +254,14 @@ export function BranchSwitcher({
             title={`删除分支 “${name}”?`}
             message={
               impact === null
-                ? "无法确认该分支是否已并入别处,请谨慎删除。"
+                ? "无法确认该分支是否已并入别处，请谨慎删除。"
                 : unmerged > 0
                   ? undefined
-                  : "该分支的提交已并入别处,删除不会丢失工作。"
+                  : "该分支的提交已并入别处，删除不会丢失工作。"
             }
             impactNote={
               unmerged > 0
-                ? `该分支有 ${unmerged} 个提交未合并到任何其它分支,删除后将丢失。`
+                ? `该分支有 ${unmerged} 个提交未合并到任何其它分支，删除后将丢失。`
                 : undefined
             }
             items={unmerged > 0 ? impact!.sample_summaries : undefined}

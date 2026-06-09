@@ -189,7 +189,7 @@ export function HistoryView({ repo }: { repo: string }) {
       qc.invalidateQueries({ queryKey: qk.repoState(repo) });
       toast({
         kind: "error",
-        title: err.code === "MERGE_CONFLICT" ? "拣选有冲突,请到「更改」页解决" : (err.message ?? String(e)),
+        title: err.code === "MERGE_CONFLICT" ? "拣选有冲突，请到「更改」页解决" : (err.message ?? String(e)),
       });
     } finally {
       setBusy(false);
@@ -211,7 +211,7 @@ export function HistoryView({ repo }: { repo: string }) {
       qc.invalidateQueries({ queryKey: qk.repoState(repo) });
       toast({
         kind: "error",
-        title: err.code === "MERGE_CONFLICT" ? "回滚有冲突,请到「更改」页解决" : (err.message ?? String(e)),
+        title: err.code === "MERGE_CONFLICT" ? "回滚有冲突，请到「更改」页解决" : (err.message ?? String(e)),
       });
     } finally {
       setBusy(false);
@@ -520,7 +520,7 @@ function MidColumn({
                   size="chip"
                   onClick={onRebase}
                   disabled={busy}
-                  title="从此提交开始交互式变基(改写历史:reorder/squash/reword/drop)"
+                  title="从此提交开始交互式变基(改写历史：reorder/squash/reword/drop)"
                   className="normal-case tracking-normal"
                 >
                   变基

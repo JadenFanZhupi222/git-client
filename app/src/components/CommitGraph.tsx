@@ -111,8 +111,8 @@ export function CommitGraph({
             : r.sync === "incoming" ? "var(--color-accent)"
             : null;
           const syncTip =
-            r.sync === "outgoing" ? "已提交,尚未 push 到远程"
-            : r.sync === "incoming" ? "已 fetch,尚未 pull/合并到本地"
+            r.sync === "outgoing" ? "已提交，尚未 push 到远程"
+            : r.sync === "incoming" ? "已 fetch，尚未 pull/合并到本地"
             : undefined;
           return (
             <div

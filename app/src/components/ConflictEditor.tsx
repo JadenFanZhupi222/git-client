@@ -332,7 +332,7 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
         <span className={remaining > 0 ? "text-warning" : "text-fg-muted"}>
           {remaining > 0 ? `${remaining} 处冲突` : "无冲突"}
         </span>
-        <span className="text-fg-subtle">· 每块「用我方/用对方」一键并入,中间结果可直接编辑</span>
+        <span className="text-fg-subtle">· 每块「用我方/用对方」一键并入，中间结果可直接编辑</span>
         <div className="ml-auto flex items-center gap-1.5">
           <Button variant="ghost" size="sm" onClick={() => replaceAll(oursStr)}>
             全用我方

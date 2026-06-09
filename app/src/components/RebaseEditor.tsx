@@ -108,7 +108,7 @@ export function RebaseEditor({
     } catch (e) {
       const err = e as IpcError;
       if (err.code === "MERGE_CONFLICT") {
-        toast({ kind: "error", title: "变基有冲突,请到「更改」页解决" });
+        toast({ kind: "error", title: "变基有冲突，请到「更改」页解决" });
         onConflict();
       } else {
         toast({ kind: "error", title: err.message ?? String(e) });

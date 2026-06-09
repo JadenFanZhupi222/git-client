@@ -28,7 +28,7 @@ export function ComparePanel({ repo, from, to }: { repo: string; from: string; t
         <div className="flex shrink-0 flex-col overflow-hidden border-r border-line" style={{ width: col.w }}>
           <div className="min-h-0 flex-1 overflow-hidden">
             {same ? (
-              <div className="p-3 text-xs text-fg-subtle">两端相同,无差异</div>
+              <div className="p-3 text-xs text-fg-subtle">两端相同，无差异</div>
             ) : filesQ.isLoading ? (
               <div className="p-3 text-xs text-fg-subtle">加载中…</div>
             ) : files.length === 0 ? (

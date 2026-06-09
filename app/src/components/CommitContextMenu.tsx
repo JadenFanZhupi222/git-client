@@ -116,7 +116,7 @@ export function CommitContextMenu({
 
         {view === "resetHard" && (
           <div className="px-3 py-2 text-[11px]">
-            <p className="mb-1.5 text-danger">Hard reset 会丢弃未提交改动,确认?</p>
+            <p className="mb-1.5 text-danger">Hard reset 会丢弃未提交改动，确认？</p>
             <div className="flex gap-2">
               <Button variant="danger" size="chip" disabled={busy} onClick={() => doReset("hard")}>确认</Button>
               <button onClick={() => setView("reset")} className="text-fg-muted hover:underline">取消</button>
