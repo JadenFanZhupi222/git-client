@@ -91,8 +91,10 @@ ARCHITECTURE.md 自己把 **actor + 缓存 + 取消** 称为本项目的"成败�
 **进度**:命令面板 ⌘K、提交/文件列表 j/k 导航 + 聚焦面板、⌘K 跳转到分支、rebase 拖拽重排均已落地;
 键盘流主体打通。剩零散续做(ChangesView 文件键盘化、跳转到提交/文件、拖提交到分支)。
 
-### M4 · Correct —— 扛住真实世界 git 【当前支柱 · 计划 2026-06-08】
+### M4 · Correct —— 扛住真实世界 git 【✅ 已完成】
 按「先防崩 → 再可信 → 后覆盖」排序,每刀仍走竖切 + feat 分支 + 全门绿。
+> 状态:M4.1–M4.6 六刀(防崩 / 签名徽章 / 提交走 CLI / 子模块 / 工作树 / LFS+稀疏检出)
+> 全部完成并 merge 入 main(未 push)。真机已验收子模块+工作树+常规提交。
 
 - ✅ **M4.1 超大文件 / 二进制优雅处理**(已合 main):diff 用 `patch.line_stats` 算总行数,
   超 20000 行→`FileDiff.too_large`、不构建 Vec(真正卡点是前端渲染几万 DOM 行);DiffView 占位。
@@ -124,11 +126,16 @@ ARCHITECTURE.md 自己把 **actor + 缓存 + 取消** 称为本项目的"成败�
   DTO WorktreeInfoDto(short_sha)。竖切到新「工作树」标签——**仅当 ≥2 个工作树时出现**(普通仓库只有主
   工作树就不显示);WorktreesView 列路径/分支/sha + 当前/主/锁定/裸徽章。切换/新建留后(M4.5 只做展示)。
   cli +3 测试(parse 纯函数 + tempfile 主+链接/单工作树)、app-service +1 测试。
-- **M4.6 LFS 感知 / 稀疏检出**(niche、检测优先):识别 LFS 指针文件(别把指针当内容 diff)、
-  显示稀疏检出范围;完整管理留后。
+- ✅ **M4.6 LFS 感知 / 稀疏检出**(已合 main,检测优先):
+  - **M4.6a LFS 指针感知**:diff 单一构建点 `file_diff_from` 末尾用新一侧内容重建文件,判
+    `version https://git-lfs.github.com/spec/` + 有 oid 行 → 标 is_lfs_pointer、取 size、清 hunks;
+    DiffView 显「Git LFS 文件(实际 N)…」占位,不把指针文本当内容 diff。
+  - **M4.6b 稀疏检出感知**:`git sparse-checkout list`(非零退出=非稀疏仓库→空,不当错误);
+    新「稀疏检出」标签仅当开启时出现,列出范围规则 + 说明。
+  - 三个 niche 标签(子模块/工作树/稀疏检出)共用「按仓库特性按需出现」的动态标签套路。
 
-**成功标准**:在带子模块/LFS/签名的真实大型仓库上不崩、不误判;签名提交与 hooks 正常生效。
-**建议起点**:M4.1(防崩)→ M4.2(签名徽章)。
+**成功标准**:在带子模块/LFS/签名的真实大型仓库上不崩、不误判;签名提交与 hooks 正常生效。【达成】
+**实际路径**:M4.1 防崩 → M4.2 签名徽章 → M4.3 提交走 CLI → M4.4 子模块 → M4.5 工作树 → M4.6 LFS+稀疏检出。
 
 ### M5 · 更深的 diff 与历史 【第五】
 - 并排(side-by-side)diff、行内/词级 diff(`similar`)、图片/二进制 diff。

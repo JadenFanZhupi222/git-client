@@ -2,7 +2,7 @@
 
 > 这份文件在 git 仓库里,会随 push/pull 跟到新机器。记录当前进度、铁律、下一步。
 > 配套必读:`CLAUDE.md`(铁律)、`ARCHITECTURE.md`(架构)、`README.md`(启动)。
-> 最近更新:2026-06-09(M4.4 子模块感知 + M4.5 worktree 列表完成)。
+> 最近更新:2026-06-09(M4 · Correct 全部完成:子模块 / 工作树 / LFS / 稀疏检出)。
 
 ## 当前状态
 - 阶段 0/1/2/3 全部完成,**阶段 4 核心(交互式 rebase)已落地**。
@@ -37,16 +37,19 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
   - **交互式 rebase**:全程非交互驱动 CLI——todo 经 `GIT_SEQUENCE_EDITOR=cp <todo>` 注入、改信息用 todo 里 `exec git commit --amend -F <msg>` 行、`GIT_EDITOR=true` 兜底、冲突复用 ConflictBanner。UI = 历史页提交右键/详情头「变基」→ RebaseEditor 弹层(↑↓ 调序 + pick/reword/squash/fixup/drop)。**Windows cp/exec 已在本机 tempfile 测试验证。**
   - **提交右键上下文菜单**(`CommitContextMenu`):图谱行/搜索行右键 → Cherry-pick/Revert/从此交互变基/Reset 到此(子菜单)/打标签/复制 SHA。这是 per-commit 操作的主入口;新加单提交动作优先进这里。
 - M4 Correct(扛真实世界 git,详见 `docs/superpowers/plans/2026-06-08-world-class-roadmap.md`):
+- **M4 · Correct 全部完成**(均已合 main,详见 `docs/superpowers/plans/2026-06-08-world-class-roadmap.md`):
   - M4.1 超大文件/二进制防卡、M4.2 提交签名徽章、M4.3 提交走 CLI(尊重 hooks+签名)、
-    M4.4 子模块感知(`git submodule status`+`.gitmodules`;`submodule update --init`)、
-    **M4.5 worktree 列表**(`git worktree list --porcelain`,只读;新「工作树」标签仅当 ≥2 个工作树时出现;
-    WorktreesView 列分支/sha + 当前/主/锁定/裸徽章)均已合 main。
-  - 动态标签套路:子模块/工作树标签按需出现(useSubmodules/useWorktrees 驱动 TabBar 显隐 +
-    切到不再可用的标签时退回「更改」)。新增此类「按仓库特性出现」的标签照此办理。
+    M4.4 子模块感知、M4.5 worktree 列表(只读)、M4.6 LFS 指针感知 + 稀疏检出感知。
+  - **LFS 指针**:`file_diff_from`(commit/working/compare diff 的单一构建点)末尾检测 LFS 指针,
+    标 `FileDiff.is_lfs_pointer`/`lfs_size` 并清 hunks;DiffView 显占位,不把指针文本当内容 diff。
+  - **动态标签套路**:子模块/工作树/稀疏检出三个标签「按仓库特性按需出现」(useSubmodules/
+    useWorktrees/useSparseCheckout 驱动 TabBar 显隐 + 切到不再可用的标签时退回「更改」)。
+    新增此类标签照此办理:加 use*hook → App 算 has* → TabBar 加 prop+push → 渲染分支 + 复位 effect。
 
 ## 下一步候选(按价值/风险)
-- M4.6 LFS/稀疏检出感知(niche、检测优先);worktree 切换/新建(M4.5 只做了展示)。
-- log 里 ctrl-多选两提交→比较;子模块行内嵌套展开(查看子模块自己的状态)。
+- **M5 · 更深的 diff 与历史(建议下一支柱)**:并排/词级 diff(`similar`)、文件历史 / 行历史
+  (`log -L`)、pickaxe 搜索(`-S`/`-G` 按代码内容找提交)。比 M4.6 之后的 niche 项价值更高、更高频。
+- 零散续做:worktree 切换/新建(M4.5 只做展示);log 里 ctrl-多选两提交→比较。
 - 工程收尾:真机验收交互式 rebase(尤其中途冲突的继续/中止、大仓库 cp/exec 路径);CI 加 `fmt --check` + `clippy -D warnings` 卡口(属 infra,之前没动 .github);push 到 origin。
 - 已知小项:composite 40+ 透传样板(Rust 固有税,可选 delegate crate)。
 
