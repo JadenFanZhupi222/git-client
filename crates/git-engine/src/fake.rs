@@ -2,7 +2,7 @@ use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     FetchOutcome, FileChange, FileDiff, FileEntry, PullOutcome, PushOutcome, RebaseAction,
     RebaseStep, ReflogEntry, RepoState, ResetMode, Signature, SignatureInfo, StashEntry,
-    SyncCommits, WorkingTreeStatus,
+    SubmoduleInfo, SyncCommits, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -22,6 +22,8 @@ pub struct FakeBackend {
     canned_branch: Mutex<Option<String>>,
     canned_file_diff: Mutex<FileDiff>,
     canned_signature: Mutex<SignatureInfo>,
+    canned_submodules: Mutex<Vec<SubmoduleInfo>>,
+    submodule_ops: Mutex<Vec<String>>,
     canned_branches: Mutex<Vec<BranchInfo>>,
     canned_refs: Mutex<Vec<CommitRef>>,
     canned_ahead_behind: Mutex<Option<AheadBehind>>,
@@ -91,6 +93,14 @@ impl FakeBackend {
     pub fn with_signature(self, sig: SignatureInfo) -> Self {
         *self.canned_signature.lock().unwrap() = sig;
         self
+    }
+    pub fn with_submodules(self, subs: Vec<SubmoduleInfo>) -> Self {
+        *self.canned_submodules.lock().unwrap() = subs;
+        self
+    }
+    /// 断言用:记录被 update 的子模块路径(按调用顺序)。
+    pub fn submodule_ops(&self) -> Vec<String> {
+        self.submodule_ops.lock().unwrap().clone()
     }
     pub fn with_file_diff(self, diff: FileDiff) -> Self {
         *self.canned_file_diff.lock().unwrap() = diff;
@@ -429,6 +439,13 @@ impl GitBackend for FakeBackend {
     }
     fn commit_signature(&self, _path: &Path, _commit_id: &str) -> Result<SignatureInfo, GitError> {
         Ok(self.canned_signature.lock().unwrap().clone())
+    }
+    fn list_submodules(&self, _path: &Path) -> Result<Vec<SubmoduleInfo>, GitError> {
+        Ok(self.canned_submodules.lock().unwrap().clone())
+    }
+    fn update_submodule(&self, _path: &Path, path: &str) -> Result<(), GitError> {
+        self.submodule_ops.lock().unwrap().push(path.to_string());
+        Ok(())
     }
     fn conflict_sides(&self, _path: &Path, _file: &str) -> Result<ConflictSides, GitError> {
         Ok(self

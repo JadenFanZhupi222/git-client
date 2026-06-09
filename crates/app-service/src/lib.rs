@@ -6,7 +6,7 @@ use git_core::{GitBackend, GitError};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
     FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto,
-    ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto,
+    ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto, SubmoduleInfoDto,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -255,6 +255,24 @@ impl RepoService {
         Ok(SignatureInfoDto::from(
             self.backend.commit_signature(repo_path, commit_id)?,
         ))
+    }
+
+    /// 用例:列出子模块(路径/URL/提交/状态)。
+    pub fn list_submodules(&self, repo_path: &Path) -> Result<Vec<SubmoduleInfoDto>, GitError> {
+        Ok(self
+            .backend
+            .list_submodules(repo_path)?
+            .into_iter()
+            .map(SubmoduleInfoDto::from)
+            .collect())
+    }
+
+    /// 用例:初始化并更新某子模块。空路径在本层拦截。
+    pub fn update_submodule(&self, repo_path: &Path, path: &str) -> Result<(), GitError> {
+        if path.trim().is_empty() {
+            return Err(GitError::Backend("子模块路径不能为空".into()));
+        }
+        self.backend.update_submodule(repo_path, path.trim())
     }
 
     /// 用例:当前 HEAD 分支短名;分离头/空仓库返回 None。
@@ -803,6 +821,34 @@ mod tests {
         let dto = svc.commit_signature(Path::new("/r"), "x").unwrap();
         assert_eq!(dto.status, "good");
         assert_eq!(dto.signer, "Alice");
+    }
+
+    #[test]
+    fn list_submodules_maps_dto() {
+        use git_core::model::{SubmoduleInfo, SubmoduleStatus};
+        let fb = FakeBackend::default().with_submodules(vec![SubmoduleInfo {
+            path: "vendor/foo".into(),
+            url: "https://example.com/foo.git".into(),
+            head_sha: "abcdef1234567890abcdef1234567890abcdef12".into(),
+            status: SubmoduleStatus::Modified,
+            describe: "v1.0".into(),
+        }]);
+        let svc = RepoService::new(Arc::new(fb));
+        let dtos = svc.list_submodules(Path::new("/r")).unwrap();
+        assert_eq!(dtos.len(), 1);
+        assert_eq!(dtos[0].path, "vendor/foo");
+        assert_eq!(dtos[0].status, "modified");
+        assert_eq!(dtos[0].short_sha, "abcdef1");
+    }
+
+    #[test]
+    fn update_submodule_forwards_and_rejects_empty() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+        svc.update_submodule(Path::new("/r"), " vendor/foo ")
+            .unwrap();
+        assert_eq!(fb.submodule_ops(), vec!["vendor/foo".to_string()]);
+        assert!(svc.update_submodule(Path::new("/r"), "  ").is_err());
     }
 
     #[test]

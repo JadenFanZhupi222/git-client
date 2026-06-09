@@ -109,7 +109,15 @@ ARCHITECTURE.md 自己把 **actor + 缓存 + 取消** 称为本项目的"成败�
   按 gpgsign 签名,成功 rev-parse HEAD;Composite 把 commit/amend 从 git2 改路由到 cli。
   classify_commit_error:nothing→NothingToCommit、缺身份→EmptySignature、hook 拦截/其它→Backend(原文)。
   cli +3 测试(含失败 pre-commit hook 拦提交,Windows 本机已验 hooks 生效)。**行为变更,需真机验收常规提交。**
-- **M4.4 子模块感知**:读 `.gitmodules` + 子模块状态(未初始化/有改动/落后);UI 列出,支持 init/update(CLI)。
+- ✅ **M4.4 子模块感知**(已合 main):CliBackend `git submodule status`(解析行首 `-`/空格/`+`/`U`
+  → 未初始化/已同步/未同步/冲突)+ `.gitmodules`(`config --file -z --list` 读 path↔url)合并出
+  `SubmoduleInfo`;`update_submodule` 走 `git submodule update --init -- <path>`(init+checkout 一步,
+  可联网→spawn_blocking)。model SubmoduleInfo/SubmoduleStatus + trait list/update_submodule(默认 Unsupported,
+  Composite 委托 cli);DTO SubmoduleInfoDto(status 字符串 + short_sha)。竖切到新「子模块」标签——
+  **仅当仓库确有子模块时出现**(useSubmodules 驱动 TabBar 显隐 + 切到无子模块仓库时退回「更改」);
+  SubmodulesView 列路径/状态徽章/sha/describe/url,未初始化→「初始化」、未同步→「更新到记录版本」按钮。
+  update 失效 worktree 域 + 子模块查询(watcher 也带上)。cli +4 测试(parse 纯函数 + tempfile add/empty/
+  deinit→update,file 协议子模块用 `-c protocol.file.allow=always`)、app-service +2 测试。**需真机验收。**
 - **M4.5 worktree 列表**(niche):`git worktree list` 展示;切换/新建留后。
 - **M4.6 LFS 感知 / 稀疏检出**(niche、检测优先):识别 LFS 指针文件(别把指针当内容 diff)、
   显示稀疏检出范围;完整管理留后。

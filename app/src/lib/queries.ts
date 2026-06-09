@@ -6,7 +6,7 @@ import { useQuery, useQueryClient, keepPreviousData, type QueryClient } from "@t
 import { useEffect } from "react";
 import {
   getStatus, getWorkingDiff, getCommitGraph, searchCommits, getReflog, getCommitFiles, getCommitFileDiff,
-  getCommitSignature, compareFiles, compareFileDiff,
+  getCommitSignature, listSubmodules, compareFiles, compareFileDiff,
   getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
   getRepoState, readWorkingFile, blame, conflictSides, undoState, opLog,
   watchRepo, onRepoChanged,
@@ -20,6 +20,7 @@ export const qk = {
   commitFiles: (repo: string) => ["commitFiles", repo] as const,
   commitDiff: (repo: string) => ["commitDiff", repo] as const,
   commitSignature: (repo: string) => ["commitSignature", repo] as const,
+  submodules: (repo: string) => ["submodules", repo] as const,
   currentBranch: (repo: string) => ["currentBranch", repo] as const,
   aheadBehind: (repo: string) => ["aheadBehind", repo] as const,
   remotes: (repo: string) => ["remotes", repo] as const,
@@ -125,6 +126,11 @@ export function useCurrentBranch(repo: string) {
   return useQuery({ queryKey: qk.currentBranch(repo), queryFn: () => getCurrentBranch(repo), enabled: !!repo });
 }
 
+/** 子模块列表。enabled 时拉一次(也用于驱动「子模块」标签的显隐)。 */
+export function useSubmodules(repo: string) {
+  return useQuery({ queryKey: qk.submodules(repo), queryFn: () => listSubmodules(repo), enabled: !!repo });
+}
+
 /** 撤销/重做的当前可用性。随历史变化失效;驱动顶栏「撤销」「重做」按钮。 */
 export function useUndoState(repo: string) {
   return useQuery({ queryKey: qk.undoState(repo), queryFn: () => undoState(repo), enabled: !!repo });
@@ -214,6 +220,7 @@ export function useRepoWatch(repo: string | null) {
       invalidateWorktree(qc, repo);
       qc.invalidateQueries({ queryKey: qk.repoState(repo) }); // 合并/变基状态可能变
       qc.invalidateQueries({ queryKey: qk.fileText(repo) }); // 冲突文件内容可能变
+      qc.invalidateQueries({ queryKey: qk.submodules(repo) }); // 子模块状态(检出/同步)可能变
       if (kind === "ref") invalidateHistory(qc, repo);
     }).then((u) => { un = u; });
     return () => un?.();

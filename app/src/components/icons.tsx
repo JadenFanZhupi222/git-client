@@ -172,6 +172,14 @@ export const TrashIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+// 子模块:大盒里嵌一个小盒(nested package),提示「仓库里的仓库」。
+export const SubmoduleIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <rect x="1.75" y="1.75" width="9" height="9" rx="1" />
+    <rect x="6.75" y="6.75" width="7.5" height="7.5" rx="1" />
+  </svg>
+);
+
 // 拖拽手柄:两列六点(drag-handle / grip),提示「可拖动」。
 export const GripIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p} strokeWidth={0} fill="currentColor">

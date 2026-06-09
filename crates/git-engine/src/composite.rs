@@ -3,7 +3,7 @@ use crate::git2_backend::Git2Backend;
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
     FileDiff, PullOutcome, PushOutcome, RebaseStep, ReflogEntry, RepoState, ResetMode,
-    SignatureInfo, StashEntry, SyncCommits, WorkingTreeStatus,
+    SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -114,6 +114,13 @@ impl GitBackend for CompositeBackend {
     fn commit_signature(&self, repo: &Path, commit_id: &str) -> Result<SignatureInfo, GitError> {
         // 签名验证 git2 不便做,走 CLI(`%G?`)。
         self.cli.commit_signature(repo, commit_id)
+    }
+    fn list_submodules(&self, repo: &Path) -> Result<Vec<SubmoduleInfo>, GitError> {
+        // 子模块状态读 .gitmodules + `git submodule status`,走 CLI。
+        self.cli.list_submodules(repo)
+    }
+    fn update_submodule(&self, repo: &Path, path: &str) -> Result<(), GitError> {
+        self.cli.update_submodule(repo, path)
     }
     fn conflict_sides(&self, repo: &Path, file: &str) -> Result<ConflictSides, GitError> {
         self.git2.conflict_sides(repo, file)

@@ -1,8 +1,9 @@
 use git_core::GitError;
 use git_core::model::{
     FetchOutcome, PullOutcome, PushOutcome, RebaseAction, RebaseStep, RepoState, SignatureInfo,
-    SignatureStatus, StashEntry,
+    SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus,
 };
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -24,6 +25,84 @@ fn parse_stash_line(line: &str) -> Option<StashEntry> {
         index,
         message: msg.to_string(),
     })
+}
+
+/// 解析一行 `git submodule status` 输出,如:
+///   " 1a2b3c... vendor/libfoo (heads/main)"  已同步
+///   "-1a2b3c... vendor/libfoo"               未初始化
+///   "+1a2b3c... vendor/libfoo (v1.0-2-gxx)"  未同步
+///   "U1a2b3c... vendor/libfoo"               冲突
+/// 返回 (状态, sha, 路径, 描述)。无法识别行首 → None(防御:跳过该行)。
+fn parse_submodule_status_line(line: &str) -> Option<(SubmoduleStatus, String, String, String)> {
+    let prefix = line.chars().next()?;
+    let status = match prefix {
+        '-' => SubmoduleStatus::Uninitialized,
+        ' ' => SubmoduleStatus::UpToDate,
+        '+' => SubmoduleStatus::Modified,
+        'U' => SubmoduleStatus::Conflict,
+        _ => return None,
+    };
+    // 行首是单字节 ascii,按字节切安全。
+    let rest = line[1..].trim_start();
+    let (sha, after) = rest.split_once(char::is_whitespace)?;
+    let after = after.trim();
+    // after = "路径" 或 "路径 (描述)";描述在末尾括号里,路径可能含空格,故从右侧 " (" 切。
+    let (path, describe) = match (after.ends_with(')'), after.rfind(" (")) {
+        (true, Some(idx)) => (
+            after[..idx].to_string(),
+            after[idx + 2..after.len() - 1].to_string(),
+        ),
+        _ => (after.to_string(), String::new()),
+    };
+    if path.is_empty() {
+        return None;
+    }
+    Some((status, sha.to_string(), path, describe))
+}
+
+/// 读 `.gitmodules` 得到 子模块路径 → 远程 URL 的映射。文件不存在 / 读失败 → 空表
+///(不是错误:子模块的 URL 只是附加信息)。
+fn submodule_urls(repo: &Path) -> HashMap<String, String> {
+    let gitmodules = repo.join(".gitmodules");
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .arg("config")
+        .arg("--file")
+        .arg(&gitmodules)
+        .args(["-z", "--list"])
+        .output();
+    let Ok(out) = out else {
+        return HashMap::new();
+    };
+    if !out.status.success() {
+        return HashMap::new();
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    // `-z --list`:条目以 NUL 分隔,每条 "key\nvalue"。key 形如 submodule.<name>.path / .url。
+    let mut name_path: HashMap<String, String> = HashMap::new();
+    let mut name_url: HashMap<String, String> = HashMap::new();
+    for entry in text.split('\0') {
+        if entry.is_empty() {
+            continue;
+        }
+        let Some((key, value)) = entry.split_once('\n') else {
+            continue;
+        };
+        let Some(rest) = key.strip_prefix("submodule.") else {
+            continue;
+        };
+        if let Some(name) = rest.strip_suffix(".path") {
+            name_path.insert(name.to_string(), value.to_string());
+        } else if let Some(name) = rest.strip_suffix(".url") {
+            name_url.insert(name.to_string(), value.to_string());
+        }
+    }
+    // 按 name 关联 path↔url,产出 path→url。
+    name_path
+        .into_iter()
+        .filter_map(|(name, path)| name_url.get(&name).map(|url| (path, url.clone())))
+        .collect()
 }
 
 /// 从完整 unified diff 文本里抽出第 `index` 个 hunk,拼上文件头形成可单独 apply 的 patch。
@@ -603,6 +682,61 @@ impl CliBackend {
                 signer.to_string()
             },
         })
+    }
+
+    /// 列出子模块:`git submodule status` 给状态 + sha + 路径,`.gitmodules` 给 URL。
+    /// 无子模块 → 命令成功且输出为空 → 空 Vec。
+    pub fn list_submodules(&self, repo: &Path) -> Result<Vec<SubmoduleInfo>, GitError> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["submodule", "status"])
+            .output()
+            .map_err(spawn_err)?;
+        if !out.status.success() {
+            return Err(GitError::Backend(
+                String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            ));
+        }
+        let urls = submodule_urls(repo);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let mut list = Vec::new();
+        for line in stdout.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Some((status, sha, path, describe)) = parse_submodule_status_line(line) {
+                let url = urls.get(&path).cloned().unwrap_or_default();
+                list.push(SubmoduleInfo {
+                    path,
+                    url,
+                    head_sha: sha,
+                    status,
+                    describe,
+                });
+            }
+        }
+        Ok(list)
+    }
+
+    /// 初始化并更新某子模块到超级项目记录的提交。`--init` 让未初始化的也能一步 clone+checkout。
+    /// 可能联网(clone),由上层 spawn_blocking 兜住,不阻塞 UI。
+    pub fn update_submodule(&self, repo: &Path, path: &str) -> Result<(), GitError> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["submodule", "update", "--init", "--"])
+            .arg(path)
+            .output()
+            .map_err(spawn_err)?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        Err(GitError::Backend(
+            format!("{stdout}\n{stderr}").trim().to_string(),
+        ))
     }
 
     /// 交互式 rebase(全程非交互)。base=最旧提交的父(None→--root);steps 为 oldest→newest。
@@ -1595,6 +1729,124 @@ mod tests {
         assert!(
             unstaged.contains("FIRST"),
             "撤回的第一个块应回到未暂存,实际:\n{unstaged}"
+        );
+    }
+
+    // ---- 子模块(M4.4)----
+
+    #[test]
+    fn parse_submodule_status_line_variants() {
+        // 各行首字符 → 状态;描述(末尾括号)正确剥离;路径含空格也能切对。
+        let up = parse_submodule_status_line(
+            " 1111111111111111111111111111111111111111 vendor/foo (heads/main)",
+        )
+        .unwrap();
+        assert_eq!(up.0, SubmoduleStatus::UpToDate);
+        assert_eq!(up.1, "1111111111111111111111111111111111111111");
+        assert_eq!(up.2, "vendor/foo");
+        assert_eq!(up.3, "heads/main");
+
+        let uninit =
+            parse_submodule_status_line("-2222222222222222222222222222222222222222 libs/bar")
+                .unwrap();
+        assert_eq!(uninit.0, SubmoduleStatus::Uninitialized);
+        assert_eq!(uninit.2, "libs/bar");
+        assert!(uninit.3.is_empty(), "无括号 → 描述为空");
+
+        let modified = parse_submodule_status_line(
+            "+3333333333333333333333333333333333333333 my sub dir (v1.0-2-gabc)",
+        )
+        .unwrap();
+        assert_eq!(modified.0, SubmoduleStatus::Modified);
+        assert_eq!(modified.2, "my sub dir", "路径含空格应原样保留");
+        assert_eq!(modified.3, "v1.0-2-gabc");
+
+        let conflict =
+            parse_submodule_status_line("U4444444444444444444444444444444444444444 c").unwrap();
+        assert_eq!(conflict.0, SubmoduleStatus::Conflict);
+
+        // 无法识别的行首 → None(防御)。
+        assert!(parse_submodule_status_line("garbage").is_none());
+        assert!(parse_submodule_status_line("").is_none());
+    }
+
+    /// 建一个含一个子模块的超级项目,返回 (超级项目, 上游, 子模块路径名)。
+    /// 用 file 协议加子模块,故需 `protocol.file.allow=always`(现代 git 默认禁)。
+    fn super_with_submodule() -> (tempfile::TempDir, tempfile::TempDir) {
+        // 上游(子模块来源):一次提交。
+        let upstream = tempfile::tempdir().unwrap();
+        git(upstream.path(), &["init", "-b", "main", "."]);
+        git(upstream.path(), &["config", "user.email", "t@e"]);
+        git(upstream.path(), &["config", "user.name", "t"]);
+        std::fs::write(upstream.path().join("lib.txt"), "hello").unwrap();
+        git(upstream.path(), &["add", "."]);
+        git(upstream.path(), &["commit", "-m", "lib c1"]);
+
+        // 超级项目:配好身份,加上游为子模块 sub,再提交。`-c protocol.file.allow=always`
+        // 放开 file 协议(现代 git 默认禁子模块走 file://,且只认命令行 -c,不认 repo 配置)。
+        let sup = tempfile::tempdir().unwrap();
+        git(sup.path(), &["init", "-b", "main", "."]);
+        git(sup.path(), &["config", "user.email", "t@e"]);
+        git(sup.path(), &["config", "user.name", "t"]);
+        let url = upstream.path().to_string_lossy().to_string();
+        git(
+            sup.path(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                &url,
+                "sub",
+            ],
+        );
+        git(sup.path(), &["commit", "-m", "add sub"]);
+        (sup, upstream)
+    }
+
+    #[test]
+    fn list_submodules_reports_added_submodule() {
+        let (sup, _upstream) = super_with_submodule();
+        let subs = CliBackend.list_submodules(sup.path()).unwrap();
+        assert_eq!(subs.len(), 1, "应识别到一个子模块");
+        let s = &subs[0];
+        assert_eq!(s.path, "sub");
+        assert_eq!(
+            s.status,
+            SubmoduleStatus::UpToDate,
+            "刚 add 即检出 → 已同步"
+        );
+        assert_eq!(s.head_sha.len(), 40);
+        assert!(!s.url.is_empty(), "URL 应从 .gitmodules 读到");
+    }
+
+    #[test]
+    fn list_submodules_empty_when_none() {
+        let repo = init_repo_for_commit();
+        std::fs::write(repo.path().join("f.txt"), "x").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+        assert!(
+            CliBackend.list_submodules(repo.path()).unwrap().is_empty(),
+            "无子模块 → 空列表(非错误)"
+        );
+    }
+
+    #[test]
+    fn update_submodule_reinitializes_deinitialized() {
+        let (sup, _upstream) = super_with_submodule();
+        // 反初始化 → 状态变未初始化。
+        git(sup.path(), &["submodule", "deinit", "-f", "sub"]);
+        let before = CliBackend.list_submodules(sup.path()).unwrap();
+        assert_eq!(before[0].status, SubmoduleStatus::Uninitialized);
+
+        // update --init 重新检出 → 回到已同步。
+        CliBackend.update_submodule(sup.path(), "sub").unwrap();
+        let after = CliBackend.list_submodules(sup.path()).unwrap();
+        assert_eq!(
+            after[0].status,
+            SubmoduleStatus::UpToDate,
+            "update --init 后应已同步"
         );
     }
 }
