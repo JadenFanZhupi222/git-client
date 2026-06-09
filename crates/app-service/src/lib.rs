@@ -788,6 +788,8 @@ mod tests {
             path: "a.txt".into(),
             is_binary: false,
             too_large: false,
+            is_lfs_pointer: false,
+            lfs_size: String::new(),
             hunks: vec![Hunk {
                 header: "@@ -1 +1 @@".into(),
                 lines: vec![DiffLine {

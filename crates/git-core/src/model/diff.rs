@@ -40,10 +40,16 @@ pub struct Hunk {
 /// 单个文件的行级 diff。
 /// - 二进制文件 is_binary=true 且 hunks 为空。
 /// - 超大文件 too_large=true 且 hunks 为空(为防卡死/爆内存,故意不计算逐行 diff)。
+/// - Git LFS 指针文件 is_lfs_pointer=true 且 hunks 为空(指针文本不是真内容,
+///   `lfs_size` 为指针记录的实际字节数;别把指针当内容 diff)。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FileDiff {
     pub path: String,
     pub is_binary: bool,
     pub too_large: bool,
+    /// 是否 Git LFS 指针文件(内容是 LFS 指针而非真实文件)。
+    pub is_lfs_pointer: bool,
+    /// LFS 指针记录的实际文件字节数(原样字符串,非 LFS 时为空)。
+    pub lfs_size: String,
     pub hunks: Vec<Hunk>,
 }
