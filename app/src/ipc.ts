@@ -104,6 +104,27 @@ export async function getCurrentBranch(repoPath: string): Promise<string | null>
   return await invoke<string | null>("get_current_branch", { repoPath });
 }
 
+// ── 子模块(M4.4) ──
+export type SubmoduleStatusStr = "uninitialized" | "up-to-date" | "modified" | "conflict";
+export interface SubmoduleInfoDto {
+  path: string;
+  url: string;
+  head_sha: string;
+  short_sha: string;
+  status: SubmoduleStatusStr;
+  describe: string; // 末尾括号描述(heads/main、tag 等),可能为空
+}
+
+/** 列出子模块(读 .gitmodules + git submodule status);无子模块返回空数组。 */
+export async function listSubmodules(repoPath: string): Promise<SubmoduleInfoDto[]> {
+  return await invoke<SubmoduleInfoDto[]>("list_submodules", { repoPath });
+}
+
+/** 初始化并更新某子模块到超级项目记录的提交(git submodule update --init)。可能联网。 */
+export async function updateSubmodule(repoPath: string, path: string): Promise<void> {
+  await invoke("update_submodule", { repoPath, path });
+}
+
 // ── 分支管理(阶段 2a) ──
 export interface BranchDto {
   name: string;

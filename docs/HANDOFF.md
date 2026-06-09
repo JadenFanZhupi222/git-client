@@ -2,7 +2,7 @@
 
 > 这份文件在 git 仓库里,会随 push/pull 跟到新机器。记录当前进度、铁律、下一步。
 > 配套必读:`CLAUDE.md`(铁律)、`ARCHITECTURE.md`(架构)、`README.md`(启动)。
-> 最近更新:2026-06-08。
+> 最近更新:2026-06-09(M4.4 子模块感知完成)。
 
 ## 当前状态
 - 阶段 0/1/2/3 全部完成,**阶段 4 核心(交互式 rebase)已落地**。
@@ -36,9 +36,14 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
   - **revert**、**日志搜索**(可取消,代次计数)、**tag 创建/删除**、**reset**(soft/mixed/hard)、**两提交/分支 diff 比较**(「比较」tab + remote/tag 选择器)、**amend**(修订上次提交)。
   - **交互式 rebase**:全程非交互驱动 CLI——todo 经 `GIT_SEQUENCE_EDITOR=cp <todo>` 注入、改信息用 todo 里 `exec git commit --amend -F <msg>` 行、`GIT_EDITOR=true` 兜底、冲突复用 ConflictBanner。UI = 历史页提交右键/详情头「变基」→ RebaseEditor 弹层(↑↓ 调序 + pick/reword/squash/fixup/drop)。**Windows cp/exec 已在本机 tempfile 测试验证。**
   - **提交右键上下文菜单**(`CommitContextMenu`):图谱行/搜索行右键 → Cherry-pick/Revert/从此交互变基/Reset 到此(子菜单)/打标签/复制 SHA。这是 per-commit 操作的主入口;新加单提交动作优先进这里。
+- M4 Correct(扛真实世界 git,详见 `docs/superpowers/plans/2026-06-08-world-class-roadmap.md`):
+  - M4.1 超大文件/二进制防卡、M4.2 提交签名徽章、M4.3 提交走 CLI(尊重 hooks+签名)、
+    **M4.4 子模块感知**(`git submodule status`+`.gitmodules` → SubmoduleInfo;`submodule update --init`;
+    新「子模块」标签,仅当仓库有子模块时出现;SubmodulesView 列状态徽章 + 初始化/更新按钮)均已合 main。
 
 ## 下一步候选(按价值/风险)
-- reflog 查看(中);log 里 ctrl-多选两提交→比较;submodule/worktree(niche)。
+- M4.5 worktree 列表(`git worktree list`,niche);M4.6 LFS/稀疏检出感知(niche)。
+- reflog 查看(中,已做);log 里 ctrl-多选两提交→比较。
 - 工程收尾:真机验收交互式 rebase(尤其中途冲突的继续/中止、大仓库 cp/exec 路径);CI 加 `fmt --check` + `clippy -D warnings` 卡口(属 infra,之前没动 .github);push 到 origin。
 - 已知小项:composite 40+ 透传样板(Rust 固有税,可选 delegate crate)。
 

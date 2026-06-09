@@ -4,8 +4,8 @@ use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组�
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
     FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError, OpLogDto, PullResultDto,
-    PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto, UndoStateDto,
-    UndoStepDto,
+    PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto, SubmoduleInfoDto,
+    UndoStateDto, UndoStepDto,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -245,6 +245,33 @@ async fn get_commit_signature(
 ) -> Result<SignatureInfoDto, IpcError> {
     let ctx = registry.context(&PathBuf::from(repo_path));
     tokio::task::spawn_blocking(move || ctx.commit_signature(&commit_id))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+/// 列出子模块(路径/URL/提交/状态)。只读;走 CLI(`git submodule status` + `.gitmodules`)。
+#[tauri::command]
+async fn list_submodules(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<Vec<SubmoduleInfoDto>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.list_submodules())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+/// 初始化并更新某子模块到记录提交(`git submodule update --init`)。可能联网,故 spawn_blocking。
+#[tauri::command]
+async fn update_submodule(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    path: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.update_submodule(&path))
         .await
         .map_err(join_panic)?
         .map_err(to_ipc)
@@ -959,6 +986,8 @@ pub fn run() {
             get_commit_files,
             get_commit_file_diff,
             get_commit_signature,
+            list_submodules,
+            update_submodule,
             get_working_diff,
             get_commit_graph,
             search_commits,

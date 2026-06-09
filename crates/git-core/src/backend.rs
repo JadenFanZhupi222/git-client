@@ -2,7 +2,7 @@ use crate::error::GitError;
 use crate::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     FetchOutcome, FileChange, FileDiff, PullOutcome, PushOutcome, RebaseStep, ReflogEntry,
-    RepoState, ResetMode, SignatureInfo, StashEntry, SyncCommits, WorkingTreeStatus,
+    RepoState, ResetMode, SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus,
 };
 use std::path::Path;
 
@@ -131,6 +131,18 @@ pub trait GitBackend: Send + Sync {
     /// 读某提交的签名验证状态(GPG/SSH)。git2 不便做验证,走 CLI(`%G?`/`%GS`)。
     /// 默认 Unsupported(纯 git2 后端不实现)。
     fn commit_signature(&self, _repo: &Path, _commit_id: &str) -> Result<SignatureInfo, GitError> {
+        Err(GitError::Unsupported)
+    }
+
+    /// 列出子模块(读 `.gitmodules` + `git submodule status`):路径 / URL / 当前提交 / 状态
+    ///(未初始化 / 已同步 / 未同步 / 冲突)。无子模块 → 空。默认 Unsupported。
+    fn list_submodules(&self, _repo: &Path) -> Result<Vec<SubmoduleInfo>, GitError> {
+        Err(GitError::Unsupported)
+    }
+
+    /// 初始化并更新某子模块到超级项目记录的提交(`git submodule update --init -- <path>`)。
+    /// 对未初始化的子模块做 clone+checkout,对未同步的检出记录提交。默认 Unsupported。
+    fn update_submodule(&self, _repo: &Path, _path: &str) -> Result<(), GitError> {
         Err(GitError::Unsupported)
     }
 

@@ -6,7 +6,7 @@ use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk,
     PullOutcome, PushOutcome, RefKind, ReflogEntry, SignatureInfo, SignatureStatus, StashEntry,
-    WorkingTreeStatus,
+    SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -241,6 +241,36 @@ impl From<SignatureInfo> for SignatureInfoDto {
         SignatureInfoDto {
             status: status.into(),
             signer: s.signer,
+        }
+    }
+}
+
+/// 子模块 DTO。status: "uninitialized" | "up-to-date" | "modified" | "conflict"。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubmoduleInfoDto {
+    pub path: String,
+    pub url: String,
+    pub head_sha: String,
+    pub short_sha: String,
+    pub status: String,
+    pub describe: String,
+}
+
+impl From<SubmoduleInfo> for SubmoduleInfoDto {
+    fn from(s: SubmoduleInfo) -> Self {
+        let status = match s.status {
+            SubmoduleStatus::Uninitialized => "uninitialized",
+            SubmoduleStatus::UpToDate => "up-to-date",
+            SubmoduleStatus::Modified => "modified",
+            SubmoduleStatus::Conflict => "conflict",
+        };
+        SubmoduleInfoDto {
+            short_sha: s.head_sha.chars().take(7).collect(),
+            path: s.path,
+            url: s.url,
+            head_sha: s.head_sha,
+            status: status.into(),
+            describe: s.describe,
         }
     }
 }

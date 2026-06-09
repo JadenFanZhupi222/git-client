@@ -21,7 +21,7 @@ use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
     FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, OpLogDto, OpLogEntryDto,
     PullResultDto, PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto,
-    UndoStateDto, UndoStepDto,
+    SubmoduleInfoDto, UndoStateDto, UndoStepDto,
 };
 use lru::LruCache;
 use std::collections::HashMap;
@@ -315,6 +315,10 @@ impl RepoContext {
     pub fn commit_signature(&self, commit_id: &str) -> Result<SignatureInfoDto, GitError> {
         self.service.commit_signature(&self.path, commit_id)
     }
+    /// 子模块列表(只读)。一次 CLI 调用,前端 query 已缓存,这里不额外缓存。
+    pub fn list_submodules(&self) -> Result<Vec<SubmoduleInfoDto>, GitError> {
+        self.service.list_submodules(&self.path)
+    }
     pub fn current_branch(&self) -> Result<Option<String>, GitError> {
         if let Some(hit) = self.cache.current_branch.lock().unwrap().clone() {
             return Ok(hit);
@@ -425,6 +429,13 @@ impl RepoContext {
     pub fn set_upstream(&self, upstream: &str) -> Result<(), GitError> {
         self.service.set_upstream(&self.path, upstream)?;
         self.after_write(false, true);
+        Ok(())
+    }
+    /// 初始化/更新子模块。会改子模块工作区内容(从超级项目看是该目录的状态变化)→
+    /// 失效 worktree 域(status / 工作区 diff)。不动超级项目的引用。
+    pub fn update_submodule(&self, path: &str) -> Result<(), GitError> {
+        self.service.update_submodule(&self.path, path)?;
+        self.after_write(true, false);
         Ok(())
     }
     pub fn checkout_branch(&self, name: &str) -> Result<(), GitError> {

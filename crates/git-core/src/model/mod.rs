@@ -9,6 +9,7 @@ mod repo_state;
 mod signature;
 mod stash;
 mod status;
+mod submodule;
 
 pub use blame::BlameLine;
 pub use branch::{
@@ -24,3 +25,4 @@ pub use repo_state::RepoState;
 pub use signature::{SignatureInfo, SignatureStatus};
 pub use stash::StashEntry;
 pub use status::{FileEntry, FileState, WorkingTreeStatus};
+pub use submodule::{SubmoduleInfo, SubmoduleStatus};
