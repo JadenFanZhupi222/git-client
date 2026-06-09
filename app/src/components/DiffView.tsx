@@ -43,7 +43,7 @@ export function DiffView({
   }
   if (diff.is_lfs_pointer) {
     const size = formatBytes(diff.lfs_size);
-    return <Center>Git LFS 文件{size ? `(实际 ${size})` : ""},仅存指针,不显示行级 diff</Center>;
+    return <Center>Git LFS 文件{size ? `(${size})` : ""},无法显示行级 diff</Center>;
   }
   if (diff.is_binary) {
     return <Center>二进制文件,无法显示行级 diff</Center>;
