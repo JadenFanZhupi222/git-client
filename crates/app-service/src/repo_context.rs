@@ -323,6 +323,10 @@ impl RepoContext {
     pub fn list_worktrees(&self) -> Result<Vec<WorktreeInfoDto>, GitError> {
         self.service.list_worktrees(&self.path)
     }
+    /// 稀疏检出范围(只读)。
+    pub fn sparse_checkout_patterns(&self) -> Result<Vec<String>, GitError> {
+        self.service.sparse_checkout_patterns(&self.path)
+    }
     pub fn current_branch(&self) -> Result<Option<String>, GitError> {
         if let Some(hit) = self.cache.current_branch.lock().unwrap().clone() {
             return Ok(hit);

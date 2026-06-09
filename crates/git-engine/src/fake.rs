@@ -25,6 +25,7 @@ pub struct FakeBackend {
     canned_submodules: Mutex<Vec<SubmoduleInfo>>,
     submodule_ops: Mutex<Vec<String>>,
     canned_worktrees: Mutex<Vec<WorktreeInfo>>,
+    canned_sparse: Mutex<Vec<String>>,
     canned_branches: Mutex<Vec<BranchInfo>>,
     canned_refs: Mutex<Vec<CommitRef>>,
     canned_ahead_behind: Mutex<Option<AheadBehind>>,
@@ -105,6 +106,10 @@ impl FakeBackend {
     }
     pub fn with_worktrees(self, wts: Vec<WorktreeInfo>) -> Self {
         *self.canned_worktrees.lock().unwrap() = wts;
+        self
+    }
+    pub fn with_sparse_patterns(self, patterns: Vec<String>) -> Self {
+        *self.canned_sparse.lock().unwrap() = patterns;
         self
     }
     pub fn with_file_diff(self, diff: FileDiff) -> Self {
@@ -454,6 +459,9 @@ impl GitBackend for FakeBackend {
     }
     fn list_worktrees(&self, _path: &Path) -> Result<Vec<WorktreeInfo>, GitError> {
         Ok(self.canned_worktrees.lock().unwrap().clone())
+    }
+    fn sparse_checkout_patterns(&self, _path: &Path) -> Result<Vec<String>, GitError> {
+        Ok(self.canned_sparse.lock().unwrap().clone())
     }
     fn conflict_sides(&self, _path: &Path, _file: &str) -> Result<ConflictSides, GitError> {
         Ok(self

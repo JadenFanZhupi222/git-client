@@ -6,7 +6,7 @@ import { useQuery, useQueryClient, keepPreviousData, type QueryClient } from "@t
 import { useEffect } from "react";
 import {
   getStatus, getWorkingDiff, getCommitGraph, searchCommits, getReflog, getCommitFiles, getCommitFileDiff,
-  getCommitSignature, listSubmodules, listWorktrees, compareFiles, compareFileDiff,
+  getCommitSignature, listSubmodules, listWorktrees, sparseCheckoutPatterns, compareFiles, compareFileDiff,
   getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
   getRepoState, readWorkingFile, blame, conflictSides, undoState, opLog,
   watchRepo, onRepoChanged,
@@ -22,6 +22,7 @@ export const qk = {
   commitSignature: (repo: string) => ["commitSignature", repo] as const,
   submodules: (repo: string) => ["submodules", repo] as const,
   worktrees: (repo: string) => ["worktrees", repo] as const,
+  sparse: (repo: string) => ["sparse", repo] as const,
   currentBranch: (repo: string) => ["currentBranch", repo] as const,
   aheadBehind: (repo: string) => ["aheadBehind", repo] as const,
   remotes: (repo: string) => ["remotes", repo] as const,
@@ -135,6 +136,11 @@ export function useSubmodules(repo: string) {
 /** 工作树列表(也用于驱动「工作树」标签的显隐:仅 >=2 个时显示)。 */
 export function useWorktrees(repo: string) {
   return useQuery({ queryKey: qk.worktrees(repo), queryFn: () => listWorktrees(repo), enabled: !!repo });
+}
+
+/** 稀疏检出范围(也用于驱动「稀疏检出」标签的显隐:仅开启时显示)。 */
+export function useSparseCheckout(repo: string) {
+  return useQuery({ queryKey: qk.sparse(repo), queryFn: () => sparseCheckoutPatterns(repo), enabled: !!repo });
 }
 
 /** 撤销/重做的当前可用性。随历史变化失效;驱动顶栏「撤销」「重做」按钮。 */

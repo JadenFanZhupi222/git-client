@@ -290,6 +290,19 @@ async fn list_worktrees(
         .map_err(to_ipc)
 }
 
+/// 稀疏检出范围规则(只读);未开启稀疏检出 → 空。
+#[tauri::command]
+async fn sparse_checkout_patterns(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<Vec<String>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.sparse_checkout_patterns())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
 #[tauri::command]
 async fn compare_files(
     registry: tauri::State<'_, RepoRegistry>,
@@ -1002,6 +1015,7 @@ pub fn run() {
             list_submodules,
             update_submodule,
             list_worktrees,
+            sparse_checkout_patterns,
             get_working_diff,
             get_commit_graph,
             search_commits,
