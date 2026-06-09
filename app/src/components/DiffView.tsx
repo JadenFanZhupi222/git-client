@@ -41,6 +41,10 @@ export function DiffView({
   if (!diff) {
     return <Center>无法加载 diff</Center>;
   }
+  if (diff.is_lfs_pointer) {
+    const size = formatBytes(diff.lfs_size);
+    return <Center>Git LFS 文件{size ? `(实际 ${size})` : ""},仅存指针,不显示行级 diff</Center>;
+  }
   if (diff.is_binary) {
     return <Center>二进制文件,无法显示行级 diff</Center>;
   }
@@ -143,4 +147,15 @@ function Center({ children }: { children: React.ReactNode }) {
       {children}
     </div>
   );
+}
+
+/** 把字节字符串(如 "1048576")格式化成人类可读("1.0 MB");解析失败返回空串。 */
+function formatBytes(raw: string): string {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let v = n;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${i === 0 ? v : v.toFixed(1)} ${units[i]}`;
 }

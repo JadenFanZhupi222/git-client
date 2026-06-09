@@ -127,12 +127,48 @@ fn is_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(8000).any(|&b| b == 0)
 }
 
+/// 从一段文本判断它是不是 Git LFS 指针,是则返回记录的 size(字节,原样字符串)。
+/// 指针格式(逐行):`version https://git-lfs.github.com/spec/v1` / `oid sha256:…` / `size N`。
+fn lfs_pointer_size(text: &str) -> Option<String> {
+    let mut lines = text.lines();
+    if !lines
+        .next()?
+        .starts_with("version https://git-lfs.github.com/spec/")
+    {
+        return None;
+    }
+    // 必须有 oid 行才算合法指针(避免误判恰好以该行开头的普通文本)。
+    if !text.lines().any(|l| l.starts_with("oid ")) {
+        return None;
+    }
+    text.lines()
+        .find_map(|l| l.strip_prefix("size "))
+        .map(|s| s.trim().to_string())
+}
+
+/// 用 diff 新一侧(上下文 + 增行)重建文件内容,判断是不是 LFS 指针。
+/// LFS 指针仅 3 行、极小,故重建总是完整;返回记录的 size。
+fn detect_lfs_pointer(diff: &FileDiff) -> Option<String> {
+    let mut content = String::new();
+    for h in &diff.hunks {
+        for l in &h.lines {
+            if matches!(l.kind, DiffLineKind::Addition | DiffLineKind::Context) {
+                content.push_str(&l.content);
+                content.push('\n');
+            }
+        }
+    }
+    lfs_pointer_size(&content)
+}
+
 fn file_diff_from(diff: &git2::Diff, file: &str) -> Result<FileDiff, GitError> {
     let target = Path::new(file);
     let mut result = FileDiff {
         path: file.to_string(),
         is_binary: false,
         too_large: false,
+        is_lfs_pointer: false,
+        lfs_size: String::new(),
         hunks: Vec::new(),
     };
 
@@ -188,6 +224,15 @@ fn file_diff_from(diff: &git2::Diff, file: &str) -> Result<FileDiff, GitError> {
             }
         }
         break; // 只处理第一个匹配文件
+    }
+    // LFS 指针:别把指针文本当内容 diff —— 标记 + 清 hunks,前端显占位。
+    if !result.too_large
+        && !result.is_binary
+        && let Some(size) = detect_lfs_pointer(&result)
+    {
+        result.is_lfs_pointer = true;
+        result.lfs_size = size;
+        result.hunks.clear();
     }
     Ok(result)
 }
@@ -1664,6 +1709,37 @@ mod tests {
         let first = lines[0];
         assert_eq!(first.old_lineno, None);
         assert_eq!(first.new_lineno, Some(1));
+    }
+
+    #[test]
+    fn lfs_pointer_size_parses_only_valid_pointers() {
+        let ptr = "version https://git-lfs.github.com/spec/v1\noid sha256:abc123\nsize 9876\n";
+        assert_eq!(lfs_pointer_size(ptr).as_deref(), Some("9876"));
+        // 缺 oid 行 → 不算指针(防误判恰好以 version 行开头的文本)。
+        assert_eq!(
+            lfs_pointer_size("version https://git-lfs.github.com/spec/v1\nsize 1"),
+            None
+        );
+        // 普通文本 → None。
+        assert_eq!(lfs_pointer_size("hello\nworld"), None);
+    }
+
+    #[test]
+    fn commit_file_diff_flags_lfs_pointer() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        // 提交一个内容为 LFS 指针的文件(模拟 git-lfs 把大文件替换成的指针)。
+        let pointer = "version https://git-lfs.github.com/spec/v1\n\
+            oid sha256:4d7a214614ab2935c943f9e0ff69d22eadbb8f32b1258daaa5e2ca24d17e2393\n\
+            size 1048576\n";
+        stage(&repo, "big.bin", pointer);
+        let sha = commit_index(&repo, "add lfs", 1000);
+
+        let diff = b.commit_file_diff(&repo, &sha, "big.bin").unwrap();
+        assert!(diff.is_lfs_pointer, "应识别为 LFS 指针");
+        assert_eq!(diff.lfs_size, "1048576", "应取出指针记录的字节数");
+        assert!(diff.hunks.is_empty(), "LFS 指针不把指针文本当内容 diff");
+        assert!(!diff.is_binary);
     }
 
     #[test]

@@ -506,6 +506,8 @@ pub struct FileDiffDto {
     pub path: String,
     pub is_binary: bool,
     pub too_large: bool,
+    pub is_lfs_pointer: bool,
+    pub lfs_size: String,
     pub hunks: Vec<HunkDto>,
 }
 
@@ -515,6 +517,8 @@ impl From<FileDiff> for FileDiffDto {
             path: d.path,
             is_binary: d.is_binary,
             too_large: d.too_large,
+            is_lfs_pointer: d.is_lfs_pointer,
+            lfs_size: d.lfs_size,
             hunks: d.hunks.into_iter().map(HunkDto::from).collect(),
         }
     }

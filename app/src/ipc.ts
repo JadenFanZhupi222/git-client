@@ -383,6 +383,8 @@ export interface FileDiffDto {
   path: string;
   is_binary: boolean;
   too_large: boolean;
+  is_lfs_pointer: boolean; // Git LFS 指针文件(内容是指针而非真实文件)
+  lfs_size: string;        // LFS 指针记录的实际字节数(字符串,非 LFS 为空)
   hunks: HunkDto[];
 }
 
