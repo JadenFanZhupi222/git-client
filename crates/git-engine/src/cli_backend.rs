@@ -798,6 +798,25 @@ impl CliBackend {
         Ok(list)
     }
 
+    /// 稀疏检出范围:`git sparse-checkout list`。未开启稀疏检出时该命令非零退出
+    /// (`this worktree is not sparse`)—— 这是普通仓库的常态,按「空范围」处理,不当错误。
+    pub fn sparse_checkout_patterns(&self, repo: &Path) -> Result<Vec<String>, GitError> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["sparse-checkout", "list"])
+            .output()
+            .map_err(spawn_err)?;
+        if !out.status.success() {
+            return Ok(Vec::new()); // 非稀疏仓库 → 空范围
+        }
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect())
+    }
+
     /// 交互式 rebase(全程非交互)。base=最旧提交的父(None→--root);steps 为 oldest→newest。
     ///
     /// 实现:① 把生成的 todo 写临时文件,经 GIT_SEQUENCE_EDITOR=`cp <todo>` 注入;
@@ -1980,5 +1999,40 @@ mod tests {
         let wts = CliBackend.list_worktrees(repo.path()).unwrap();
         assert_eq!(wts.len(), 1, "普通仓库只有主工作树");
         assert!(wts[0].is_main && wts[0].is_current);
+    }
+
+    // ---- 稀疏检出(M4.6b)----
+
+    #[test]
+    fn sparse_checkout_empty_for_normal_repo() {
+        let repo = init_repo_for_commit();
+        std::fs::create_dir_all(repo.path().join("src")).unwrap();
+        std::fs::write(repo.path().join("src/a.txt"), "a").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+        // 未开启稀疏检出 → 空(不是错误)。
+        assert!(
+            CliBackend
+                .sparse_checkout_patterns(repo.path())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn sparse_checkout_lists_patterns_when_enabled() {
+        let repo = init_repo_for_commit();
+        std::fs::create_dir_all(repo.path().join("src")).unwrap();
+        std::fs::create_dir_all(repo.path().join("docs")).unwrap();
+        std::fs::write(repo.path().join("src/a.txt"), "a").unwrap();
+        std::fs::write(repo.path().join("docs/b.txt"), "b").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+        // 开启稀疏检出,只留 src。
+        git(repo.path(), &["sparse-checkout", "set", "src"]);
+
+        let patterns = CliBackend.sparse_checkout_patterns(repo.path()).unwrap();
+        assert!(!patterns.is_empty(), "稀疏检出开启后应列出范围");
+        assert!(patterns.iter().any(|p| p.contains("src")));
     }
 }

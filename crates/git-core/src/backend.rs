@@ -153,6 +153,12 @@ pub trait GitBackend: Send + Sync {
         Err(GitError::Unsupported)
     }
 
+    /// 稀疏检出(sparse-checkout)的范围规则。未开启稀疏检出 → 空(普通仓库的常态,
+    /// 不是错误)。供「你只检出了部分文件」的提示。默认 Unsupported。
+    fn sparse_checkout_patterns(&self, _repo: &Path) -> Result<Vec<String>, GitError> {
+        Err(GitError::Unsupported)
+    }
+
     // ---- 冲突解决:整文件采用一边走 CLI;默认 Unsupported ----
 
     /// 整文件采用「我方(ours)」并标记已解决(checkout --ours + add)。

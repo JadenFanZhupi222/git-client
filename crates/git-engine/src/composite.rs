@@ -125,6 +125,9 @@ impl GitBackend for CompositeBackend {
     fn list_worktrees(&self, repo: &Path) -> Result<Vec<WorktreeInfo>, GitError> {
         self.cli.list_worktrees(repo)
     }
+    fn sparse_checkout_patterns(&self, repo: &Path) -> Result<Vec<String>, GitError> {
+        self.cli.sparse_checkout_patterns(repo)
+    }
     fn conflict_sides(&self, repo: &Path, file: &str) -> Result<ConflictSides, GitError> {
         self.git2.conflict_sides(repo, file)
     }

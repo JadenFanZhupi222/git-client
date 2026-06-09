@@ -285,6 +285,11 @@ impl RepoService {
             .collect())
     }
 
+    /// 用例:稀疏检出范围规则;未开启 → 空。
+    pub fn sparse_checkout_patterns(&self, repo_path: &Path) -> Result<Vec<String>, GitError> {
+        self.backend.sparse_checkout_patterns(repo_path)
+    }
+
     /// 用例:当前 HEAD 分支短名;分离头/空仓库返回 None。
     pub fn current_branch(&self, repo_path: &Path) -> Result<Option<String>, GitError> {
         self.backend.current_branch(repo_path)
@@ -882,6 +887,22 @@ mod tests {
         assert_eq!(dtos[0].branch, "main");
         assert!(dtos[0].is_main && dtos[0].is_current);
         assert_eq!(dtos[0].short_sha, "abcdef1");
+    }
+
+    #[test]
+    fn sparse_checkout_patterns_forwards() {
+        let fb = FakeBackend::default().with_sparse_patterns(vec!["src".into(), "docs".into()]);
+        let svc = RepoService::new(Arc::new(fb));
+        let p = svc.sparse_checkout_patterns(Path::new("/r")).unwrap();
+        assert_eq!(p, vec!["src".to_string(), "docs".to_string()]);
+        // 默认(未预置)→ 空。
+        let empty = RepoService::new(Arc::new(FakeBackend::default()));
+        assert!(
+            empty
+                .sparse_checkout_patterns(Path::new("/r"))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

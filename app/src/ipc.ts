@@ -143,6 +143,11 @@ export async function listWorktrees(repoPath: string): Promise<WorktreeInfoDto[]
   return await invoke<WorktreeInfoDto[]>("list_worktrees", { repoPath });
 }
 
+/** 稀疏检出范围规则;未开启稀疏检出返回空数组。 */
+export async function sparseCheckoutPatterns(repoPath: string): Promise<string[]> {
+  return await invoke<string[]>("sparse_checkout_patterns", { repoPath });
+}
+
 // ── 分支管理(阶段 2a) ──
 export interface BranchDto {
   name: string;
