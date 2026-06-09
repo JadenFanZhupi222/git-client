@@ -309,7 +309,7 @@ export function ChangesView({ repo }: { repo: string }) {
             }}
           />
           <div className="mt-2 flex items-center justify-between">
-            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-fg-muted" title="用当前暂存改动修订最近一次提交(会改写历史,勾选后会预填上次信息)">
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-fg-muted" title="用当前暂存改动修订最近一次提交(会改写历史，勾选后会预填上次信息)">
               <input
                 type="checkbox"
                 checked={amend}

@@ -24,7 +24,7 @@ export function SparseCheckoutView({ repo }: { repo: string }) {
       ) : (
         <div className="fade-in flex-1 overflow-auto p-3">
           <p className="mb-2 text-xs text-fg-muted">
-            稀疏检出已开启 —— 工作区只检出以下范围内的文件,其余路径不在磁盘上(更改/历史里看不到它们的工作区改动是正常的)。
+            稀疏检出已开启 —— 工作区只检出以下范围内的文件，其余路径不在磁盘上(更改/历史里看不到它们的工作区改动是正常的)。
           </p>
           <ul className="flex flex-col gap-1">
             {patterns.map((p, i) => (

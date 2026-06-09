@@ -57,7 +57,7 @@ export function OpLogPanel({
         </div>
 
         <p className="shrink-0 border-b border-line bg-accent/10 px-4 py-2 text-xs text-fg-muted">
-          本工具做过的写操作。点任意一项跳过去:撤销提交→改动回暂存区;撤销 reset/cherry-pick 等→忠实还原工作区(有未提交改动会先拦下,不丢活)。
+          本工具做过的写操作。点任意一项跳过去：撤销提交→改动回暂存区；撤销 reset/cherry-pick 等→忠实还原工作区(有未提交改动会先拦下，不丢活)。
         </p>
 
         <div className="min-h-0 flex-1 overflow-y-auto">

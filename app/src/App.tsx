@@ -280,8 +280,8 @@ export default function App() {
     { id: "remote:push", title: "Push", subtitle: "推送当前分支", group: "远程", keywords: "推送 push", disabled: !repo || busy, run: doPush },
   );
   commands.push(
-    { id: "undo", title: canUndo ? `撤销:${canUndo.label}` : "撤销", group: "撤销", keywords: "undo 撤销 回退", disabled: !repo || busy || !canUndo, run: () => doNav("undo") },
-    { id: "redo", title: canRedo ? `重做:${canRedo.label}` : "重做", group: "撤销", keywords: "redo 重做 前进", disabled: !repo || busy || !canRedo, run: () => doNav("redo") },
+    { id: "undo", title: canUndo ? `撤销：${canUndo.label}` : "撤销", group: "撤销", keywords: "undo 撤销 回退", disabled: !repo || busy || !canUndo, run: () => doNav("undo") },
+    { id: "redo", title: canRedo ? `重做：${canRedo.label}` : "重做", group: "撤销", keywords: "redo 重做 前进", disabled: !repo || busy || !canRedo, run: () => doNav("redo") },
   );
   commands.push({
     id: "panel:oplog",
@@ -345,7 +345,7 @@ export default function App() {
                 <button
                   onClick={() => doNav("undo")}
                   disabled={busy}
-                  title={`撤销刚才的「${canUndo.label}」(回到 ${canUndo.target_short};${canUndo.worktree_restored ? "还原工作区,有未提交改动会先拦下" : "改动回暂存区,不丢工作区"})`}
+                  title={`撤销刚才的「${canUndo.label}」(回到 ${canUndo.target_short}；${canUndo.worktree_restored ? "还原工作区，有未提交改动会先拦下" : "改动回暂存区，不丢工作区"})`}
                   className="flex items-center gap-1.5 rounded-md border border-accent/60 bg-accent/10 px-2.5 py-1 text-xs text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
                 >
                   {undoing ? <SpinnerIcon width={13} height={13} /> : <UndoIcon width={13} height={13} />}
@@ -365,7 +365,7 @@ export default function App() {
               )}
               <button
                 onClick={() => setOpLogOpen(true)}
-                title="操作日志(本会话写操作时间线,可点回跳)"
+                title="操作日志(本会话写操作时间线，可点回跳)"
                 aria-label="操作日志"
                 className="grid h-7 w-7 place-items-center rounded-md border border-line-strong bg-elevated text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle"
               >
@@ -374,7 +374,7 @@ export default function App() {
               <button
                 onClick={doFetch}
                 disabled={busy}
-                title="Fetch(从远程拉取更新,不改工作区)"
+                title="Fetch(从远程拉取更新，不改工作区)"
                 className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50"
               >
                 {fetching ? (
@@ -388,7 +388,7 @@ export default function App() {
                 <button
                   onClick={() => doPull(pullRebase)}
                   disabled={busy}
-                  title={canPull ? `落后上游 ${sync!.behind} 个提交,建议 Pull` : `Pull(${pullRebase ? "变基" : "合并"}到当前分支)`}
+                  title={canPull ? `落后上游 ${sync!.behind} 个提交，建议 Pull` : `Pull(${pullRebase ? "变基" : "合并"}到当前分支)`}
                   className={`flex items-center gap-1.5 rounded-l-md border bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50 ${
                     canPull ? "border-accent/60" : "border-line-strong"
                   }`}
@@ -428,7 +428,7 @@ export default function App() {
               <button
                 onClick={doPush}
                 disabled={busy}
-                title={canPush ? `领先上游 ${sync!.ahead} 个提交,建议 Push` : "Push(把当前分支推到远程;首次自动建立上游)"}
+                title={canPush ? `领先上游 ${sync!.ahead} 个提交，建议 Push` : "Push(把当前分支推到远程；首次自动建立上游)"}
                 className={`flex items-center gap-1.5 rounded-md border bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50 ${
                   canPush ? "border-success/60 ring-1 ring-success/40" : "border-line-strong"
                 }`}

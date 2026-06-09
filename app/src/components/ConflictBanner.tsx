@@ -42,7 +42,7 @@ export function ConflictBanner({ repo, state, conflicts }: { repo: string; state
       <AlertIcon width={13} height={13} className="text-warning" />
       <span className="font-semibold text-warning">{LABEL[state]}</span>
       <span className="text-fg-muted">
-        {conflicts > 0 ? `${conflicts} 个文件冲突待解决` : "冲突已解决,可继续"}
+        {conflicts > 0 ? `${conflicts} 个文件冲突待解决` : "冲突已解决，可继续"}
       </span>
       <div className="ml-auto flex items-center gap-1.5">
         <Button
