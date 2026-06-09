@@ -6,7 +6,7 @@ use git_core::{GitBackend, GitError};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
     FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto,
-    ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto, SubmoduleInfoDto,
+    ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto, SubmoduleInfoDto, WorktreeInfoDto,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -273,6 +273,16 @@ impl RepoService {
             return Err(GitError::Backend("子模块路径不能为空".into()));
         }
         self.backend.update_submodule(repo_path, path.trim())
+    }
+
+    /// 用例:列出工作树(主 + 链接)。
+    pub fn list_worktrees(&self, repo_path: &Path) -> Result<Vec<WorktreeInfoDto>, GitError> {
+        Ok(self
+            .backend
+            .list_worktrees(repo_path)?
+            .into_iter()
+            .map(WorktreeInfoDto::from)
+            .collect())
     }
 
     /// 用例:当前 HEAD 分支短名;分离头/空仓库返回 None。
@@ -849,6 +859,27 @@ mod tests {
             .unwrap();
         assert_eq!(fb.submodule_ops(), vec!["vendor/foo".to_string()]);
         assert!(svc.update_submodule(Path::new("/r"), "  ").is_err());
+    }
+
+    #[test]
+    fn list_worktrees_maps_dto() {
+        use git_core::model::WorktreeInfo;
+        let fb = FakeBackend::default().with_worktrees(vec![WorktreeInfo {
+            path: "/repo".into(),
+            head_sha: "abcdef1234567890abcdef1234567890abcdef12".into(),
+            branch: "main".into(),
+            is_main: true,
+            is_current: true,
+            detached: false,
+            locked: false,
+            bare: false,
+        }]);
+        let svc = RepoService::new(Arc::new(fb));
+        let dtos = svc.list_worktrees(Path::new("/repo")).unwrap();
+        assert_eq!(dtos.len(), 1);
+        assert_eq!(dtos[0].branch, "main");
+        assert!(dtos[0].is_main && dtos[0].is_current);
+        assert_eq!(dtos[0].short_sha, "abcdef1");
     }
 
     #[test]

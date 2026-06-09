@@ -5,7 +5,7 @@ use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
     FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError, OpLogDto, PullResultDto,
     PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto, SubmoduleInfoDto,
-    UndoStateDto, UndoStepDto,
+    UndoStateDto, UndoStepDto, WorktreeInfoDto,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -272,6 +272,19 @@ async fn update_submodule(
 ) -> Result<(), IpcError> {
     let ctx = registry.context(&PathBuf::from(repo_path));
     tokio::task::spawn_blocking(move || ctx.update_submodule(&path))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+/// 列出工作树(主 + 链接)。只读;走 CLI(`git worktree list --porcelain`)。
+#[tauri::command]
+async fn list_worktrees(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<Vec<WorktreeInfoDto>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.list_worktrees())
         .await
         .map_err(join_panic)?
         .map_err(to_ipc)
@@ -988,6 +1001,7 @@ pub fn run() {
             get_commit_signature,
             list_submodules,
             update_submodule,
+            list_worktrees,
             get_working_diff,
             get_commit_graph,
             search_commits,

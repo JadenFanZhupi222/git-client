@@ -6,6 +6,7 @@ import { HistoryView } from "./views/HistoryView";
 import { CompareView } from "./views/CompareView";
 import { BlameView } from "./views/BlameView";
 import { SubmodulesView } from "./views/SubmodulesView";
+import { WorktreesView } from "./views/WorktreesView";
 import { useQueryClient } from "@tanstack/react-query";
 import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, checkoutBranch, type IpcError } from "./ipc";
 import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon } from "./components/icons";
@@ -17,7 +18,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import type { Command } from "./lib/commands";
 import { useToast } from "./components/Toast";
 import { Button } from "./components/ui/Button";
-import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, useBranches, useSubmodules, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
+import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, useBranches, useSubmodules, useWorktrees, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
 import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
 
 /** 把 git fetch 的原始摘要提炼成简洁细节:优先取 "->" 更新行。 */
@@ -57,6 +58,8 @@ export default function App() {
   const branches = useBranches(repo ?? "", !!repo).data ?? [];
   const submodules = useSubmodules(repo ?? "").data ?? [];
   const hasSubmodules = submodules.length > 0;
+  const worktrees = useWorktrees(repo ?? "").data ?? [];
+  const hasWorktrees = worktrees.length > 1; // 只有主工作树时不显示标签
 
   const busy = fetching || pulling || pushing || undoing;
   // 同步提示:落后 → 建议 Pull;领先 → 建议 Push(无上游时 sync 为 null,不提示)
@@ -191,10 +194,10 @@ export default function App() {
   // 切仓库时重置远程选择(回到默认)
   useEffect(() => { setSelectedRemote(null); }, [repo]);
 
-  // 「子模块」标签随仓库出现/消失;切到没有子模块的仓库时退回「更改」,免得停在空标签。
+  // 动态标签(子模块/工作树)随仓库出现/消失;切到不再可用的标签时退回「更改」,免得停在空标签。
   useEffect(() => {
-    if (tab === "submodules" && !hasSubmodules) setTab("changes");
-  }, [tab, hasSubmodules]);
+    if ((tab === "submodules" && !hasSubmodules) || (tab === "worktrees" && !hasWorktrees)) setTab("changes");
+  }, [tab, hasSubmodules, hasWorktrees]);
 
   // 全局 ⌘K / Ctrl+K 开关命令面板(M3 键盘优先入口)
   useEffect(() => {
@@ -221,6 +224,7 @@ export default function App() {
     { id: "blame", label: "追溯" },
   ];
   if (hasSubmodules) views.push({ id: "submodules", label: "子模块" });
+  if (hasWorktrees) views.push({ id: "worktrees", label: "工作树" });
   for (const v of views) {
     commands.push({
       id: `view:${v.id}`,
@@ -475,12 +479,12 @@ export default function App() {
         </div>
       </header>
 
-      {repo && <TabBar active={tab} onChange={setTab} hasSubmodules={hasSubmodules} />}
+      {repo && <TabBar active={tab} onChange={setTab} hasSubmodules={hasSubmodules} hasWorktrees={hasWorktrees} />}
 
       {/* 主体 */}
       {repo ? (
         <div className="min-h-0 flex-1">
-          {tab === "changes" ? <ChangesView repo={repo} /> : tab === "history" ? <HistoryView repo={repo} /> : tab === "compare" ? <CompareView repo={repo} /> : tab === "submodules" ? <SubmodulesView repo={repo} /> : <BlameView repo={repo} />}
+          {tab === "changes" ? <ChangesView repo={repo} /> : tab === "history" ? <HistoryView repo={repo} /> : tab === "compare" ? <CompareView repo={repo} /> : tab === "submodules" ? <SubmodulesView repo={repo} /> : tab === "worktrees" ? <WorktreesView repo={repo} /> : <BlameView repo={repo} />}
         </div>
       ) : (
         <EmptyState onPick={pickRepo} />

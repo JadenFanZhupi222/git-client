@@ -2,7 +2,7 @@ use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     FetchOutcome, FileChange, FileDiff, FileEntry, PullOutcome, PushOutcome, RebaseAction,
     RebaseStep, ReflogEntry, RepoState, ResetMode, Signature, SignatureInfo, StashEntry,
-    SubmoduleInfo, SyncCommits, WorkingTreeStatus,
+    SubmoduleInfo, SyncCommits, WorkingTreeStatus, WorktreeInfo,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -24,6 +24,7 @@ pub struct FakeBackend {
     canned_signature: Mutex<SignatureInfo>,
     canned_submodules: Mutex<Vec<SubmoduleInfo>>,
     submodule_ops: Mutex<Vec<String>>,
+    canned_worktrees: Mutex<Vec<WorktreeInfo>>,
     canned_branches: Mutex<Vec<BranchInfo>>,
     canned_refs: Mutex<Vec<CommitRef>>,
     canned_ahead_behind: Mutex<Option<AheadBehind>>,
@@ -101,6 +102,10 @@ impl FakeBackend {
     /// 断言用:记录被 update 的子模块路径(按调用顺序)。
     pub fn submodule_ops(&self) -> Vec<String> {
         self.submodule_ops.lock().unwrap().clone()
+    }
+    pub fn with_worktrees(self, wts: Vec<WorktreeInfo>) -> Self {
+        *self.canned_worktrees.lock().unwrap() = wts;
+        self
     }
     pub fn with_file_diff(self, diff: FileDiff) -> Self {
         *self.canned_file_diff.lock().unwrap() = diff;
@@ -446,6 +451,9 @@ impl GitBackend for FakeBackend {
     fn update_submodule(&self, _path: &Path, path: &str) -> Result<(), GitError> {
         self.submodule_ops.lock().unwrap().push(path.to_string());
         Ok(())
+    }
+    fn list_worktrees(&self, _path: &Path) -> Result<Vec<WorktreeInfo>, GitError> {
+        Ok(self.canned_worktrees.lock().unwrap().clone())
     }
     fn conflict_sides(&self, _path: &Path, _file: &str) -> Result<ConflictSides, GitError> {
         Ok(self

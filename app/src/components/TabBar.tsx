@@ -1,4 +1,4 @@
-export type Tab = "changes" | "history" | "compare" | "blame" | "submodules";
+export type Tab = "changes" | "history" | "compare" | "blame" | "submodules" | "worktrees";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "changes", label: "更改" },
@@ -11,13 +11,17 @@ export function TabBar({
   active,
   onChange,
   hasSubmodules = false,
+  hasWorktrees = false,
 }: {
   active: Tab;
   onChange: (t: Tab) => void;
   hasSubmodules?: boolean;
+  hasWorktrees?: boolean;
 }) {
-  // 「子模块」标签仅在仓库确有子模块时出现,避免对绝大多数仓库徒增噪音。
-  const tabs = hasSubmodules ? [...TABS, { id: "submodules" as Tab, label: "子模块" }] : TABS;
+  // 「子模块」/「工作树」标签仅在仓库确有时出现,避免对绝大多数仓库徒增噪音。
+  const tabs = [...TABS];
+  if (hasSubmodules) tabs.push({ id: "submodules", label: "子模块" });
+  if (hasWorktrees) tabs.push({ id: "worktrees", label: "工作树" });
   return (
     <div className="flex shrink-0 items-center gap-1 border-b border-line px-2">
       {tabs.map((t) => {

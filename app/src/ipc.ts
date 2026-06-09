@@ -125,6 +125,24 @@ export async function updateSubmodule(repoPath: string, path: string): Promise<v
   await invoke("update_submodule", { repoPath, path });
 }
 
+// ── 工作树(M4.5) ──
+export interface WorktreeInfoDto {
+  path: string;
+  head_sha: string;
+  short_sha: string;
+  branch: string; // 短分支名;分离头/裸仓库为空
+  is_main: boolean;
+  is_current: boolean;
+  detached: boolean;
+  locked: boolean;
+  bare: boolean;
+}
+
+/** 列出工作树(主 + 链接);普通仓库只有一个(主工作树)。 */
+export async function listWorktrees(repoPath: string): Promise<WorktreeInfoDto[]> {
+  return await invoke<WorktreeInfoDto[]>("list_worktrees", { repoPath });
+}
+
 // ── 分支管理(阶段 2a) ──
 export interface BranchDto {
   name: string;

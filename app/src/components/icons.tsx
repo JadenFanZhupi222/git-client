@@ -180,6 +180,16 @@ export const SubmoduleIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+// 工作树:一个根分出多条线到各叶节点(worktree / 多检出)。
+export const WorktreeIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <circle cx="3.5" cy="8" r="1.6" />
+    <circle cx="12.5" cy="3.5" r="1.6" />
+    <circle cx="12.5" cy="12.5" r="1.6" />
+    <path d="M5 7.2 11 4M5 8.8l6 3.2" />
+  </svg>
+);
+
 // 拖拽手柄:两列六点(drag-handle / grip),提示「可拖动」。
 export const GripIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p} strokeWidth={0} fill="currentColor">
