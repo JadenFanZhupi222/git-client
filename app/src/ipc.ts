@@ -372,11 +372,17 @@ export async function stashDrop(repoPath: string, index: number): Promise<void> 
   await invoke("stash_drop", { repoPath, index });
 }
 
+export interface SegDto {
+  text: string;
+  changed: boolean;
+}
+
 export interface DiffLineDto {
   kind: string; // "context" | "add" | "del"
   old_lineno: number | null;
   new_lineno: number | null;
   content: string;
+  emphasis?: SegDto[] | null;
 }
 
 export interface HunkDto {
