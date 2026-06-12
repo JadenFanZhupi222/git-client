@@ -5,8 +5,9 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk,
-    ImageData, LineHistoryEntry, PullOutcome, PushOutcome, RefKind, ReflogEntry, Seg, SignatureInfo,
-    SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus, WorktreeInfo,
+    ImageData, LineHistoryEntry, PullOutcome, PushOutcome, RefKind, ReflogEntry, Seg,
+    SignatureInfo, SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus,
+    WorktreeInfo,
 };
 use serde::{Deserialize, Serialize};
 

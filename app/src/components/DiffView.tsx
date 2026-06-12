@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { type DiffLineDto, type FileDiffDto } from "../ipc";
+import { type DiffLineDto, type FileDiffDto, type ImageDataDto } from "../ipc";
 
 type ViewMode = "unified" | "split";
 const VIEW_KEY = "diff-view-mode";
@@ -52,6 +52,13 @@ export function DiffView({
   if (diff.is_lfs_pointer) {
     const size = formatBytes(diff.lfs_size);
     return <Center>Git LFS 文件{size ? `(${size})` : ""}，无法显示行级 diff</Center>;
+  }
+  if (diff.is_image) {
+    // 图片是二进制的一种,但能并排预览新旧图(此分支须在 is_binary 之前)。
+    if (!diff.old_image && !diff.new_image) {
+      return <Center>图片过大或无法读取，已跳过预览</Center>;
+    }
+    return <ImageDiff diff={diff} />;
   }
   if (diff.is_binary) {
     return <Center>二进制文件，无法显示行级 diff</Center>;
@@ -318,6 +325,47 @@ function LineContent({ line, add, del }: { line: DiffLineDto; add: boolean; del:
     );
   }
   return <>{line.content || " "}</>;
+}
+
+/** 图片 diff:并排预览新旧两版(新增只显新、删除只显旧)。 */
+function ImageDiff({ diff }: { diff: FileDiffDto }) {
+  const { old_image, new_image } = diff;
+  // 新增(无旧)→ 单栏「新增」;删除(无新)→ 单栏「已删除」;否则旧 | 新两栏。
+  const both = !!old_image && !!new_image;
+  return (
+    <div className="fade-in flex flex-1 items-stretch gap-3 overflow-auto p-4">
+      {old_image && <ImagePane img={old_image} label={both ? "旧" : "已删除"} tone="danger" />}
+      {new_image && <ImagePane img={new_image} label={both ? "新" : "新增"} tone="success" />}
+    </div>
+  );
+}
+
+function ImagePane({ img, label, tone }: { img: ImageDataDto; label: string; tone: "danger" | "success" }) {
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
+  const src = `data:${img.mime};base64,${img.base64}`;
+  // base64 长度估算原始字节数(去掉 padding)。
+  const bytes = Math.max(0, Math.floor((img.base64.length * 3) / 4) - (img.base64.endsWith("==") ? 2 : img.base64.endsWith("=") ? 1 : 0));
+  const toneCls = tone === "danger" ? "text-danger" : "text-success";
+  return (
+    <div className="flex min-w-0 flex-1 flex-col">
+      <div className="mb-2 flex shrink-0 items-center gap-2 text-[11px]">
+        <span className={`font-semibold ${toneCls}`}>{label}</span>
+        <span className="text-fg-subtle">
+          {dims ? `${dims.w}×${dims.h}` : ""}{dims ? " · " : ""}{formatBytes(String(bytes))}
+        </span>
+      </div>
+      {/* 居中、保持比例;棋盘格底衬出透明区域 */}
+      <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto rounded border border-line bg-overlay p-3 checkerboard">
+        <img
+          src={src}
+          alt={label}
+          onLoad={(e) => setDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+          className="max-h-full max-w-full object-contain"
+          style={{ imageRendering: "auto" }}
+        />
+      </div>
+    </div>
+  );
 }
 
 function Gutter({ n, border }: { n: number | null; border?: boolean }) {

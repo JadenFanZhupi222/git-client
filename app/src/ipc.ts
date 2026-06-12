@@ -411,12 +411,20 @@ export interface HunkDto {
   lines: DiffLineDto[];
 }
 
+export interface ImageDataDto {
+  mime: string;
+  base64: string;
+}
+
 export interface FileDiffDto {
   path: string;
   is_binary: boolean;
   too_large: boolean;
   is_lfs_pointer: boolean; // Git LFS 指针文件(内容是指针而非真实文件)
   lfs_size: string;        // LFS 指针记录的实际字节数(字符串,非 LFS 为空)
+  is_image: boolean;       // 图片文件(同时 is_binary);old_image/new_image 为新旧两版
+  old_image: ImageDataDto | null; // 改动前(新增文件为 null)
+  new_image: ImageDataDto | null; // 改动后(删除文件为 null)
   hunks: HunkDto[];
 }
 
