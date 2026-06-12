@@ -7,7 +7,7 @@ import { useEffect } from "react";
 import {
   getStatus, getWorkingDiff, getCommitGraph, searchCommits, getReflog, getCommitFiles, getCommitFileDiff,
   getCommitSignature, listSubmodules, listWorktrees, sparseCheckoutPatterns, compareFiles, compareFileDiff,
-  getFileHistory, getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
+  getFileHistory, getLineHistory, getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
   getRepoState, readWorkingFile, blame, conflictSides, undoState, opLog,
   watchRepo, onRepoChanged,
 } from "../ipc";
@@ -34,6 +34,7 @@ export const qk = {
   conflictSides: (repo: string) => ["conflictSides", repo] as const,
   search: (repo: string) => ["search", repo] as const,
   fileHistory: (repo: string) => ["fileHistory", repo] as const,
+  lineHistory: (repo: string) => ["lineHistory", repo] as const,
   reflog: (repo: string) => ["reflog", repo] as const,
   compareFiles: (repo: string) => ["compareFiles", repo] as const,
   compareDiff: (repo: string) => ["compareDiff", repo] as const,
@@ -131,6 +132,15 @@ export function useFileHistory(repo: string, file: string | null) {
     queryKey: [...qk.fileHistory(repo), file ?? ""],
     queryFn: () => getFileHistory(repo, file!, FILE_HISTORY_LIMIT),
     enabled: !!repo && !!file,
+  });
+}
+
+/** 行历史:某文件第 start–end 行的演变史(git log -L)。range 为 null 时不查。 */
+export function useLineHistory(repo: string, file: string | null, range: { start: number; end: number } | null) {
+  return useQuery({
+    queryKey: [...qk.lineHistory(repo), file ?? "", range?.start ?? 0, range?.end ?? 0],
+    queryFn: () => getLineHistory(repo, file!, range!.start, range!.end),
+    enabled: !!repo && !!file && !!range,
   });
 }
 

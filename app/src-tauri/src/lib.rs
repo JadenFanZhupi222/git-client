@@ -3,9 +3,9 @@ use app_service::watcher::{ChangeKind, RepoWatcher};
 use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组合
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
-    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError, OpLogDto, PullResultDto,
-    PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto, SubmoduleInfoDto,
-    UndoStateDto, UndoStepDto, WorktreeInfoDto,
+    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError, LineHistoryEntryDto,
+    OpLogDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto, StashDto,
+    StatusDto, SubmoduleInfoDto, UndoStateDto, UndoStepDto, WorktreeInfoDto,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -219,6 +219,21 @@ async fn file_history(
 ) -> Result<Vec<CommitDto>, IpcError> {
     let ctx = registry.context(&PathBuf::from(repo_path));
     tokio::task::spawn_blocking(move || ctx.file_history(&file, limit))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn line_history(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    file: String,
+    start: u32,
+    end: u32,
+) -> Result<Vec<LineHistoryEntryDto>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.line_history(&file, start, end))
         .await
         .map_err(join_panic)?
         .map_err(to_ipc)
@@ -1024,6 +1039,7 @@ pub fn run() {
             amend_commit,
             get_log,
             file_history,
+            line_history,
             get_commit_files,
             get_commit_file_diff,
             get_commit_signature,

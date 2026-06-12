@@ -5,8 +5,9 @@
 use git_core::{GitBackend, GitError};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
-    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, PullResultDto, PushResultDto, RefDto,
-    ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto, SubmoduleInfoDto, WorktreeInfoDto,
+    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, LineHistoryEntryDto, PullResultDto,
+    PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto, SubmoduleInfoDto,
+    WorktreeInfoDto,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -183,6 +184,18 @@ impl RepoService {
     ) -> Result<Vec<CommitDto>, GitError> {
         let commits = self.backend.file_history(repo_path, file, limit)?;
         Ok(commits.into_iter().map(CommitDto::from).collect())
+    }
+
+    /// 用例:某文件某几行的演变史(`git log -L`,新→旧,每条带范围 diff)。
+    pub fn line_history(
+        &self,
+        repo_path: &Path,
+        file: &str,
+        start: u32,
+        end: u32,
+    ) -> Result<Vec<LineHistoryEntryDto>, GitError> {
+        let entries = self.backend.line_history(repo_path, file, start, end)?;
+        Ok(entries.into_iter().map(LineHistoryEntryDto::from).collect())
     }
 
     /// 用例:HEAD 的 reflog(最近在前,最多 limit 条)。供"找回丢失提交"。

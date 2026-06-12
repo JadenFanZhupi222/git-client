@@ -5,8 +5,8 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk,
-    PullOutcome, PushOutcome, RefKind, ReflogEntry, Seg, SignatureInfo, SignatureStatus,
-    StashEntry, SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus, WorktreeInfo,
+    LineHistoryEntry, PullOutcome, PushOutcome, RefKind, ReflogEntry, Seg, SignatureInfo,
+    SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus, WorktreeInfo,
 };
 use serde::{Deserialize, Serialize};
 
@@ -541,6 +541,22 @@ impl From<FileDiff> for FileDiffDto {
             is_lfs_pointer: d.is_lfs_pointer,
             lfs_size: d.lfs_size,
             hunks: d.hunks.into_iter().map(HunkDto::from).collect(),
+        }
+    }
+}
+
+/// 行历史的一条:某提交 + 它对选中行范围的 diff。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LineHistoryEntryDto {
+    pub commit: CommitDto,
+    pub diff: FileDiffDto,
+}
+
+impl From<LineHistoryEntry> for LineHistoryEntryDto {
+    fn from(e: LineHistoryEntry) -> Self {
+        LineHistoryEntryDto {
+            commit: CommitDto::from(e.commit),
+            diff: FileDiffDto::from(e.diff),
         }
     }
 }

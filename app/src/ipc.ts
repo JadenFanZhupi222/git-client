@@ -91,6 +91,17 @@ export async function getFileHistory(repoPath: string, file: string, limit: numb
   return await invoke<CommitDto[]>("file_history", { repoPath, file, limit });
 }
 
+/** 行历史的一条:某提交 + 它对选中行范围的 diff。 */
+export interface LineHistoryEntryDto {
+  commit: CommitDto;
+  diff: FileDiffDto;
+}
+
+/** 某文件第 start–end 行的演变史(git log -L,新→旧,每条带范围 diff)。行号 1 起、含两端。 */
+export async function getLineHistory(repoPath: string, file: string, start: number, end: number): Promise<LineHistoryEntryDto[]> {
+  return await invoke<LineHistoryEntryDto[]>("line_history", { repoPath, file, start, end });
+}
+
 export async function getCommitFiles(repoPath: string, commitId: string): Promise<FileChangeDto[]> {
   return await invoke<FileChangeDto[]>("get_commit_files", { repoPath, commitId });
 }
