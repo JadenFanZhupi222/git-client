@@ -2,7 +2,7 @@
 
 > 这份文件在 git 仓库里,会随 push/pull 跟到新机器。记录当前进度、铁律、下一步。
 > 配套必读:`CLAUDE.md`(铁律)、`ARCHITECTURE.md`(架构)、`README.md`(启动)。
-> 最近更新:2026-06-12(M5.3 文件历史完成:git log --follow 双栏面板,CommitFileList 悬浮入口)。
+> 最近更新:2026-06-12(M5.4 行历史完成:git log -L 双栏面板,BlameView 选行入口)。
 
 ## 当前状态
 - 阶段 0/1/2/3 全部完成,**阶段 4 核心(交互式 rebase)已落地**。
@@ -67,8 +67,17 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
     spec 见 `docs/superpowers/specs/2026-06-12-file-history-design.md`。
     ⚠️ 已知小限制:跨重命名的旧提交里,右侧 diff 用「当前文件名」查 → 改名前那条可能显示无改动(列表本身正确);
     真机视觉验收待做(tsc+build+test 已过)。
-  - **下一刀 M5.4 行历史**(`git log -L <start>,<end>:<file>`:某几行的演变史)。
-  - 再后:M5.5 pickaxe(`-S`/`-G`)、图片 diff。
+  - ✅ **M5.4 行历史**(已合 main):`git log -L<start>,<end>:<file>` 走 **CliBackend**(git2 无 -L)。
+    新增 `LineHistoryEntry{commit,diff}` 模型 + DTO(commit 列表每条带「仅范围 hunk」的 diff)。
+    纯函数 `parse_unified_diff`(unified diff 文本 → FileDiff,@@ 头初始化行号、context/+/- 各自递增,
+    可复用)+ `parse_line_log`(0x1e 切块、0x1f 切元数据)。format 用 `%x1e` 起头(源码里不出现,
+    避 marker 撞 diff 内容)。竖切:core 模型+trait → cli_backend 两纯函数+方法+tempfile/纯函数测试 →
+    composite → ipc-types DTO → RepoService/RepoContext(不缓存)→ `line_history` 命令 →
+    ipc `getLineHistory`/`useLineHistory` → `LineHistoryPanel`(双栏:提交列表 + entry.diff 直接渲染)+
+    **BlameView 选行入口**(点选单行 / shift-点扩范围 → 工具栏「第 a–b 行历史」)。
+    spec 见 `docs/superpowers/specs/2026-06-12-line-history-design.md`。⚠️ 真机视觉验收待做。
+  - **下一刀 M5.5 pickaxe**(`git log -S`/`-G`:按「哪次提交引入/删除了某段文本/正则」搜历史)。
+  - 再后:图片 diff。
 - 零散续做:worktree 切换/新建(M4.5 只做展示);log 里 ctrl-多选两提交→比较。
 - 工程收尾:真机验收交互式 rebase(尤其中途冲突的继续/中止、大仓库 cp/exec 路径);CI 加 `fmt --check` + `clippy -D warnings` 卡口(属 infra,之前没动 .github);push 到 origin。
 - 已知小项:composite 40+ 透传样板(Rust 固有税,可选 delegate crate)。
