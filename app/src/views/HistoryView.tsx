@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cherryPick, revert, type CommitDto, type GraphRowDto, type FileChangeDto, type IpcError } from "../ipc";
-import { useGraph, useCommitSearch, useCommitFiles, useCommitDiff, useCurrentBranch, invalidateHistory, invalidateWorktree, qk } from "../lib/queries";
+import { useGraph, useCommitSearch, usePickaxe, useCommitFiles, useCommitDiff, useCurrentBranch, invalidateHistory, invalidateWorktree, qk } from "../lib/queries";
 import { useListKeyboardNav, isTypingTarget } from "../lib/listNav";
 import { CommitGraph } from "../components/CommitGraph";
 import { CommitLines } from "../components/CommitLines";
@@ -41,6 +41,7 @@ export function HistoryView({ repo }: { repo: string }) {
   const [busy, setBusy] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [query, setQuery] = useState(""); // debounce 后的查询
+  const [searchMode, setSearchMode] = useState<SearchMode>("message"); // 信息 / 内容-S / 正则-G
   const [rebaseOpen, setRebaseOpen] = useState(false);
   const [reflogOpen, setReflogOpen] = useState(false);
   const [historyFile, setHistoryFile] = useState<string | null>(null); // 文件历史面板:当前查看的文件
@@ -61,14 +62,17 @@ export function HistoryView({ repo }: { repo: string }) {
   // 图谱从 HEAD 整段计算(skip=0,limit 递增),保证泳道一致。失效/limit 变化自动重取。
   const graphQ = useGraph(repo, limit);
   const rows = graphQ.data ?? [];
-  const searchQ = useCommitSearch(repo, query, SEARCH_LIMIT);
+  // 三种搜索后端,按模式只激活一个;结果都是 CommitDto[],喂同一个列表。
+  const searchQ = useCommitSearch(repo, query, SEARCH_LIMIT, searchMode === "message");
+  const pickaxeQ = usePickaxe(repo, query, searchMode === "regex", SEARCH_LIMIT, searchMode !== "message");
+  const activeSearchQ = searchMode === "message" ? searchQ : pickaxeQ;
   const branchQ = useCurrentBranch(repo);
   const filesQ = useCommitFiles(repo, selected?.id ?? null);
   const diffQ = useCommitDiff(repo, selected?.id ?? null, selectedFile);
 
   const hasMore = rows.length === limit;
   const errMsg = (e: unknown) => (e as IpcError | null)?.message ?? null;
-  const error = errMsg(graphQ.error) ?? errMsg(filesQ.error) ?? errMsg(diffQ.error);
+  const error = errMsg(graphQ.error) ?? errMsg(activeSearchQ.error) ?? errMsg(filesQ.error) ?? errMsg(diffQ.error);
   // 选中提交的已有标签(从图谱行的 refs 派生;窗口外/搜索结果无行则为空,仍可新建)
   const selectedTags = selected
     ? (rows.find((r) => r.commit.id === selected.id)?.refs.filter((x) => x.kind === "tag").map((x) => x.name) ?? [])
@@ -86,7 +90,7 @@ export function HistoryView({ repo }: { repo: string }) {
   const afterRebase = () => { setRebaseOpen(false); refresh(); };
 
   // 切仓库:重置分页、选择与搜索
-  useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); setSearchInput(""); setQuery(""); setRebaseOpen(false); setCompareWith(null); setMenu(null); setFocusedPane("commits"); }, [repo]);
+  useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); setSearchInput(""); setQuery(""); setSearchMode("message"); setRebaseOpen(false); setCompareWith(null); setMenu(null); setFocusedPane("commits"); }, [repo]);
 
   // Cmd/Ctrl+点击第二个提交 → 进入比较模式;普通点击 → 单选并退出比较。
   function selectCommit(c: CommitDto, opts?: { compare?: boolean }) {
@@ -118,7 +122,7 @@ export function HistoryView({ repo }: { repo: string }) {
   const files = filesQ.data ?? [];
 
   // ① 提交列表:搜索态=搜索结果,否则=图谱行。
-  const navList: CommitDto[] = searching ? (searchQ.data ?? []) : rows.map((r) => r.commit);
+  const navList: CommitDto[] = searching ? (activeSearchQ.data ?? []) : rows.map((r) => r.commit);
   const navIndex = selected ? navList.findIndex((c) => c.id === selected.id) : -1;
   useListKeyboardNav({
     count: navList.length,
@@ -238,9 +242,11 @@ export function HistoryView({ repo }: { repo: string }) {
         error={error}
         searchInput={searchInput}
         onSearchChange={setSearchInput}
+        searchMode={searchMode}
+        onSearchModeChange={setSearchMode}
         searching={searching}
-        searchResults={searchQ.data ?? []}
-        searchLoading={searchQ.isFetching}
+        searchResults={activeSearchQ.data ?? []}
+        searchLoading={activeSearchQ.isFetching}
         onOpenReflog={() => setReflogOpen(true)}
       />
 
@@ -342,10 +348,19 @@ export function HistoryView({ repo }: { repo: string }) {
   );
 }
 
+/** 搜索模式:提交信息(git2) / 内容 -S / 正则 -G(后两者 = pickaxe)。 */
+type SearchMode = "message" | "content" | "regex";
+const SEARCH_PLACEHOLDER: Record<SearchMode, string> = {
+  message: "搜索提交(信息 / 作者 / SHA)",
+  content: "搜内容:引入/删除某段文本的提交(-S)",
+  regex: "搜正则:改动行匹配的提交(-G)",
+};
+const SEARCH_MODE_LABEL: Record<SearchMode, string> = { message: "信息", content: "内容", regex: "正则" };
+
 /** 图谱列(含可拖拽宽度 + 提交搜索)。搜索时切扁平匹配列表,清空回到图谱。 */
 function GraphColumn({
   branch, rows, selectedId, compareId, focused, onSelect, onContext, onLoadMore, loading, firstLoad, hasMore, error,
-  searchInput, onSearchChange, searching, searchResults, searchLoading, onOpenReflog,
+  searchInput, onSearchChange, searchMode, onSearchModeChange, searching, searchResults, searchLoading, onOpenReflog,
 }: {
   branch: string | null;
   rows: GraphRowDto[];
@@ -361,6 +376,8 @@ function GraphColumn({
   error: string | null;
   searchInput: string;
   onSearchChange: (v: string) => void;
+  searchMode: SearchMode;
+  onSearchModeChange: (m: SearchMode) => void;
   searching: boolean;
   searchResults: CommitDto[];
   searchLoading: boolean;
@@ -382,13 +399,13 @@ function GraphColumn({
             Reflog
           </Button>
         </ColumnHead>
-        {/* 搜索框:按 message / 作者 / SHA 过滤 */}
-        <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-2.5 py-1.5">
+        {/* 搜索框:信息(git2)/ 内容 -S / 正则 -G(pickaxe) */}
+        <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-2.5 pt-1.5">
           <SearchIcon width={13} height={13} className="shrink-0 text-fg-subtle" />
           <input
             value={searchInput}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="搜索提交(信息 / 作者 / SHA)"
+            placeholder={SEARCH_PLACEHOLDER[searchMode]}
             className="min-w-0 flex-1 bg-transparent text-xs text-fg placeholder:text-fg-subtle focus:outline-none"
           />
           {searchInput && (
@@ -396,6 +413,21 @@ function GraphColumn({
               <CloseIcon width={12} height={12} />
             </IconButton>
           )}
+        </div>
+        {/* 模式切换:信息按提交信息搜;内容/正则用 pickaxe 搜 diff 内容 */}
+        <div className="flex shrink-0 items-center gap-1 border-b border-line px-2.5 pb-1.5 pt-1">
+          {(["message", "content", "regex"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => onSearchModeChange(m)}
+              title={SEARCH_PLACEHOLDER[m]}
+              className={`rounded px-1.5 py-0.5 text-[11px] transition-colors ${
+                searchMode === m ? "bg-accent/15 text-accent" : "text-fg-muted hover:text-fg"
+              }`}
+            >
+              {SEARCH_MODE_LABEL[m]}
+            </button>
+          ))}
         </div>
         {error && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{error}</p>}
         {searching ? (

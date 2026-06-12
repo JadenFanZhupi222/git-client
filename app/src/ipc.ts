@@ -102,6 +102,11 @@ export async function getLineHistory(repoPath: string, file: string, start: numb
   return await invoke<LineHistoryEntryDto[]>("line_history", { repoPath, file, start, end });
 }
 
+/** pickaxe:按 diff 内容搜提交。regex=false → git log -S(出现次数变化);regex=true → git log -G(改动行匹配正则)。 */
+export async function pickaxe(repoPath: string, query: string, regex: boolean, limit: number): Promise<CommitDto[]> {
+  return await invoke<CommitDto[]>("pickaxe", { repoPath, query, regex, limit });
+}
+
 export async function getCommitFiles(repoPath: string, commitId: string): Promise<FileChangeDto[]> {
   return await invoke<FileChangeDto[]>("get_commit_files", { repoPath, commitId });
 }

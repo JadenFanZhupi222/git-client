@@ -225,6 +225,21 @@ async fn file_history(
 }
 
 #[tauri::command]
+async fn pickaxe(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    query: String,
+    regex: bool,
+    limit: usize,
+) -> Result<Vec<CommitDto>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.pickaxe(&query, regex, limit))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+#[tauri::command]
 async fn line_history(
     registry: tauri::State<'_, RepoRegistry>,
     repo_path: String,
@@ -1040,6 +1055,7 @@ pub fn run() {
             get_log,
             file_history,
             line_history,
+            pickaxe,
             get_commit_files,
             get_commit_file_diff,
             get_commit_signature,

@@ -93,6 +93,20 @@ pub trait GitBackend: Send + Sync {
         Err(GitError::Unsupported)
     }
 
+    /// pickaxe:按 diff 内容搜提交(时间倒序,最多 limit 条)。
+    /// `regex=false` → `git log -S<query>`:该字符串**出现次数变化**的提交(引入或删除了它)。
+    /// `regex=true`  → `git log -G<query>`:diff 改动行**匹配该正则**的提交。
+    /// 空 query / 不支持 → 空。默认 Unsupported。
+    fn pickaxe(
+        &self,
+        _repo: &Path,
+        _query: &str,
+        _regex: bool,
+        _limit: usize,
+    ) -> Result<Vec<Commit>, GitError> {
+        Err(GitError::Unsupported)
+    }
+
     /// 某提交相对第一个父的改动文件(文件级)。
     fn commit_files(&self, repo: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError>;
 

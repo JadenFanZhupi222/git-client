@@ -7,7 +7,7 @@ import { useEffect } from "react";
 import {
   getStatus, getWorkingDiff, getCommitGraph, searchCommits, getReflog, getCommitFiles, getCommitFileDiff,
   getCommitSignature, listSubmodules, listWorktrees, sparseCheckoutPatterns, compareFiles, compareFileDiff,
-  getFileHistory, getLineHistory, getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
+  getFileHistory, getLineHistory, pickaxe, getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
   getRepoState, readWorkingFile, blame, conflictSides, undoState, opLog,
   watchRepo, onRepoChanged,
 } from "../ipc";
@@ -33,6 +33,7 @@ export const qk = {
   blame: (repo: string) => ["blame", repo] as const,
   conflictSides: (repo: string) => ["conflictSides", repo] as const,
   search: (repo: string) => ["search", repo] as const,
+  pickaxe: (repo: string) => ["pickaxe", repo] as const,
   fileHistory: (repo: string) => ["fileHistory", repo] as const,
   lineHistory: (repo: string) => ["lineHistory", repo] as const,
   reflog: (repo: string) => ["reflog", repo] as const,
@@ -65,13 +66,24 @@ export function useGraph(repo: string, limit: number) {
 }
 
 /** 提交搜索:query 为空时不发请求(enabled=false),结果为扁平列表。 */
-export function useCommitSearch(repo: string, query: string, limit: number) {
+export function useCommitSearch(repo: string, query: string, limit: number, enabled = true) {
   const q = query.trim();
   return useQuery({
     queryKey: [...qk.search(repo), q, limit],
     queryFn: () => searchCommits(repo, q, limit),
-    enabled: !!repo && q.length > 0,
+    enabled: enabled && !!repo && q.length > 0,
     placeholderData: keepPreviousData, // 连续输入时不闪空
+  });
+}
+
+/** pickaxe:按内容搜历史(regex=false→-S / true→-G)。enabled 控制仅在该模式下激活。 */
+export function usePickaxe(repo: string, query: string, regex: boolean, limit: number, enabled = true) {
+  const q = query.trim();
+  return useQuery({
+    queryKey: [...qk.pickaxe(repo), q, regex, limit],
+    queryFn: () => pickaxe(repo, q, regex, limit),
+    enabled: enabled && !!repo && q.length > 0,
+    placeholderData: keepPreviousData,
   });
 }
 

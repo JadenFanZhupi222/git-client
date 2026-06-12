@@ -851,6 +851,39 @@ impl CliBackend {
         Ok(parse_log_records(&out.stdout))
     }
 
+    /// pickaxe:按 diff 内容搜提交。`regex=false` → `git log -S<query>`(出现次数变化);
+    /// `regex=true` → `git log -G<query>`(改动行匹配正则)。query 拼进同一个 arg(不经 shell,空格安全)。
+    pub fn pickaxe(
+        &self,
+        repo: &Path,
+        query: &str,
+        regex: bool,
+        limit: usize,
+    ) -> Result<Vec<Commit>, GitError> {
+        let needle = if regex {
+            format!("-G{query}")
+        } else {
+            format!("-S{query}")
+        };
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args([
+                "log",
+                &needle,
+                &format!("-n{limit}"),
+                &format!("--format={LOG_FORMAT}"),
+            ])
+            .output()
+            .map_err(spawn_err)?;
+        if !out.status.success() {
+            return Err(GitError::Backend(
+                String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            ));
+        }
+        Ok(parse_log_records(&out.stdout))
+    }
+
     /// 某文件某几行的演变史:`git log -L<start>,<end>:<file> --format=…`。
     /// 每条带该提交对这几行的 diff（仅范围 hunk）。范围无历史 → 空 Vec。
     pub fn line_history(
@@ -2295,6 +2328,52 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn pickaxe_finds_commits_introducing_and_removing_a_string() {
+        let repo = init_repo_for_commit();
+        // c1 引入 needle_token,c2 删掉它,c3 无关。
+        std::fs::write(repo.path().join("a.txt"), "x\nneedle_token\ny\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1 add needle"]);
+        std::fs::write(repo.path().join("a.txt"), "x\ny\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c2 remove needle"]);
+        std::fs::write(repo.path().join("a.txt"), "x\ny\nz\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c3 unrelated"]);
+
+        // -S:出现次数变化的两次(引入 + 删除),新→旧。
+        let hits = CliBackend
+            .pickaxe(repo.path(), "needle_token", false, 50)
+            .unwrap();
+        let summaries: Vec<&str> = hits.iter().map(|c| c.summary.as_str()).collect();
+        assert_eq!(summaries, vec!["c2 remove needle", "c1 add needle"]);
+
+        // 不命中 → 空。
+        assert!(
+            CliBackend
+                .pickaxe(repo.path(), "nonexistent_zzz", false, 50)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn pickaxe_regex_matches_changed_lines() {
+        let repo = init_repo_for_commit();
+        std::fs::write(repo.path().join("a.txt"), "fn alpha() {}\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1 add fn"]);
+        std::fs::write(repo.path().join("a.txt"), "let beta = 1;\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c2 replace"]);
+
+        // -G 正则:匹配以 fn 开头的改动行 → c1 和 c2 都动过这行(c2 删了它)。
+        let hits = CliBackend.pickaxe(repo.path(), "^fn ", true, 50).unwrap();
+        let summaries: Vec<&str> = hits.iter().map(|c| c.summary.as_str()).collect();
+        assert!(summaries.contains(&"c1 add fn"), "应含引入 fn 行的提交");
     }
 
     #[test]
