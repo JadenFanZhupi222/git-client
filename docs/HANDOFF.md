@@ -2,7 +2,7 @@
 
 > 这份文件在 git 仓库里,会随 push/pull 跟到新机器。记录当前进度、铁律、下一步。
 > 配套必读:`CLAUDE.md`(铁律)、`ARCHITECTURE.md`(架构)、`README.md`(启动)。
-> 最近更新:2026-06-12(M5.4 行历史完成:git log -L 双栏面板,BlameView 选行入口)。
+> 最近更新:2026-06-12(M5.5 pickaxe 完成:git log -S/-G 接进历史搜索栏三模式;M5 主体收口)。
 
 ## 当前状态
 - 阶段 0/1/2/3 全部完成,**阶段 4 核心(交互式 rebase)已落地**。
@@ -76,8 +76,14 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
     ipc `getLineHistory`/`useLineHistory` → `LineHistoryPanel`(双栏:提交列表 + entry.diff 直接渲染)+
     **BlameView 选行入口**(点选单行 / shift-点扩范围 → 工具栏「第 a–b 行历史」)。
     spec 见 `docs/superpowers/specs/2026-06-12-line-history-design.md`。⚠️ 真机视觉验收待做。
-  - **下一刀 M5.5 pickaxe**(`git log -S`/`-G`:按「哪次提交引入/删除了某段文本/正则」搜历史)。
-  - 再后:图片 diff。
+  - ✅ **M5.5 pickaxe**(已合 main):`git log -S<q>`(出现次数变化)/`-G<q>`(改动行匹配正则)走
+    **CliBackend**,复用 M5.3 `LOG_FORMAT`+`parse_log_records`,返回 `Vec<Commit>`(与 search 同形)。
+    **接进 HistoryView 现有搜索栏**:加 `searchMode`(信息/内容/正则)三态——「信息」=旧 search_commits、
+    「内容」=pickaxe -S、「正则」=pickaxe -G;三者结果都喂同一个 SearchList,点结果走现有 MidColumn 看 diff,
+    零新结果 UI。竖切:trait→cli_backend(+tempfile 测 -S 引入/删除、-G 正则)→composite→
+    RepoService/RepoContext(不缓存)→`pickaxe` 命令→ipc/usePickaxe→HistoryView 模式切换。
+    spec 见 `docs/superpowers/specs/2026-06-12-pickaxe-design.md`。
+  - **M5 主体(5.1–5.5)收口**。剩 **图片 diff**(并排显示新旧图片,而非文本 diff)+ 全 M5 真机视觉验收。
 - 零散续做:worktree 切换/新建(M4.5 只做展示);log 里 ctrl-多选两提交→比较。
 - 工程收尾:真机验收交互式 rebase(尤其中途冲突的继续/中止、大仓库 cp/exec 路径);CI 加 `fmt --check` + `clippy -D warnings` 卡口(属 infra,之前没动 .github);push 到 origin。
 - 已知小项:composite 40+ 透传样板(Rust 固有税,可选 delegate crate)。
