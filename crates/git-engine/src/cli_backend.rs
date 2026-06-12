@@ -2176,7 +2176,10 @@ mod tests {
         assert_eq!(v[0].id, id);
         assert_eq!(v[0].short_id, "aaaaaaa");
         assert_eq!(v[0].summary, "subject line");
-        assert_eq!(v[0].body, "line one\nline two", "body 的换行应保留、不被当记录分隔");
+        assert_eq!(
+            v[0].body, "line one\nline two",
+            "body 的换行应保留、不被当记录分隔"
+        );
         assert_eq!(v[0].author.name, "Jane");
         assert_eq!(v[0].timestamp, 1700000000);
         assert_eq!(v[0].parents, vec![p1.to_string(), p2.to_string()]);
