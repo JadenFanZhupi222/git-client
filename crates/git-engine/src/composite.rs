@@ -72,6 +72,16 @@ impl GitBackend for CompositeBackend {
         // 走 CLI:git log -L,git2 无对应能力。
         self.cli.line_history(repo, file, start, end)
     }
+    fn pickaxe(
+        &self,
+        repo: &Path,
+        query: &str,
+        regex: bool,
+        limit: usize,
+    ) -> Result<Vec<Commit>, GitError> {
+        // 走 CLI:git log -S/-G,git2 无 pickaxe。
+        self.cli.pickaxe(repo, query, regex, limit)
+    }
     fn reflog(&self, repo: &Path, limit: usize) -> Result<Vec<ReflogEntry>, GitError> {
         self.git2.reflog(repo, limit)
     }
