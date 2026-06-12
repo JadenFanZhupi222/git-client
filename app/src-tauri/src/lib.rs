@@ -211,6 +211,20 @@ async fn get_log(
 }
 
 #[tauri::command]
+async fn file_history(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    file: String,
+    limit: usize,
+) -> Result<Vec<CommitDto>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.file_history(&file, limit))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+#[tauri::command]
 async fn get_commit_files(
     registry: tauri::State<'_, RepoRegistry>,
     repo_path: String,
@@ -1009,6 +1023,7 @@ pub fn run() {
             commit,
             amend_commit,
             get_log,
+            file_history,
             get_commit_files,
             get_commit_file_diff,
             get_commit_signature,
