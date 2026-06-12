@@ -186,6 +186,21 @@ impl RepoService {
         Ok(commits.into_iter().map(CommitDto::from).collect())
     }
 
+    /// 用例:pickaxe 按 diff 内容搜提交(`-S` 出现次数变化 / `-G` 改动行匹配正则)。空 query → 空。
+    pub fn pickaxe(
+        &self,
+        repo_path: &Path,
+        query: &str,
+        regex: bool,
+        limit: usize,
+    ) -> Result<Vec<CommitDto>, GitError> {
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let commits = self.backend.pickaxe(repo_path, query, regex, limit)?;
+        Ok(commits.into_iter().map(CommitDto::from).collect())
+    }
+
     /// 用例:某文件某几行的演变史(`git log -L`,新→旧,每条带范围 diff)。
     pub fn line_history(
         &self,

@@ -258,6 +258,10 @@ impl RepoContext {
     ) -> Result<Vec<LineHistoryEntryDto>, GitError> {
         self.service.line_history(&self.path, file, start, end)
     }
+    /// pickaxe 按 diff 内容搜提交(git log -S/-G)。按需触发,不缓存。
+    pub fn pickaxe(&self, query: &str, regex: bool, limit: usize) -> Result<Vec<CommitDto>, GitError> {
+        self.service.pickaxe(&self.path, query, regex, limit)
+    }
     pub fn reflog(&self, limit: usize) -> Result<Vec<ReflogEntryDto>, GitError> {
         self.service.reflog(&self.path, limit)
     }
