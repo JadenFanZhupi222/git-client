@@ -2,8 +2,10 @@ import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useBlame } from "../lib/queries";
 import { formatRelative } from "../lib/time";
-import { FileDiffIcon } from "../components/icons";
+import { FileDiffIcon, HistoryIcon, CloseIcon } from "../components/icons";
 import { Button } from "../components/ui/Button";
+import { IconButton } from "../components/ui/IconButton";
+import { LineHistoryPanel } from "../components/LineHistoryPanel";
 import type { IpcError } from "../ipc";
 
 /** 把绝对路径转成仓库根相对路径(正斜杠);不在仓库内返回 null。 */
@@ -18,10 +20,21 @@ function toRepoRelative(repo: string, abs: string): string | null {
 export function BlameView({ repo }: { repo: string }) {
   const [file, setFile] = useState<string | null>(null);
   const [pickError, setPickError] = useState<string | null>(null);
+  // 行选择:anchor 是起点、focus 是当前端点(shift-点扩范围);范围 = min..max。
+  const [sel, setSel] = useState<{ anchor: number; focus: number } | null>(null);
+  const [historyRange, setHistoryRange] = useState<{ start: number; end: number } | null>(null);
   const q = useBlame(repo, file);
 
   // 切仓库清空选择
   useEffect(() => { setFile(null); setPickError(null); }, [repo]);
+  // 切文件清空行选择
+  useEffect(() => { setSel(null); }, [file]);
+
+  // 点行:普通点 → 单行选中;shift-点 → 从 anchor 扩到该行。
+  function clickLine(lineNo: number, shift: boolean) {
+    setSel((prev) => (shift && prev ? { anchor: prev.anchor, focus: lineNo } : { anchor: lineNo, focus: lineNo }));
+  }
+  const selRange = sel ? { start: Math.min(sel.anchor, sel.focus), end: Math.max(sel.anchor, sel.focus) } : null;
 
   async function pick() {
     setPickError(null);
@@ -43,6 +56,22 @@ export function BlameView({ repo }: { repo: string }) {
           <FileDiffIcon width={13} height={13} /> 选择文件
         </Button>
         {file && <span className="truncate font-mono text-xs text-fg" title={file}>{file}</span>}
+        {selRange && (
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            <Button
+              variant="secondary"
+              size="chip"
+              onClick={() => setHistoryRange(selRange)}
+              title="查看选中行的演变史(git log -L)"
+            >
+              <HistoryIcon width={12} height={12} />
+              {selRange.start === selRange.end ? `第 ${selRange.start} 行历史` : `第 ${selRange.start}–${selRange.end} 行历史`}
+            </Button>
+            <IconButton aria-label="清除选择" title="清除选择" onClick={() => setSel(null)}>
+              <CloseIcon width={13} height={13} />
+            </IconButton>
+          </div>
+        )}
       </div>
 
       {pickError && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{pickError}</p>}
@@ -63,8 +92,13 @@ export function BlameView({ repo }: { repo: string }) {
             const prev = lines[i - 1];
             const newGroup = !prev || prev.commit_id !== l.commit_id;
             const uncommitted = l.commit_id === "";
+            const selected = !!selRange && l.line_no >= selRange.start && l.line_no <= selRange.end;
             return (
-              <div key={i} className="flex items-stretch hover:bg-elevated">
+              <div
+                key={i}
+                onClick={(e) => clickLine(l.line_no, e.shiftKey)}
+                className={`flex cursor-pointer select-none items-stretch ${selected ? "bg-accent/15" : "hover:bg-elevated"}`}
+              >
                 {/* 提交信息 gutter:同一提交的连续行只在首行显示。
                     flex 布局让「作者名」成为唯一可截断项,sha 与时间 shrink-0 始终可见
                     —— 否则整体 truncate 会把末尾的时间切掉(仿 JetBrains 始终留时间)。 */}
@@ -89,6 +123,10 @@ export function BlameView({ repo }: { repo: string }) {
             );
           })}
         </div>
+      )}
+
+      {historyRange && file && (
+        <LineHistoryPanel repo={repo} file={file} range={historyRange} onClose={() => setHistoryRange(null)} />
       )}
     </div>
   );

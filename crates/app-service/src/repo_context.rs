@@ -20,8 +20,8 @@ use git_core::{GitBackend, GitError, UndoKind};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
     FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, LineHistoryEntryDto, OpLogDto,
-    OpLogEntryDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto, StashDto,
-    StatusDto, SubmoduleInfoDto, UndoStateDto, UndoStepDto, WorktreeInfoDto,
+    OpLogEntryDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto,
+    StashDto, StatusDto, SubmoduleInfoDto, UndoStateDto, UndoStepDto, WorktreeInfoDto,
 };
 use lru::LruCache;
 use std::collections::HashMap;

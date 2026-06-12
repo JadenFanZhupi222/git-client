@@ -275,7 +275,11 @@ fn parse_unified_diff(text: &str) -> FileDiff {
 /// 从 `@@` 之后的串里取某侧(`-` 或 `+`)的起始行号:`-a,b` / `-a` → a。
 fn parse_hunk_start(rest: &str, side: char) -> Option<u32> {
     let after = rest.split(side).nth(1)?;
-    let digits: String = after.trim_start().chars().take_while(|c| c.is_ascii_digit()).collect();
+    let digits: String = after
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     digits.parse().ok()
 }
 
@@ -2327,7 +2331,11 @@ mod tests {
         git(repo.path(), &["add", "."]);
         git(repo.path(), &["commit", "-m", "c2 change line2"]);
         // 只改第 3 行(不该出现在第 2 行的历史里)
-        std::fs::write(repo.path().join("f.txt"), "line1\nLINE2 changed\nLINE3 changed\n").unwrap();
+        std::fs::write(
+            repo.path().join("f.txt"),
+            "line1\nLINE2 changed\nLINE3 changed\n",
+        )
+        .unwrap();
         git(repo.path(), &["add", "."]);
         git(repo.path(), &["commit", "-m", "c3 change line3"]);
 
@@ -2348,14 +2356,18 @@ mod tests {
     #[test]
     fn parse_unified_diff_numbers_lines_from_hunk_header() {
         // `@@ -2,2 +2,2 @@`:context 两侧行号都给;-/+ 各只给一侧并各自递增。
-        let text = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -2,2 +2,2 @@\n line_ctx\n-old3\n+new3\n";
+        let text =
+            "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -2,2 +2,2 @@\n line_ctx\n-old3\n+new3\n";
         let d = parse_unified_diff(text);
         assert_eq!(d.hunks.len(), 1);
         let lines = &d.hunks[0].lines;
         assert_eq!(lines.len(), 3);
         // context 行:old=2 new=2
         assert_eq!(lines[0].kind, DiffLineKind::Context);
-        assert_eq!((lines[0].old_lineno, lines[0].new_lineno), (Some(2), Some(2)));
+        assert_eq!(
+            (lines[0].old_lineno, lines[0].new_lineno),
+            (Some(2), Some(2))
+        );
         assert_eq!(lines[0].content, "line_ctx");
         // 删除行:old=3 new=None
         assert_eq!(lines[1].kind, DiffLineKind::Deletion);
@@ -2375,6 +2387,10 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].new_lineno, Some(1));
         assert_eq!(lines[1].new_lineno, Some(2));
-        assert!(lines.iter().all(|l| l.kind == DiffLineKind::Addition && l.old_lineno.is_none()));
+        assert!(
+            lines
+                .iter()
+                .all(|l| l.kind == DiffLineKind::Addition && l.old_lineno.is_none())
+        );
     }
 }
