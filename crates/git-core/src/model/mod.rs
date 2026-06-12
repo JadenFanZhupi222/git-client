@@ -19,7 +19,7 @@ pub use branch::{
 };
 pub use commit::{Commit, Signature};
 pub use conflict::ConflictSides;
-pub use diff::{DiffLine, DiffLineKind, FileChange, FileDiff, Hunk, Seg};
+pub use diff::{DiffLine, DiffLineKind, FileChange, FileDiff, Hunk, LineHistoryEntry, Seg};
 pub use reflog::ReflogEntry;
 pub use remote::{FetchOutcome, PullOutcome, PushOutcome};
 pub use repo_state::RepoState;

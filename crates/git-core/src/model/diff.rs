@@ -1,4 +1,4 @@
-use crate::model::FileState;
+use crate::model::{Commit, FileState};
 use serde::{Deserialize, Serialize};
 
 /// 一个提交里改动的单个文件(文件级)。带本文件的增删行数(diff --stat)。
@@ -63,4 +63,11 @@ pub struct FileDiff {
     /// LFS 指针记录的实际文件字节数(原样字符串,非 LFS 时为空)。
     pub lfs_size: String,
     pub hunks: Vec<Hunk>,
+}
+
+/// 行历史(`git log -L`)的一条:某提交 + 它对选中行范围的 diff(仅范围 hunk)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LineHistoryEntry {
+    pub commit: Commit,
+    pub diff: FileDiff,
 }

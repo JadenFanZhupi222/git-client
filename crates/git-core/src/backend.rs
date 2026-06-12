@@ -1,9 +1,9 @@
 use crate::error::GitError;
 use crate::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
-    FetchOutcome, FileChange, FileDiff, PullOutcome, PushOutcome, RebaseStep, ReflogEntry,
-    RepoState, ResetMode, SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus,
-    WorktreeInfo,
+    FetchOutcome, FileChange, FileDiff, LineHistoryEntry, PullOutcome, PushOutcome, RebaseStep,
+    ReflogEntry, RepoState, ResetMode, SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits,
+    WorkingTreeStatus, WorktreeInfo,
 };
 use std::path::Path;
 
@@ -78,6 +78,18 @@ pub trait GitBackend: Send + Sync {
         _file: &str,
         _limit: usize,
     ) -> Result<Vec<Commit>, GitError> {
+        Err(GitError::Unsupported)
+    }
+
+    /// 某文件某几行的演变史(`git log -L<start>,<end>:<file>`,时间倒序,行号 1 起、含两端)。
+    /// 每条带该提交对这几行的 diff(仅范围 hunk)。文件/范围无历史 → 空。默认 Unsupported。
+    fn line_history(
+        &self,
+        _repo: &Path,
+        _file: &str,
+        _start: u32,
+        _end: u32,
+    ) -> Result<Vec<LineHistoryEntry>, GitError> {
         Err(GitError::Unsupported)
     }
 
