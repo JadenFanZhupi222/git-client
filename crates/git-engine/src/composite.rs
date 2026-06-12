@@ -2,8 +2,9 @@ use crate::cli_backend::CliBackend;
 use crate::git2_backend::Git2Backend;
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, PullOutcome, PushOutcome, RebaseStep, ReflogEntry, RepoState, ResetMode,
-    SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus, WorktreeInfo,
+    FileDiff, LineHistoryEntry, PullOutcome, PushOutcome, RebaseStep, ReflogEntry, RepoState,
+    ResetMode, SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus,
+    WorktreeInfo,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -60,6 +61,16 @@ impl GitBackend for CompositeBackend {
     fn file_history(&self, repo: &Path, file: &str, limit: usize) -> Result<Vec<Commit>, GitError> {
         // 走 CLI:git log --follow 跟随重命名,git2 原生不支持。
         self.cli.file_history(repo, file, limit)
+    }
+    fn line_history(
+        &self,
+        repo: &Path,
+        file: &str,
+        start: u32,
+        end: u32,
+    ) -> Result<Vec<LineHistoryEntry>, GitError> {
+        // 走 CLI:git log -L,git2 无对应能力。
+        self.cli.line_history(repo, file, start, end)
     }
     fn reflog(&self, repo: &Path, limit: usize) -> Result<Vec<ReflogEntry>, GitError> {
         self.git2.reflog(repo, limit)

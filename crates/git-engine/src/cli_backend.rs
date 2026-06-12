@@ -1,7 +1,8 @@
 use git_core::GitError;
 use git_core::model::{
-    Commit, FetchOutcome, PullOutcome, PushOutcome, RebaseAction, RebaseStep, RepoState, Signature,
-    SignatureInfo, SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorktreeInfo,
+    Commit, DiffLine, DiffLineKind, FetchOutcome, FileDiff, Hunk, LineHistoryEntry, PullOutcome,
+    PushOutcome, RebaseAction, RebaseStep, RepoState, Signature, SignatureInfo, SignatureStatus,
+    StashEntry, SubmoduleInfo, SubmoduleStatus, WorktreeInfo,
 };
 use std::collections::HashMap;
 use std::io::Write;
@@ -209,6 +210,109 @@ fn parse_log_records(stdout: &[u8]) -> Vec<Commit> {
             },
             timestamp,
             parents: parents.split_whitespace().map(str::to_string).collect(),
+        });
+    }
+    out
+}
+
+/// `git log -L` 的机器可读 format:以 0x1E(记录分隔)起头、字段间 0x1F(单元分隔)。
+/// 0x1E 在源码/diff 内容里几乎不可能出现 → 据它切提交块,绕开 marker 撞 diff 行内容。
+/// 字段:id / 父 / 作者名 / 邮箱 / 时间戳 / summary。**不含 body**(多行会破坏「首行=元数据」切分)。
+const LINE_LOG_FORMAT: &str = "%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%s";
+
+/// 把一段 unified diff 文本解析成 FileDiff(只填 hunks,二进制/LFS 等标志为默认 false)。
+/// 给 `git log -L` 的每条 diff 块用;纯函数、容错。`emphasis` 全 None(行历史不做词级)。
+fn parse_unified_diff(text: &str) -> FileDiff {
+    let mut diff = FileDiff::default();
+    let mut old_no = 0u32;
+    let mut new_no = 0u32;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("@@") {
+            // `@@ -a,b +c,d @@ 可选标题`:取 - 后的 a 作旧起点、+ 后的 c 作新起点。
+            old_no = parse_hunk_start(rest, '-').unwrap_or(0);
+            new_no = parse_hunk_start(rest, '+').unwrap_or(0);
+            diff.hunks.push(Hunk {
+                header: line.to_string(),
+                lines: Vec::new(),
+            });
+            continue;
+        }
+        let Some(hunk) = diff.hunks.last_mut() else {
+            continue; // 首个 @@ 之前的 `diff --git` / `---` / `+++` 行,跳过
+        };
+        let mut chars = line.chars();
+        let (kind, old_lineno, new_lineno) = match chars.next() {
+            Some(' ') => {
+                let l = (DiffLineKind::Context, Some(old_no), Some(new_no));
+                old_no += 1;
+                new_no += 1;
+                l
+            }
+            Some('+') => {
+                let l = (DiffLineKind::Addition, None, Some(new_no));
+                new_no += 1;
+                l
+            }
+            Some('-') => {
+                let l = (DiffLineKind::Deletion, Some(old_no), None);
+                old_no += 1;
+                l
+            }
+            // `\ No newline at end of file` 等非内容行:跳过。
+            _ => continue,
+        };
+        hunk.lines.push(DiffLine {
+            kind,
+            old_lineno,
+            new_lineno,
+            content: chars.as_str().to_string(),
+            emphasis: None,
+        });
+    }
+    diff
+}
+
+/// 从 `@@` 之后的串里取某侧(`-` 或 `+`)的起始行号:`-a,b` / `-a` → a。
+fn parse_hunk_start(rest: &str, side: char) -> Option<u32> {
+    let after = rest.split(side).nth(1)?;
+    let digits: String = after.trim_start().chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+/// 解析 `git log -L --format=LINE_LOG_FORMAT` 的 stdout 成行历史条目。
+/// 按 0x1E 切块;每块首行(到首个 \n)按 0x1F 切元数据建 Commit,其后是该提交的 diff 文本。
+fn parse_line_log(stdout: &[u8]) -> Vec<LineHistoryEntry> {
+    let text = String::from_utf8_lossy(stdout);
+    let mut out = Vec::new();
+    for block in text.split('\u{1e}') {
+        if block.trim().is_empty() {
+            continue;
+        }
+        let (meta, diff_text) = block.split_once('\n').unwrap_or((block, ""));
+        let mut f = meta.split('\u{1f}');
+        let id = f.next().unwrap_or("").to_string();
+        if id.is_empty() {
+            continue;
+        }
+        let parents = f.next().unwrap_or("");
+        let name = f.next().unwrap_or("");
+        let email = f.next().unwrap_or("");
+        let timestamp = f.next().unwrap_or("").trim().parse().unwrap_or(0);
+        let summary = f.next().unwrap_or("").to_string();
+        out.push(LineHistoryEntry {
+            commit: Commit {
+                short_id: id.chars().take(7).collect(),
+                id,
+                summary,
+                body: String::new(),
+                author: Signature {
+                    name: name.to_string(),
+                    email: email.to_string(),
+                },
+                timestamp,
+                parents: parents.split_whitespace().map(str::to_string).collect(),
+            },
+            diff: parse_unified_diff(diff_text),
         });
     }
     out
@@ -741,6 +845,33 @@ impl CliBackend {
             ));
         }
         Ok(parse_log_records(&out.stdout))
+    }
+
+    /// 某文件某几行的演变史:`git log -L<start>,<end>:<file> --format=…`。
+    /// 每条带该提交对这几行的 diff（仅范围 hunk）。范围无历史 → 空 Vec。
+    pub fn line_history(
+        &self,
+        repo: &Path,
+        file: &str,
+        start: u32,
+        end: u32,
+    ) -> Result<Vec<LineHistoryEntry>, GitError> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args([
+                "log",
+                &format!("-L{start},{end}:{file}"),
+                &format!("--format={LINE_LOG_FORMAT}"),
+            ])
+            .output()
+            .map_err(spawn_err)?;
+        if !out.status.success() {
+            return Err(GitError::Backend(
+                String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            ));
+        }
+        Ok(parse_line_log(&out.stdout))
     }
 
     pub fn commit_signature(
@@ -2183,5 +2314,67 @@ mod tests {
         assert_eq!(v[0].author.name, "Jane");
         assert_eq!(v[0].timestamp, 1700000000);
         assert_eq!(v[0].parents, vec![p1.to_string(), p2.to_string()]);
+    }
+
+    #[test]
+    fn line_history_tracks_a_line_range() {
+        let repo = init_repo_for_commit();
+        std::fs::write(repo.path().join("f.txt"), "line1\nline2\nline3\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1 create"]);
+        // 改第 2 行
+        std::fs::write(repo.path().join("f.txt"), "line1\nLINE2 changed\nline3\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c2 change line2"]);
+        // 只改第 3 行(不该出现在第 2 行的历史里)
+        std::fs::write(repo.path().join("f.txt"), "line1\nLINE2 changed\nLINE3 changed\n").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c3 change line3"]);
+
+        // 只查第 2 行 → 只有 c2(改它)和 c1(创建它)。
+        let hist = CliBackend.line_history(repo.path(), "f.txt", 2, 2).unwrap();
+        assert_eq!(hist.len(), 2, "第 2 行的历史应只有创建 + 改它那两次");
+        assert_eq!(hist[0].commit.summary, "c2 change line2", "新→旧");
+        assert_eq!(hist[1].commit.summary, "c1 create");
+
+        // c2 那条应带一个 hunk:删 line2 / 增 LINE2 changed。
+        let h = &hist[0].diff.hunks;
+        assert!(!h.is_empty(), "应解析出范围 hunk");
+        let contents: Vec<&str> = h[0].lines.iter().map(|l| l.content.as_str()).collect();
+        assert!(contents.contains(&"line2"), "应含被删的旧行");
+        assert!(contents.contains(&"LINE2 changed"), "应含新增的新行");
+    }
+
+    #[test]
+    fn parse_unified_diff_numbers_lines_from_hunk_header() {
+        // `@@ -2,2 +2,2 @@`:context 两侧行号都给;-/+ 各只给一侧并各自递增。
+        let text = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -2,2 +2,2 @@\n line_ctx\n-old3\n+new3\n";
+        let d = parse_unified_diff(text);
+        assert_eq!(d.hunks.len(), 1);
+        let lines = &d.hunks[0].lines;
+        assert_eq!(lines.len(), 3);
+        // context 行:old=2 new=2
+        assert_eq!(lines[0].kind, DiffLineKind::Context);
+        assert_eq!((lines[0].old_lineno, lines[0].new_lineno), (Some(2), Some(2)));
+        assert_eq!(lines[0].content, "line_ctx");
+        // 删除行:old=3 new=None
+        assert_eq!(lines[1].kind, DiffLineKind::Deletion);
+        assert_eq!((lines[1].old_lineno, lines[1].new_lineno), (Some(3), None));
+        // 新增行:old=None new=3
+        assert_eq!(lines[2].kind, DiffLineKind::Addition);
+        assert_eq!((lines[2].old_lineno, lines[2].new_lineno), (None, Some(3)));
+    }
+
+    #[test]
+    fn parse_unified_diff_handles_creation_dev_null() {
+        // 文件创建:`--- /dev/null` + `@@ -0,0 +1,2 @@`,全是新增行,新行号从 1 起。
+        let text = "--- /dev/null\n+++ b/f\n@@ -0,0 +1,2 @@\n+first\n+second\n";
+        let d = parse_unified_diff(text);
+        assert_eq!(d.hunks.len(), 1);
+        let lines = &d.hunks[0].lines;
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].new_lineno, Some(1));
+        assert_eq!(lines[1].new_lineno, Some(2));
+        assert!(lines.iter().all(|l| l.kind == DiffLineKind::Addition && l.old_lineno.is_none()));
     }
 }
