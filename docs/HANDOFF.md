@@ -2,7 +2,7 @@
 
 > 这份文件在 git 仓库里,会随 push/pull 跟到新机器。记录当前进度、铁律、下一步。
 > 配套必读:`CLAUDE.md`(铁律)、`ARCHITECTURE.md`(架构)、`README.md`(启动)。
-> 最近更新:2026-06-12(M5.2 并排 diff 完成:DiffView 加统一/并排切换,复用 M5.1 词级段)。
+> 最近更新:2026-06-12(M5.3 文件历史完成:git log --follow 双栏面板,CommitFileList 悬浮入口)。
 
 ## 当前状态
 - 阶段 0/1/2/3 全部完成,**阶段 4 核心(交互式 rebase)已落地**。
@@ -58,8 +58,17 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
     口径同 M5.1 annotate_word_level,多余行对侧留空占位);列优先布局,左右两列各自横滚、行数配平等高对齐;
     抽出共享 `LineContent` 复用 M5.1 emphasis 段;行级暂存在并排里照常(选中集仍按 hi:li 键)。
     spec 见 `docs/superpowers/specs/2026-06-12-side-by-side-diff-design.md`。⚠️ 真机视觉验收待做(tsc+build 已过)。
-  - **下一刀 M5.3 文件历史**(`git log -- <path>`:某文件的提交历史列表)。
-  - 再后:M5.4 行历史(`log -L`)、M5.5 pickaxe(`-S`/`-G`)、图片 diff。
+  - ✅ **M5.3 文件历史**(已合 main):`git log --follow -- <file>` 走 **CliBackend**(git2 原生不支持 --follow,
+    跟随重命名);纯函数 `parse_log_records` 按 0x1f/0x1e 分隔健壮解析(含换行 body 不错位)。
+    复用 `Commit`/`CommitDto`,**无新增 DTO**。竖切:trait `file_history`(默认 Unsupported)→ cli_backend +
+    tempfile 测试 → composite 路由 cli → RepoService/RepoContext(不缓存)→ `file_history` 命令 →
+    ipc `getFileHistory` / `useFileHistory`(limit 200)→ `FileHistoryPanel`(双栏 overlay:提交列表 + 该文件
+    在选中提交的 diff,复用 DiffView/M5.2)+ CommitFileList 行悬浮 HistoryIcon 入口(`onFileHistory`)。
+    spec 见 `docs/superpowers/specs/2026-06-12-file-history-design.md`。
+    ⚠️ 已知小限制:跨重命名的旧提交里,右侧 diff 用「当前文件名」查 → 改名前那条可能显示无改动(列表本身正确);
+    真机视觉验收待做(tsc+build+test 已过)。
+  - **下一刀 M5.4 行历史**(`git log -L <start>,<end>:<file>`:某几行的演变史)。
+  - 再后:M5.5 pickaxe(`-S`/`-G`)、图片 diff。
 - 零散续做:worktree 切换/新建(M4.5 只做展示);log 里 ctrl-多选两提交→比较。
 - 工程收尾:真机验收交互式 rebase(尤其中途冲突的继续/中止、大仓库 cp/exec 路径);CI 加 `fmt --check` + `clippy -D warnings` 卡口(属 infra,之前没动 .github);push 到 origin。
 - 已知小项:composite 40+ 透传样板(Rust 固有税,可选 delegate crate)。
