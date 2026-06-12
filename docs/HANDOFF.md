@@ -90,9 +90,11 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
     `is_binary` 前)并排两栏(旧|新,新增只显新、删除只显旧),`.checkerboard` 棋盘格衬透明 + 显尺寸/体积。
     base64 crate 跟 `git2-backend` feature。spec 无(实现直接,设计写在提交信息)。
   - **M5「更深的 diff 与历史」全部完成**(5.1 词级 / 5.2 并排 / 5.3 文件历史 / 5.4 行历史 / 5.5 pickaxe / 图片 diff)。
-- **下一里程碑待定**:见 `docs/superpowers/plans/2026-06-08-world-class-roadmap.md` 选 M6。候选方向:
-  Trustworthy(前端 vitest + E2E 补测、错误恢复)、worktree 写操作、changelist、性能压测(大 monorepo)。
-- ⚠️ **全 M5 + 图片 diff 真机视觉验收仍待做**(自动门 test/clippy/fmt/tsc/build 全过)。
+- **下一里程碑:M6 · Polish & Harden(打磨与硬化)** —— 不堆新功能,还 M5 留的债。
+  **完整切片见 `docs/superpowers/plans/2026-06-12-m6-polish-harden.md`**(M6.1 并排同步滚动+折叠+虚拟化 /
+  M6.2 图片去 base64+对比模式 / M6.3 新 CLI 读路径接缓存取消 / M6.4 specta 自动类型 / M6.5 M5 测试补齐 /
+  M6.6 面板键盘 a11y)。建议起手 M6.1(价值最高、纯前端)。原 roadmap「M6 协作/PR」顺延为 M7。
+- ⚠️ **全 M5 + 图片 diff 真机视觉验收仍待做**(自动门 test/clippy/fmt/tsc/build 全过;M5 已 push origin)。
 - 零散续做:worktree 切换/新建(M4.5 只做展示);log 里 ctrl-多选两提交→比较。
 - 工程收尾:真机验收交互式 rebase(尤其中途冲突的继续/中止、大仓库 cp/exec 路径);CI 加 `fmt --check` + `clippy -D warnings` 卡口(属 infra,之前没动 .github);push 到 origin。
 - 已知小项:composite 40+ 透传样板(Rust 固有税,可选 delegate crate)。
