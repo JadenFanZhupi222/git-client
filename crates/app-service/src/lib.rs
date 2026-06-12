@@ -834,6 +834,9 @@ mod tests {
             too_large: false,
             is_lfs_pointer: false,
             lfs_size: String::new(),
+            is_image: false,
+            old_image: None,
+            new_image: None,
             hunks: vec![Hunk {
                 header: "@@ -1 +1 @@".into(),
                 lines: vec![DiffLine {

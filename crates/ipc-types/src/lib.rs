@@ -5,8 +5,9 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk,
-    LineHistoryEntry, PullOutcome, PushOutcome, RefKind, ReflogEntry, Seg, SignatureInfo,
-    SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus, WorktreeInfo,
+    ImageData, LineHistoryEntry, PullOutcome, PushOutcome, RefKind, ReflogEntry, Seg,
+    SignatureInfo, SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus,
+    WorktreeInfo,
 };
 use serde::{Deserialize, Serialize};
 
@@ -523,12 +524,30 @@ impl From<Hunk> for HunkDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageDataDto {
+    pub mime: String,
+    pub base64: String,
+}
+
+impl From<ImageData> for ImageDataDto {
+    fn from(i: ImageData) -> Self {
+        ImageDataDto {
+            mime: i.mime,
+            base64: i.base64,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileDiffDto {
     pub path: String,
     pub is_binary: bool,
     pub too_large: bool,
     pub is_lfs_pointer: bool,
     pub lfs_size: String,
+    pub is_image: bool,
+    pub old_image: Option<ImageDataDto>,
+    pub new_image: Option<ImageDataDto>,
     pub hunks: Vec<HunkDto>,
 }
 
@@ -540,6 +559,9 @@ impl From<FileDiff> for FileDiffDto {
             too_large: d.too_large,
             is_lfs_pointer: d.is_lfs_pointer,
             lfs_size: d.lfs_size,
+            is_image: d.is_image,
+            old_image: d.old_image.map(ImageDataDto::from),
+            new_image: d.new_image.map(ImageDataDto::from),
             hunks: d.hunks.into_iter().map(HunkDto::from).collect(),
         }
     }

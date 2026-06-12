@@ -1,7 +1,7 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
-    DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry, FileState, Hunk, RefKind, ReflogEntry,
-    RepoState, ResetMode, Signature, SyncCommits, WorkingTreeStatus,
+    DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry, FileState, Hunk, ImageData, RefKind,
+    ReflogEntry, RepoState, ResetMode, Signature, SyncCommits, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::collections::HashSet;
@@ -122,6 +122,54 @@ const MAX_DIFF_LINES: usize = 20_000;
 /// blame 比 diff 更重,阈值放宽一些但仍要挡住巨型文件。
 const MAX_BLAME_BYTES: u64 = 2_000_000;
 
+/// 单张图片超过此大小不内联(base64 走 IPC 太重,且预览意义不大)。
+const MAX_IMAGE_BYTES: usize = 8_000_000;
+
+/// 按扩展名识别图片(用于 diff 里并排预览新旧图)。返回 MIME 类型。
+/// SVG 不在此列——它是文本,走正常行级 diff(仍有意义的逐行改动)。
+fn image_mime(path: &str) -> Option<&'static str> {
+    let ext = path.rsplit('.').next()?.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "avif" => "image/avif",
+        _ => return None,
+    })
+}
+
+/// 取一侧图片的内容编成 ImageData。`oid` 非零 → 读对象库 blob;为零 → 退回读工作区文件
+/// (未暂存改动的新一侧:工作区内容尚未入库,oid 为零)。超过大小上限或读不到 → None。
+fn load_image_side(
+    repo: &git2::Repository,
+    oid: git2::Oid,
+    mime: &str,
+    workdir_file: Option<&Path>,
+) -> Option<ImageData> {
+    use base64::Engine;
+    let bytes: Vec<u8> = if !oid.is_zero() {
+        let blob = repo.find_blob(oid).ok()?;
+        if blob.size() > MAX_IMAGE_BYTES {
+            return None;
+        }
+        blob.content().to_vec()
+    } else {
+        let path = workdir_file?;
+        let meta = std::fs::metadata(path).ok()?;
+        if meta.len() as usize > MAX_IMAGE_BYTES {
+            return None;
+        }
+        std::fs::read(path).ok()?
+    };
+    Some(ImageData {
+        mime: mime.to_string(),
+        base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+    })
+}
+
 /// 二进制嗅探:和 git 一样的朴素判据——前若干字节里出现 NUL 就当二进制。
 fn is_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(8000).any(|&b| b == 0)
@@ -241,21 +289,32 @@ fn annotate_word_level(hunks: &mut [Hunk]) {
     }
 }
 
-fn file_diff_from(diff: &git2::Diff, file: &str) -> Result<FileDiff, GitError> {
+fn file_diff_from(
+    repo: &git2::Repository,
+    diff: &git2::Diff,
+    file: &str,
+) -> Result<FileDiff, GitError> {
     let target = Path::new(file);
     let mut result = FileDiff {
         path: file.to_string(),
-        is_binary: false,
-        too_large: false,
-        is_lfs_pointer: false,
-        lfs_size: String::new(),
-        hunks: Vec::new(),
+        ..Default::default()
     };
 
     for (idx, delta) in diff.deltas().enumerate() {
         let p = delta.new_file().path().or_else(|| delta.old_file().path());
         if p != Some(target) {
             continue;
+        }
+        // 图片(按扩展名):二进制的一种,但能并排预览新旧图。读两侧 blob 编 base64。
+        if let Some(mime) = image_mime(file) {
+            result.is_binary = true;
+            result.is_image = true;
+            // 新一侧 oid 为零时退回工作区文件(未暂存改动的新内容尚未入库)。
+            let workdir_file = repo.workdir().map(|w| w.join(file));
+            result.old_image = load_image_side(repo, delta.old_file().id(), mime, None);
+            result.new_image =
+                load_image_side(repo, delta.new_file().id(), mime, workdir_file.as_deref());
+            break;
         }
         // Patch::from_diff 对二进制 delta 返回 None。
         match git2::Patch::from_diff(diff, idx).map_err(|e| GitError::Backend(e.to_string()))? {
@@ -689,7 +748,7 @@ impl GitBackend for Git2Backend {
         let diff = repo
             .diff_tree_to_tree(Some(&from_tree), Some(&to_tree), Some(&mut opts))
             .map_err(|e| GitError::Backend(e.to_string()))?;
-        file_diff_from(&diff, file)
+        file_diff_from(&repo, &diff, file)
     }
     fn current_branch(&self, path: &Path) -> Result<Option<String>, GitError> {
         let repo =
@@ -1269,7 +1328,7 @@ impl GitBackend for Git2Backend {
             .diff_tree_to_tree(parent_tree.as_ref(), Some(&new_tree), Some(&mut opts))
             .map_err(|e| GitError::Backend(e.to_string()))?;
 
-        file_diff_from(&diff, file)
+        file_diff_from(&repo, &diff, file)
     }
 
     fn working_diff(&self, path: &Path, file: &str, staged: bool) -> Result<FileDiff, GitError> {
@@ -1300,7 +1359,7 @@ impl GitBackend for Git2Backend {
                 .map_err(|e| GitError::Backend(e.to_string()))?
         };
 
-        file_diff_from(&diff, file)
+        file_diff_from(&repo, &diff, file)
     }
 
     fn commit(&self, path: &Path, message: &str) -> Result<String, GitError> {
@@ -1823,6 +1882,77 @@ mod tests {
         assert_eq!(diff.lfs_size, "1048576", "应取出指针记录的字节数");
         assert!(diff.hunks.is_empty(), "LFS 指针不把指针文本当内容 diff");
         assert!(!diff.is_binary);
+    }
+
+    /// 写入二进制字节并 stage(图片等含 NUL 的内容,不能用 stage 的 &str)。
+    fn stage_bytes(repo_path: &Path, name: &str, bytes: &[u8]) {
+        let repo = git2::Repository::open(repo_path).unwrap();
+        std::fs::write(repo.workdir().unwrap().join(name), bytes).unwrap();
+        let mut idx = repo.index().unwrap();
+        idx.add_path(Path::new(name)).unwrap();
+        idx.write().unwrap();
+    }
+
+    // 含 NUL 字节 → git 当二进制;扩展名 .png → image_mime 命中。两版内容不同。
+    const PNG_V1: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00v1-image-bytes";
+    const PNG_V2: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00v2-different-bytes";
+
+    #[test]
+    fn commit_file_diff_added_image_has_new_only() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage_bytes(&repo, "logo.png", PNG_V1);
+        let sha = commit_index(&repo, "add image", 1000);
+
+        let diff = b.commit_file_diff(&repo, &sha, "logo.png").unwrap();
+        assert!(diff.is_image, "应识别为图片");
+        assert!(diff.is_binary, "图片也是二进制");
+        assert!(diff.hunks.is_empty(), "图片不出逐行 hunk");
+        assert!(diff.old_image.is_none(), "新增文件无旧图");
+        let new = diff.new_image.expect("应有新图");
+        assert_eq!(new.mime, "image/png");
+        use base64::Engine;
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(&new.base64)
+                .unwrap(),
+            PNG_V1,
+            "base64 解码应还原原始字节"
+        );
+    }
+
+    #[test]
+    fn commit_file_diff_modified_image_has_old_and_new() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage_bytes(&repo, "logo.png", PNG_V1);
+        commit_index(&repo, "c1", 1000);
+        stage_bytes(&repo, "logo.png", PNG_V2);
+        let sha = commit_index(&repo, "c2 change image", 2000);
+
+        let diff = b.commit_file_diff(&repo, &sha, "logo.png").unwrap();
+        assert!(diff.is_image);
+        use base64::Engine;
+        let dec = |s: &str| base64::engine::general_purpose::STANDARD.decode(s).unwrap();
+        assert_eq!(dec(&diff.old_image.unwrap().base64), PNG_V1, "旧图 = 改前");
+        assert_eq!(dec(&diff.new_image.unwrap().base64), PNG_V2, "新图 = 改后");
+    }
+
+    #[test]
+    fn working_diff_unstaged_image_reads_new_from_workdir() {
+        // 未暂存改动:新一侧在工作区(oid 为零),应退回读工作区文件。
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage_bytes(&repo, "logo.png", PNG_V1);
+        commit_index(&repo, "c1", 1000);
+        // 改工作区文件但不 stage
+        std::fs::write(repo.join("logo.png"), PNG_V2).unwrap();
+
+        let diff = b.working_diff(&repo, "logo.png", false).unwrap();
+        assert!(diff.is_image);
+        use base64::Engine;
+        let dec = |s: &str| base64::engine::general_purpose::STANDARD.decode(s).unwrap();
+        assert_eq!(dec(&diff.new_image.expect("工作区新图").base64), PNG_V2);
     }
 
     #[test]

@@ -48,11 +48,20 @@ pub struct Hunk {
     pub lines: Vec<DiffLine>,
 }
 
+/// 一张图片的内容:MIME 类型 + base64 编码的字节。前端拼成 `data:<mime>;base64,<base64>` 渲染。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageData {
+    pub mime: String,
+    pub base64: String,
+}
+
 /// 单个文件的行级 diff。
 /// - 二进制文件 is_binary=true 且 hunks 为空。
 /// - 超大文件 too_large=true 且 hunks 为空(为防卡死/爆内存,故意不计算逐行 diff)。
 /// - Git LFS 指针文件 is_lfs_pointer=true 且 hunks 为空(指针文本不是真内容,
 ///   `lfs_size` 为指针记录的实际字节数;别把指针当内容 diff)。
+/// - 图片文件 is_image=true(是二进制的一种);`old_image`/`new_image` 为新旧两版图片
+///   (新增文件无 old、删除文件无 new、过大的图片两者都为 None)。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FileDiff {
     pub path: String,
@@ -62,6 +71,12 @@ pub struct FileDiff {
     pub is_lfs_pointer: bool,
     /// LFS 指针记录的实际文件字节数(原样字符串,非 LFS 时为空)。
     pub lfs_size: String,
+    /// 是否图片文件(按扩展名识别;同时 is_binary=true)。
+    pub is_image: bool,
+    /// 旧版图片(改动前);新增文件为 None。
+    pub old_image: Option<ImageData>,
+    /// 新版图片(改动后);删除文件为 None。
+    pub new_image: Option<ImageData>,
     pub hunks: Vec<Hunk>,
 }
 
