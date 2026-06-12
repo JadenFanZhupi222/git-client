@@ -7,7 +7,7 @@ import { useEffect } from "react";
 import {
   getStatus, getWorkingDiff, getCommitGraph, searchCommits, getReflog, getCommitFiles, getCommitFileDiff,
   getCommitSignature, listSubmodules, listWorktrees, sparseCheckoutPatterns, compareFiles, compareFileDiff,
-  getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
+  getFileHistory, getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
   getRepoState, readWorkingFile, blame, conflictSides, undoState, opLog,
   watchRepo, onRepoChanged,
 } from "../ipc";
@@ -33,6 +33,7 @@ export const qk = {
   blame: (repo: string) => ["blame", repo] as const,
   conflictSides: (repo: string) => ["conflictSides", repo] as const,
   search: (repo: string) => ["search", repo] as const,
+  fileHistory: (repo: string) => ["fileHistory", repo] as const,
   reflog: (repo: string) => ["reflog", repo] as const,
   compareFiles: (repo: string) => ["compareFiles", repo] as const,
   compareDiff: (repo: string) => ["compareDiff", repo] as const,
@@ -121,6 +122,15 @@ export function useCommitDiff(repo: string, commitId: string | null, file: strin
     queryKey: [...qk.commitDiff(repo), commitId ?? "", file ?? ""],
     queryFn: () => getCommitFileDiff(repo, commitId!, file!),
     enabled: !!commitId && !!file,
+  });
+}
+
+const FILE_HISTORY_LIMIT = 200;
+export function useFileHistory(repo: string, file: string | null) {
+  return useQuery({
+    queryKey: [...qk.fileHistory(repo), file ?? ""],
+    queryFn: () => getFileHistory(repo, file!, FILE_HISTORY_LIMIT),
+    enabled: !!repo && !!file,
   });
 }
 

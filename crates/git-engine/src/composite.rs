@@ -57,6 +57,10 @@ impl GitBackend for CompositeBackend {
     ) -> Result<Vec<Commit>, GitError> {
         self.git2.search_commits(repo, query, limit, cancelled)
     }
+    fn file_history(&self, repo: &Path, file: &str, limit: usize) -> Result<Vec<Commit>, GitError> {
+        // 走 CLI:git log --follow 跟随重命名,git2 原生不支持。
+        self.cli.file_history(repo, file, limit)
+    }
     fn reflog(&self, repo: &Path, limit: usize) -> Result<Vec<ReflogEntry>, GitError> {
         self.git2.reflog(repo, limit)
     }

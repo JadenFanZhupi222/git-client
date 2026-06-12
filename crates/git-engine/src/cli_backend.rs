@@ -1,7 +1,7 @@
 use git_core::GitError;
 use git_core::model::{
-    FetchOutcome, PullOutcome, PushOutcome, RebaseAction, RebaseStep, RepoState, SignatureInfo,
-    SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorktreeInfo,
+    Commit, FetchOutcome, PullOutcome, PushOutcome, RebaseAction, RebaseStep, RepoState, Signature,
+    SignatureInfo, SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorktreeInfo,
 };
 use std::collections::HashMap;
 use std::io::Write;
@@ -169,6 +169,49 @@ fn spawn_err(e: std::io::Error) -> GitError {
     } else {
         GitError::Backend(e.to_string())
     }
+}
+
+/// `git log` 的机器可读 format:字段间用 0x1F(单元分隔)、提交间用 0x1E(记录分隔)。
+/// 字段顺序:id / 父(空格分隔) / 作者名 / 作者邮箱 / 作者时间戳 / summary / body。
+/// 用不可见分隔符而非换行,使含换行的 body 也不会错位。
+const LOG_FORMAT: &str = "%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%s%x1f%b%x1e";
+
+/// 解析 `git log --format=LOG_FORMAT` 的 stdout 成 Commit 列表(时间倒序按 git 给的顺序)。
+/// 纯函数、无 IO、永不失败:字段缺失取默认值,id 为空的记录跳过。
+fn parse_log_records(stdout: &[u8]) -> Vec<Commit> {
+    let text = String::from_utf8_lossy(stdout);
+    let mut out = Vec::new();
+    for record in text.split('\u{1e}') {
+        // git 在每条记录后会带一个换行,trim 掉首尾空白(body 尾部空白也无所谓)。
+        let record = record.trim();
+        if record.is_empty() {
+            continue;
+        }
+        let mut f = record.split('\u{1f}');
+        let id = f.next().unwrap_or("").to_string();
+        if id.is_empty() {
+            continue;
+        }
+        let parents = f.next().unwrap_or("");
+        let name = f.next().unwrap_or("");
+        let email = f.next().unwrap_or("");
+        let timestamp = f.next().unwrap_or("").trim().parse().unwrap_or(0);
+        let summary = f.next().unwrap_or("").to_string();
+        let body = f.next().unwrap_or("").trim().to_string();
+        out.push(Commit {
+            short_id: id.chars().take(7).collect(),
+            id,
+            summary,
+            body,
+            author: Signature {
+                name: name.to_string(),
+                email: email.to_string(),
+            },
+            timestamp,
+            parents: parents.split_whitespace().map(str::to_string).collect(),
+        });
+    }
+    out
 }
 
 /// 读 HEAD 的完整 SHA(提交/修订成功后取返回值)。
@@ -670,6 +713,36 @@ impl CliBackend {
 
     /// 读某提交的签名状态:`git show -s --format=%G?<NUL>%GS`。
     /// `%G?` 是状态码,`%GS` 是签名者;用 NUL 分隔避免签名者名里的换行/空格干扰。
+    /// 某文件的提交历史:`git log --follow -n<limit> --format=… -- <file>`。
+    /// `--follow` 跟随重命名(只能配单个 pathspec,正合文件历史)。
+    /// 文件无历史 / 不存在 → git 成功且输出为空 → 空 Vec。
+    pub fn file_history(
+        &self,
+        repo: &Path,
+        file: &str,
+        limit: usize,
+    ) -> Result<Vec<Commit>, GitError> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args([
+                "log",
+                "--follow",
+                &format!("-n{limit}"),
+                &format!("--format={LOG_FORMAT}"),
+                "--",
+            ])
+            .arg(file)
+            .output()
+            .map_err(spawn_err)?;
+        if !out.status.success() {
+            return Err(GitError::Backend(
+                String::from_utf8_lossy(&out.stderr).trim().to_string(),
+            ));
+        }
+        Ok(parse_log_records(&out.stdout))
+    }
+
     pub fn commit_signature(
         &self,
         repo: &Path,
@@ -2034,5 +2107,81 @@ mod tests {
         let patterns = CliBackend.sparse_checkout_patterns(repo.path()).unwrap();
         assert!(!patterns.is_empty(), "稀疏检出开启后应列出范围");
         assert!(patterns.iter().any(|p| p.contains("src")));
+    }
+
+    #[test]
+    fn file_history_returns_only_that_files_commits_newest_first() {
+        let repo = init_repo_for_commit();
+        // a.txt 改两次,中间夹一次只动 b.txt 的提交 → a 的历史应是 2 条、不含 b 的那次。
+        std::fs::write(repo.path().join("a.txt"), "a1").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "a first"]);
+        std::fs::write(repo.path().join("b.txt"), "b1").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "b unrelated"]);
+        std::fs::write(repo.path().join("a.txt"), "a2").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "a second"]);
+
+        let hist = CliBackend.file_history(repo.path(), "a.txt", 50).unwrap();
+        assert_eq!(hist.len(), 2, "只应有动过 a.txt 的 2 次提交");
+        assert_eq!(hist[0].summary, "a second", "时间倒序:最新在前");
+        assert_eq!(hist[1].summary, "a first");
+        assert_eq!(hist[0].id.len(), 40, "应是完整 SHA");
+        assert!(!hist[0].parents.is_empty(), "第二次提交应有父");
+    }
+
+    #[test]
+    fn file_history_follows_renames() {
+        let repo = init_repo_for_commit();
+        std::fs::write(repo.path().join("old.txt"), "v1").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "create old"]);
+        git(repo.path(), &["mv", "old.txt", "new.txt"]);
+        git(repo.path(), &["commit", "-m", "rename to new"]);
+
+        // --follow:查 new.txt 应能看到改名前 old.txt 的那次提交。
+        let hist = CliBackend.file_history(repo.path(), "new.txt", 50).unwrap();
+        assert_eq!(hist.len(), 2, "--follow 应穿过重命名拿到改名前历史");
+        assert_eq!(hist[0].summary, "rename to new");
+        assert_eq!(hist[1].summary, "create old");
+    }
+
+    #[test]
+    fn file_history_unknown_path_is_empty() {
+        let repo = init_repo_for_commit();
+        std::fs::write(repo.path().join("a.txt"), "a").unwrap();
+        git(repo.path(), &["add", "."]);
+        git(repo.path(), &["commit", "-m", "c1"]);
+
+        assert!(
+            CliBackend
+                .file_history(repo.path(), "does-not-exist.txt", 50)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn parse_log_records_keeps_multiline_body_and_parents() {
+        // 手工拼一条记录:body 含换行不能错位;父字段空格分割成多个。
+        let p1 = "1111111111111111111111111111111111111111";
+        let p2 = "2222222222222222222222222222222222222222";
+        let id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let raw = format!(
+            "{id}\u{1f}{p1} {p2}\u{1f}Jane\u{1f}j@e\u{1f}1700000000\u{1f}subject line\u{1f}line one\nline two\u{1e}\n"
+        );
+        let v = parse_log_records(raw.as_bytes());
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].id, id);
+        assert_eq!(v[0].short_id, "aaaaaaa");
+        assert_eq!(v[0].summary, "subject line");
+        assert_eq!(
+            v[0].body, "line one\nline two",
+            "body 的换行应保留、不被当记录分隔"
+        );
+        assert_eq!(v[0].author.name, "Jane");
+        assert_eq!(v[0].timestamp, 1700000000);
+        assert_eq!(v[0].parents, vec![p1.to_string(), p2.to_string()]);
     }
 }

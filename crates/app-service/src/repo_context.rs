@@ -245,6 +245,10 @@ impl RepoContext {
         self.service
             .search_commits(&self.path, query, limit, cancelled)
     }
+    /// 某文件的提交历史(git log --follow)。按需触发、结果短,不缓存。
+    pub fn file_history(&self, file: &str, limit: usize) -> Result<Vec<CommitDto>, GitError> {
+        self.service.file_history(&self.path, file, limit)
+    }
     pub fn reflog(&self, limit: usize) -> Result<Vec<ReflogEntryDto>, GitError> {
         self.service.reflog(&self.path, limit)
     }

@@ -86,6 +86,11 @@ export async function getLog(repoPath: string, limit: number, skip: number): Pro
   return await invoke<CommitDto[]>("get_log", { repoPath, limit, skip });
 }
 
+/** 某文件的提交历史(git log --follow,跟随重命名,新→旧)。 */
+export async function getFileHistory(repoPath: string, file: string, limit: number): Promise<CommitDto[]> {
+  return await invoke<CommitDto[]>("file_history", { repoPath, file, limit });
+}
+
 export async function getCommitFiles(repoPath: string, commitId: string): Promise<FileChangeDto[]> {
   return await invoke<FileChangeDto[]>("get_commit_files", { repoPath, commitId });
 }

@@ -69,6 +69,18 @@ pub trait GitBackend: Send + Sync {
         Err(GitError::Unsupported)
     }
 
+    /// 某文件的提交历史(`git log --follow -- <file>`),时间倒序(新→旧),最多 limit 条。
+    /// 跟随重命名(`--follow`):能看到文件改名前的历史。
+    /// 文件无历史 / 不存在 → 空。默认 Unsupported。
+    fn file_history(
+        &self,
+        _repo: &Path,
+        _file: &str,
+        _limit: usize,
+    ) -> Result<Vec<Commit>, GitError> {
+        Err(GitError::Unsupported)
+    }
+
     /// 某提交相对第一个父的改动文件(文件级)。
     fn commit_files(&self, repo: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError>;
 

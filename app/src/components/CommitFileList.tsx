@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { type FileChangeDto } from "../ipc";
+import { HistoryIcon } from "./icons";
 
 /** 提交内文件状态 → 颜色 + 单字母 */
 const STYLE: Record<string, { letter: string; cls: string }> = {
@@ -10,8 +11,14 @@ const STYLE: Record<string, { letter: string; cls: string }> = {
 };
 
 export function CommitFileList({
-  files, selected, onSelect,
-}: { files: FileChangeDto[]; selected: string | null; onSelect: (path: string) => void }) {
+  files, selected, onSelect, onFileHistory,
+}: {
+  files: FileChangeDto[];
+  selected: string | null;
+  onSelect: (path: string) => void;
+  /** 可选:行内悬浮出现「文件历史」按钮,点击查看该文件的 git log --follow。 */
+  onFileHistory?: (path: string) => void;
+}) {
   const boxRef = useRef<HTMLDivElement>(null);
   // 键盘选中变化 → 把该行滚进可视区(已可见则不动)。
   useEffect(() => {
@@ -35,7 +42,7 @@ export function CommitFileList({
             data-path={f.path}
             onClick={() => onSelect(f.path)}
             title={f.path}
-            className={`flex cursor-pointer items-center gap-2 px-3 py-1.5 font-mono text-[13px] transition-colors ${
+            className={`group flex cursor-pointer items-center gap-2 px-3 py-1.5 font-mono text-[13px] transition-colors ${
               on ? "bg-overlay" : "hover:bg-elevated"
             }`}
           >
@@ -44,6 +51,16 @@ export function CommitFileList({
               {dir && <span className="text-fg-subtle">{dir}</span>}
               <span className="text-fg">{name}</span>
             </span>
+            {onFileHistory && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onFileHistory(f.path); }}
+                title="查看文件历史(git log --follow)"
+                aria-label="查看文件历史"
+                className="shrink-0 rounded p-0.5 text-fg-subtle opacity-0 transition-colors hover:text-accent group-hover:opacity-100"
+              >
+                <HistoryIcon width={13} height={13} />
+              </button>
+            )}
             {/* 增删行数(diff --stat);二进制为 0/0 → 不显示 */}
             {(f.additions > 0 || f.deletions > 0) && (
               <span className="shrink-0 text-[11px] tabular-nums">
