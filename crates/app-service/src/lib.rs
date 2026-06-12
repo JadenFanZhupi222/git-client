@@ -174,6 +174,17 @@ impl RepoService {
         Ok(commits.into_iter().map(CommitDto::from).collect())
     }
 
+    /// 用例:某文件的提交历史(`git log --follow`,新→旧,最多 limit 条,跟随重命名)。
+    pub fn file_history(
+        &self,
+        repo_path: &Path,
+        file: &str,
+        limit: usize,
+    ) -> Result<Vec<CommitDto>, GitError> {
+        let commits = self.backend.file_history(repo_path, file, limit)?;
+        Ok(commits.into_iter().map(CommitDto::from).collect())
+    }
+
     /// 用例:HEAD 的 reflog(最近在前,最多 limit 条)。供"找回丢失提交"。
     pub fn reflog(&self, repo_path: &Path, limit: usize) -> Result<Vec<ReflogEntryDto>, GitError> {
         Ok(self
