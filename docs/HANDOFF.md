@@ -2,7 +2,7 @@
 
 > 这份文件在 git 仓库里,会随 push/pull 跟到新机器。记录当前进度、铁律、下一步。
 > 配套必读:`CLAUDE.md`(铁律)、`ARCHITECTURE.md`(架构)、`README.md`(启动)。
-> 最近更新:2026-06-12(M5.5 pickaxe 完成:git log -S/-G 接进历史搜索栏三模式;M5 主体收口)。
+> 最近更新:2026-06-12(图片 diff 完成:DiffView 并排预览新旧图;M5「更深的 diff 与历史」全部完成)。
 
 ## 当前状态
 - 阶段 0/1/2/3 全部完成,**阶段 4 核心(交互式 rebase)已落地**。
@@ -83,7 +83,16 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
     零新结果 UI。竖切:trait→cli_backend(+tempfile 测 -S 引入/删除、-G 正则)→composite→
     RepoService/RepoContext(不缓存)→`pickaxe` 命令→ipc/usePickaxe→HistoryView 模式切换。
     spec 见 `docs/superpowers/specs/2026-06-12-pickaxe-design.md`。
-  - **M5 主体(5.1–5.5)收口**。剩 **图片 diff**(并排显示新旧图片,而非文本 diff)+ 全 M5 真机视觉验收。
+  - ✅ **图片 diff**(已合 main):`FileDiff` 加 `is_image`/`old_image`/`new_image`(`ImageData{mime,base64}`);
+    git2_backend `file_diff_from`(单一构建点)检测图片扩展名(png/jpg/gif/webp/bmp/ico/avif;SVG 仍走文本),
+    按 delta 新旧 blob oid 取字节 base64;未暂存改动新一侧 oid 为零时退回读工作区文件;8MB 上限。
+    数据随现有 commit/working/compare diff 命令流出(**无新命令/DTO 命令**)。DiffView `is_image` 分支(在
+    `is_binary` 前)并排两栏(旧|新,新增只显新、删除只显旧),`.checkerboard` 棋盘格衬透明 + 显尺寸/体积。
+    base64 crate 跟 `git2-backend` feature。spec 无(实现直接,设计写在提交信息)。
+  - **M5「更深的 diff 与历史」全部完成**(5.1 词级 / 5.2 并排 / 5.3 文件历史 / 5.4 行历史 / 5.5 pickaxe / 图片 diff)。
+- **下一里程碑待定**:见 `docs/superpowers/plans/2026-06-08-world-class-roadmap.md` 选 M6。候选方向:
+  Trustworthy(前端 vitest + E2E 补测、错误恢复)、worktree 写操作、changelist、性能压测(大 monorepo)。
+- ⚠️ **全 M5 + 图片 diff 真机视觉验收仍待做**(自动门 test/clippy/fmt/tsc/build 全过)。
 - 零散续做:worktree 切换/新建(M4.5 只做展示);log 里 ctrl-多选两提交→比较。
 - 工程收尾:真机验收交互式 rebase(尤其中途冲突的继续/中止、大仓库 cp/exec 路径);CI 加 `fmt --check` + `clippy -D warnings` 卡口(属 infra,之前没动 .github);push 到 origin。
 - 已知小项:composite 40+ 透传样板(Rust 固有税,可选 delegate crate)。
