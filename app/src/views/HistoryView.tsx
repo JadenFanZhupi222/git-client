@@ -9,6 +9,7 @@ import { TagManager } from "../components/TagManager";
 import { ResetMenu } from "../components/ResetMenu";
 import { RebaseEditor } from "../components/RebaseEditor";
 import { ReflogPanel } from "../components/ReflogPanel";
+import { FileHistoryPanel } from "../components/FileHistoryPanel";
 import { ComparePanel } from "../components/ComparePanel";
 import { CommitContextMenu } from "../components/CommitContextMenu";
 import { Button } from "../components/ui/Button";
@@ -42,6 +43,7 @@ export function HistoryView({ repo }: { repo: string }) {
   const [query, setQuery] = useState(""); // debounce 后的查询
   const [rebaseOpen, setRebaseOpen] = useState(false);
   const [reflogOpen, setReflogOpen] = useState(false);
+  const [historyFile, setHistoryFile] = useState<string | null>(null); // 文件历史面板:当前查看的文件
   const [compareWith, setCompareWith] = useState<CommitDto | null>(null); // 比较模式的第二个提交
   const [menu, setMenu] = useState<{ commit: CommitDto; x: number; y: number } | null>(null);
   const [focusedPane, setFocusedPane] = useState<"commits" | "files">("commits"); // 键盘焦点在哪个列表
@@ -112,7 +114,7 @@ export function HistoryView({ repo }: { repo: string }) {
 
   // 键盘导航。两个可导航列表:提交列表(commits)与改动文件列表(files);j/k 作用于「聚焦的」那个。
   // 弹层/比较/右键菜单打开时整体让出键盘。
-  const modalsOpen = comparing || rebaseOpen || reflogOpen || !!menu;
+  const modalsOpen = comparing || rebaseOpen || reflogOpen || !!historyFile || !!menu;
   const files = filesQ.data ?? [];
 
   // ① 提交列表:搜索态=搜索结果,否则=图谱行。
@@ -267,6 +269,7 @@ export function HistoryView({ repo }: { repo: string }) {
             selectedFile={selectedFile}
             focused={focusedPane === "files" && kbMode}
             onSelectFile={selectFile}
+            onFileHistory={setHistoryFile}
             onCherryPick={selected ? () => doCherryPick(selected) : undefined}
             onRevert={selected ? () => doRevert(selected) : undefined}
             onRebase={selIdx >= 0 ? () => setRebaseOpen(true) : undefined}
@@ -312,6 +315,10 @@ export function HistoryView({ repo }: { repo: string }) {
             qc.invalidateQueries({ queryKey: qk.repoState(repo) });
           }}
         />
+      )}
+
+      {historyFile && (
+        <FileHistoryPanel repo={repo} file={historyFile} onClose={() => setHistoryFile(null)} />
       )}
 
       {menu && (
@@ -463,7 +470,7 @@ function SearchList({
 
 /** 中间列:提交详情 + 改动文件(含可拖拽宽度) */
 function MidColumn({
-  repo, commit, files, selectedFile, focused, onSelectFile, onCherryPick, onRevert, onRebase, onResetDone, tags, onTagsChanged, busy,
+  repo, commit, files, selectedFile, focused, onSelectFile, onFileHistory, onCherryPick, onRevert, onRebase, onResetDone, tags, onTagsChanged, busy,
 }: {
   repo: string;
   commit: CommitDto | null;
@@ -471,6 +478,7 @@ function MidColumn({
   selectedFile: string | null;
   focused: boolean;
   onSelectFile: (path: string) => void;
+  onFileHistory: (path: string) => void;
   onCherryPick?: () => void;
   onRevert?: () => void;
   onRebase?: () => void;
@@ -540,7 +548,7 @@ function MidColumn({
         <ColumnHead icon={<FileDiffIcon width={13} height={13} />}>改动文件{commit && ` (${list.length})`}</ColumnHead>
         <div className="min-h-0 flex-1 overflow-hidden">
           {commit
-            ? <CommitFileList files={list} selected={selectedFile} onSelect={onSelectFile} />
+            ? <CommitFileList files={list} selected={selectedFile} onSelect={onSelectFile} onFileHistory={onFileHistory} />
             : <div className="p-3 text-xs text-fg-subtle">选择一个提交</div>}
         </div>
       </div>
