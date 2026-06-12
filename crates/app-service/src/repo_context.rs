@@ -19,9 +19,9 @@ use git_core::model::{RebaseStep, ResetMode};
 use git_core::{GitBackend, GitError, UndoKind};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
-    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, OpLogDto, OpLogEntryDto,
-    PullResultDto, PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto,
-    SubmoduleInfoDto, UndoStateDto, UndoStepDto, WorktreeInfoDto,
+    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, LineHistoryEntryDto, OpLogDto,
+    OpLogEntryDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto, StashDto,
+    StatusDto, SubmoduleInfoDto, UndoStateDto, UndoStepDto, WorktreeInfoDto,
 };
 use lru::LruCache;
 use std::collections::HashMap;
@@ -248,6 +248,15 @@ impl RepoContext {
     /// 某文件的提交历史(git log --follow)。按需触发、结果短,不缓存。
     pub fn file_history(&self, file: &str, limit: usize) -> Result<Vec<CommitDto>, GitError> {
         self.service.file_history(&self.path, file, limit)
+    }
+    /// 某文件某几行的演变史(git log -L)。按需触发,不缓存。
+    pub fn line_history(
+        &self,
+        file: &str,
+        start: u32,
+        end: u32,
+    ) -> Result<Vec<LineHistoryEntryDto>, GitError> {
+        self.service.line_history(&self.path, file, start, end)
     }
     pub fn reflog(&self, limit: usize) -> Result<Vec<ReflogEntryDto>, GitError> {
         self.service.reflog(&self.path, limit)
