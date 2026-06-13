@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { type LineHistoryEntryDto } from "../ipc";
+import { useEffect, useRef, useState } from "react";
 import { useLineHistory } from "../lib/queries";
+import { useModalListNav } from "../lib/listNav";
 import { formatRelative } from "../lib/time";
 import { DiffView } from "./DiffView";
 import { IconButton } from "./ui/IconButton";
@@ -18,13 +18,21 @@ export function LineHistoryPanel({
 }) {
   const q = useLineHistory(repo, file, range);
   const entries = q.data ?? [];
-  const [selected, setSelected] = useState<LineHistoryEntryDto | null>(null);
+  const [idx, setIdx] = useState(0);
+  useEffect(() => { setIdx(0); }, [file, range.start, range.end]); // 换范围回到最新一条
+  const safeIdx = Math.min(idx, Math.max(0, entries.length - 1));
+  const selected = entries[safeIdx] ?? null;
 
-  // 换范围 / 首次加载完成时默认选中最新一条。
-  useEffect(() => { setSelected(null); }, [file, range.start, range.end]);
+  const { dialogRef, onKeyDown } = useModalListNav({
+    count: entries.length,
+    index: safeIdx,
+    onSelect: setIdx,
+    onClose,
+  });
+  const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!selected && entries.length > 0) setSelected(entries[0]);
-  }, [entries, selected]);
+    listRef.current?.querySelector<HTMLElement>("[data-active='true']")?.scrollIntoView({ block: "nearest" });
+  }, [safeIdx]);
 
   const name = file.slice(file.lastIndexOf("/") + 1);
   const rangeLabel = range.start === range.end ? `第 ${range.start} 行` : `第 ${range.start}–${range.end} 行`;
@@ -32,7 +40,13 @@ export function LineHistoryPanel({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
       <div
-        className="flex h-[85vh] w-[90vw] max-w-[1200px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas shadow-2xl"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`行历史 ${name} ${rangeLabel}`}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        className="flex h-[85vh] w-[90vw] max-w-[1200px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas shadow-2xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
@@ -46,7 +60,7 @@ export function LineHistoryPanel({
         <div className="flex min-h-0 flex-1">
           {/* 左:提交列表 */}
           <div className="flex w-[340px] shrink-0 flex-col overflow-hidden border-r border-line">
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
               {q.isLoading ? (
                 <div className="p-4 text-xs text-fg-subtle">加载中…</div>
               ) : q.error ? (
@@ -54,13 +68,14 @@ export function LineHistoryPanel({
               ) : entries.length === 0 ? (
                 <div className="p-4 text-xs text-fg-subtle">这几行没有可追溯的历史</div>
               ) : (
-                entries.map((e) => {
+                entries.map((e, i) => {
                   const c = e.commit;
-                  const on = selected?.commit.id === c.id;
+                  const on = i === safeIdx;
                   return (
                     <div
                       key={c.id}
-                      onClick={() => setSelected(e)}
+                      data-active={on}
+                      onClick={() => setIdx(i)}
                       title={c.summary}
                       className={`cursor-pointer border-b border-line/60 px-3 py-2 transition-colors ${
                         on ? "bg-overlay" : "hover:bg-elevated"
