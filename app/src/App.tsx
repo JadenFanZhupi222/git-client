@@ -20,6 +20,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import type { Command } from "./lib/commands";
 import { useToast } from "./components/Toast";
 import { Button } from "./components/ui/Button";
+import { Glass } from "./components/ui/Glass";
 import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, useBranches, useSubmodules, useWorktrees, useSparseCheckout, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
 import { applyTheme, applyGlassMode, getStoredTheme, type Theme } from "./lib/theme";
 import { getStoredGlassPref, setStoredGlassPref } from "./lib/transparency";
@@ -314,7 +315,7 @@ export default function App() {
     <div className="flex h-screen flex-col bg-canvas text-fg">
       {busy && <TopProgress />}
       {/* 顶栏:轻、紧凑、左标题右仓库 */}
-      <header className="flex h-11 shrink-0 items-center gap-3 border-b border-line px-3">
+      <Glass as="header" className="relative z-20 flex h-11 shrink-0 items-center gap-3 border-b border-line px-3">
         <div className="flex items-center gap-2 font-semibold">
           <BranchMark />
           <span className="text-sm">Git 客户端</span>
@@ -495,7 +496,7 @@ export default function App() {
             {repo ? "切换仓库" : "选择仓库"}
           </button>
         </div>
-      </header>
+      </Glass>
 
       {/* 主体 */}
       {repo ? (
