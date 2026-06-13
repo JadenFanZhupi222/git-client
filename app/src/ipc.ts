@@ -5,38 +5,71 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-// 这些类型生产环境应由 ipc-types(specta/ts-rs)自动生成。
-// 阶段 0 先手写,和后端 DTO 保持一致。
-export interface CommitDto {
-  id: string;
-  short_id: string;
-  summary: string;
-  body: string;
-  author_name: string;
-  author_email: string;
-  timestamp: number;
-  parents: string[];
-}
+// DTO 类型由 ts-rs 从 crates/ipc-types 自动生成(M6.4),统一从 bindings 出口再导出。
+// 后端改字段 → 重新生成 → 前端编译期报错。生成命令见 docs/HANDOFF.md。
+export type {
+  AheadBehindDto,
+  BlameLineDto,
+  BranchDeleteImpactDto,
+  BranchDto,
+  CommitDto,
+  ConflictSidesDto,
+  DiffLineDto,
+  FetchResultDto,
+  FileChangeDto,
+  FileDiffDto,
+  FileEntryDto,
+  GraphRowDto,
+  GraphSegDto,
+  HunkDto,
+  ImageRefDto,
+  IpcError,
+  LineHistoryEntryDto,
+  OpLogDto,
+  OpLogEntryDto,
+  PullResultDto,
+  PushResultDto,
+  RefDto,
+  ReflogEntryDto,
+  SegDto,
+  SignatureInfoDto,
+  StashDto,
+  StatusDto,
+  SubmoduleInfoDto,
+  UndoStateDto,
+  UndoStepDto,
+  WorktreeInfoDto,
+} from "./bindings";
 
-export interface IpcError {
-  code: string;
-  message: string;
-  recoverable: boolean;
-}
+import type {
+  CommitDto,
+  StatusDto,
+  FileChangeDto,
+  LineHistoryEntryDto,
+  SignatureInfoDto,
+  SubmoduleInfoDto,
+  WorktreeInfoDto,
+  BranchDto,
+  AheadBehindDto,
+  BranchDeleteImpactDto,
+  FetchResultDto,
+  PullResultDto,
+  PushResultDto,
+  BlameLineDto,
+  ConflictSidesDto,
+  StashDto,
+  FileDiffDto,
+  GraphRowDto,
+  RefDto,
+  ReflogEntryDto,
+  UndoStateDto,
+  UndoStepDto,
+  OpLogDto,
+} from "./bindings";
 
 export async function getHeadCommit(repoPath: string): Promise<CommitDto> {
   // invoke 的参数名要和 Rust 命令的参数名一致(repo_path → repoPath,Tauri 自动转驼峰)
   return await invoke<CommitDto>("get_head_commit", { repoPath });
-}
-
-export interface FileEntryDto {
-  path: string;
-  state: string; // modified | added | deleted | renamed | untracked | conflicted
-  staged: boolean;
-}
-
-export interface StatusDto {
-  entries: FileEntryDto[];
 }
 
 export async function getStatus(repoPath: string): Promise<StatusDto> {
@@ -75,13 +108,6 @@ export async function amendCommit(repoPath: string, message?: string): Promise<s
   return await invoke<string>("amend_commit", { repoPath, message: message?.trim() ? message : null });
 }
 
-export interface FileChangeDto {
-  path: string;
-  status: string; // added | modified | deleted | renamed
-  additions: number;
-  deletions: number;
-}
-
 export async function getLog(repoPath: string, limit: number, skip: number): Promise<CommitDto[]> {
   return await invoke<CommitDto[]>("get_log", { repoPath, limit, skip });
 }
@@ -89,12 +115,6 @@ export async function getLog(repoPath: string, limit: number, skip: number): Pro
 /** 某文件的提交历史(git log --follow,跟随重命名,新→旧)。 */
 export async function getFileHistory(repoPath: string, file: string, limit: number): Promise<CommitDto[]> {
   return await invoke<CommitDto[]>("file_history", { repoPath, file, limit });
-}
-
-/** 行历史的一条:某提交 + 它对选中行范围的 diff。 */
-export interface LineHistoryEntryDto {
-  commit: CommitDto;
-  diff: FileDiffDto;
 }
 
 /** 某文件第 start–end 行的演变史(git log -L,新→旧,每条带范围 diff)。行号 1 起、含两端。 */
@@ -111,12 +131,6 @@ export async function getCommitFiles(repoPath: string, commitId: string): Promis
   return await invoke<FileChangeDto[]>("get_commit_files", { repoPath, commitId });
 }
 
-/** 提交签名状态。status: "none" | "good" | "unverified" | "bad"。 */
-export interface SignatureInfoDto {
-  status: string;
-  signer: string;
-}
-
 export async function getCommitSignature(repoPath: string, commitId: string): Promise<SignatureInfoDto> {
   return await invoke<SignatureInfoDto>("get_commit_signature", { repoPath, commitId });
 }
@@ -127,14 +141,6 @@ export async function getCurrentBranch(repoPath: string): Promise<string | null>
 
 // ── 子模块(M4.4) ──
 export type SubmoduleStatusStr = "uninitialized" | "up-to-date" | "modified" | "conflict";
-export interface SubmoduleInfoDto {
-  path: string;
-  url: string;
-  head_sha: string;
-  short_sha: string;
-  status: SubmoduleStatusStr;
-  describe: string; // 末尾括号描述(heads/main、tag 等),可能为空
-}
 
 /** 列出子模块(读 .gitmodules + git submodule status);无子模块返回空数组。 */
 export async function listSubmodules(repoPath: string): Promise<SubmoduleInfoDto[]> {
@@ -147,18 +153,6 @@ export async function updateSubmodule(repoPath: string, path: string): Promise<v
 }
 
 // ── 工作树(M4.5) ──
-export interface WorktreeInfoDto {
-  path: string;
-  head_sha: string;
-  short_sha: string;
-  branch: string; // 短分支名;分离头/裸仓库为空
-  is_main: boolean;
-  is_current: boolean;
-  detached: boolean;
-  locked: boolean;
-  bare: boolean;
-}
-
 /** 列出工作树(主 + 链接);普通仓库只有一个(主工作树)。 */
 export async function listWorktrees(repoPath: string): Promise<WorktreeInfoDto[]> {
   return await invoke<WorktreeInfoDto[]>("list_worktrees", { repoPath });
@@ -170,19 +164,9 @@ export async function sparseCheckoutPatterns(repoPath: string): Promise<string[]
 }
 
 // ── 分支管理(阶段 2a) ──
-export interface BranchDto {
-  name: string;
-  is_head: boolean;
-}
-
 /** 列出本地分支(名字升序,当前分支 is_head=true)。 */
 export async function listBranches(repoPath: string): Promise<BranchDto[]> {
   return await invoke<BranchDto[]>("list_branches", { repoPath });
-}
-
-export interface AheadBehindDto {
-  ahead: number; // 本地领先上游(可 push)
-  behind: number; // 本地落后上游(可 pull)
 }
 
 /** 当前分支相对上游的领先/落后;无上游返回 null。 */
@@ -220,39 +204,20 @@ export async function deleteBranch(repoPath: string, name: string): Promise<void
   await invoke("delete_branch", { repoPath, name });
 }
 
-export interface BranchDeleteImpactDto {
-  unmerged_commits: number;     // 删后会丢的提交数(0=安全)
-  sample_summaries: string[];   // 这些提交的摘要样本
-}
-
 /** 删某分支前的影响预览(会丢多少提交)。供二次确认。 */
 export async function branchDeleteImpact(repoPath: string, name: string): Promise<BranchDeleteImpactDto> {
   return await invoke<BranchDeleteImpactDto>("branch_delete_impact", { repoPath, name });
 }
 
 // ── 远程(阶段 2d-1) ──
-export interface FetchResultDto {
-  remote: string;
-  summary: string;
-}
-
 /** 从默认远程 fetch(remote 省略 = git 默认远程)。 */
 export async function fetchRemote(repoPath: string, remote?: string): Promise<FetchResultDto> {
   return await invoke<FetchResultDto>("fetch", { repoPath, remote: remote ?? null });
 }
 
-export interface PullResultDto {
-  summary: string;
-}
-
 /** pull。rebase=true 走 fetch+rebase。冲突抛 MERGE_CONFLICT、无上游抛 NO_UPSTREAM。 */
 export async function pullRemote(repoPath: string, rebase = false, remote?: string): Promise<PullResultDto> {
   return await invoke<PullResultDto>("pull", { repoPath, remote: remote ?? null, rebase });
-}
-
-export interface PushResultDto {
-  summary: string;
-  set_upstream: boolean; // 首次 push 自动建上游时为 true
 }
 
 /** push 当前分支。首次自动建上游;被拒(落后远程)抛 PUSH_REJECTED。 */
@@ -261,15 +226,6 @@ export async function pushRemote(repoPath: string, remote?: string): Promise<Pus
 }
 
 // ── Blame(追溯) ──
-export interface BlameLineDto {
-  line_no: number;
-  commit_id: string;
-  short_id: string;
-  author_name: string;
-  timestamp: number;
-  content: string;
-}
-
 /** 逐行 blame(file 为仓库根相对路径)。 */
 export async function blame(repoPath: string, file: string): Promise<BlameLineDto[]> {
   return await invoke<BlameLineDto[]>("blame", { repoPath, file });
@@ -306,13 +262,6 @@ export async function abortOp(repoPath: string): Promise<void> {
 /** 读工作区文件原文(冲突文件只读展示)。 */
 export async function readWorkingFile(repoPath: string, file: string): Promise<string> {
   return await invoke<string>("read_working_file", { repoPath, file });
-}
-
-/** 冲突文件三方内容(base/ours/theirs,某方缺失为 null)。供三栏合并编辑器。 */
-export interface ConflictSidesDto {
-  base: string | null;
-  ours: string | null;
-  theirs: string | null;
 }
 
 /** 读冲突文件三方内容(index stage 1/2/3 blob)。 */
@@ -364,11 +313,6 @@ export async function interactiveRebase(repoPath: string, base: string | null, s
 }
 
 // ── 贮藏(stash) ──
-export interface StashDto {
-  index: number;
-  message: string;
-}
-
 export async function stashList(repoPath: string): Promise<StashDto[]> {
   return await invoke<StashDto[]>("stash_list", { repoPath });
 }
@@ -391,41 +335,6 @@ export async function stashPop(repoPath: string, index: number): Promise<void> {
 /** 删除贮藏。 */
 export async function stashDrop(repoPath: string, index: number): Promise<void> {
   await invoke("stash_drop", { repoPath, index });
-}
-
-export interface SegDto {
-  text: string;
-  changed: boolean;
-}
-
-export interface DiffLineDto {
-  kind: string; // "context" | "add" | "del"
-  old_lineno: number | null;
-  new_lineno: number | null;
-  content: string;
-  emphasis?: SegDto[] | null;
-}
-
-export interface HunkDto {
-  header: string;
-  lines: DiffLineDto[];
-}
-
-export interface ImageRefDto {
-  mime: string;
-  oid: string; // 该侧 blob 十六进制 oid;空串 = 读工作区文件(未暂存新一侧)
-}
-
-export interface FileDiffDto {
-  path: string;
-  is_binary: boolean;
-  too_large: boolean;
-  is_lfs_pointer: boolean; // Git LFS 指针文件(内容是指针而非真实文件)
-  lfs_size: string;        // LFS 指针记录的实际字节数(字符串,非 LFS 为空)
-  is_image: boolean;       // 图片文件(同时 is_binary);old_image/new_image 为新旧两版取图句柄
-  old_image: ImageRefDto | null; // 改动前(新增文件为 null)
-  new_image: ImageRefDto | null; // 改动后(删除文件为 null)
-  hunks: HunkDto[];
 }
 
 /** 取一侧图片的原始字节(M6.2:不再走 base64-in-JSON)。返回 ArrayBuffer,前端转 Blob URL。
@@ -461,60 +370,14 @@ export async function getWorkingDiff(
   return await invoke<FileDiffDto>("get_working_diff", { repoPath, file, staged });
 }
 
-// ── 提交图谱 ──
-export interface GraphSegDto {
-  from: number;
-  to: number;
-  color: number;
-}
-
-export interface RefDto {
-  name: string;
-  kind: "head" | "local" | "remote" | "tag";
-}
-
-export interface GraphRowDto {
-  commit: CommitDto;
-  column: number;
-  color: number;
-  top: GraphSegDto[];
-  bottom: GraphSegDto[];
-  refs: RefDto[]; // 指向本行提交的引用(分支/远程/HEAD),多数为空
-  sync: "" | "outgoing" | "incoming"; // outgoing=已commit未push,incoming=已fetch未pull
-}
-
 /** 从 HEAD 取 limit 条提交并算好 lane 布局。 */
 export async function getCommitGraph(repoPath: string, limit: number): Promise<GraphRowDto[]> {
   return await invoke<GraphRowDto[]>("get_commit_graph", { repoPath, limit });
 }
 
-/** 搜索提交(匹配 message/作者/SHA 前缀,大小写不敏感),扁平列表;空 query 返回空。 */
-// ── reflog(HEAD 移动历史 / 后悔药)──
-export interface ReflogEntryDto {
-  index: number;
-  selector: string;   // "HEAD@{0}"
-  new_oid: string;    // 该步后 HEAD 指向的提交(reset 目标)
-  new_short: string;
-  message: string;    // "commit: ..." / "reset: moving to ..." / "checkout: ..."
-  committer_name: string;
-  timestamp: number;
-}
-
 /** HEAD 的 reflog,最近在前,最多 limit 条。用于找回被 reset/rebase 丢弃的提交。 */
 export async function getReflog(repoPath: string, limit: number): Promise<ReflogEntryDto[]> {
   return await invoke<ReflogEntryDto[]>("get_reflog", { repoPath, limit });
-}
-
-// ── 多级 Undo/Redo(操作时间线 + 光标,reset --soft,永不丢工作区)──
-export interface UndoStepDto {
-  label: string;             // 操作中文名,如 "提交"、"重置(reset)"
-  target_short: string;      // 这一步移动后 HEAD 的短 SHA
-  worktree_restored: boolean; // true=还原了工作区(hard,撤销 reset 等);false=内容回暂存区(soft,撤销提交)
-}
-
-export interface UndoStateDto {
-  can_undo: UndoStepDto | null; // 后退一步(撤销),null=不可
-  can_redo: UndoStepDto | null; // 前进一步(重做),null=不可
 }
 
 /** 撤销/重做的当前可用性(只读),驱动顶栏按钮的显隐与文案。 */
@@ -532,18 +395,6 @@ export async function redo(repoPath: string): Promise<UndoStepDto> {
   return await invoke<UndoStepDto>("redo", { repoPath });
 }
 
-// ── 操作日志(本会话写操作时间线)──
-export interface OpLogEntryDto {
-  label: string;        // 操作中文名;基点为 "起点"
-  target_short: string; // 该操作后 HEAD 短 SHA
-  timestamp: number;    // Unix 秒
-}
-
-export interface OpLogDto {
-  entries: OpLogEntryDto[]; // oldest→newest
-  current: number;          // 当前 HEAD 所在项下标
-}
-
 /** 操作日志:本工具本会话做过的写操作时间线 + 当前光标。 */
 export async function opLog(repoPath: string): Promise<OpLogDto> {
   return await invoke<OpLogDto>("op_log", { repoPath });
@@ -554,6 +405,7 @@ export async function opGoto(repoPath: string, index: number): Promise<UndoStepD
   return await invoke<UndoStepDto>("op_goto", { repoPath, index });
 }
 
+/** 搜索提交(匹配 message/作者/SHA 前缀,大小写不敏感),扁平列表;空 query 返回空。 */
 export async function searchCommits(repoPath: string, query: string, limit: number): Promise<CommitDto[]> {
   return await invoke<CommitDto[]>("search_commits", { repoPath, query, limit });
 }

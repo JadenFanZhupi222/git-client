@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 serde.workspace = true
 git-core = { path = "../git-core" }
+ts-rs.workspace = true
