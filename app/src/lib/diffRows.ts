@@ -1,4 +1,4 @@
-import { type DiffLineDto } from "../ipc";
+import { type DiffLineDto, type FileDiffDto, type HunkDto } from "../ipc";
 
 /** 一行 diff + 它在所属 hunk.lines 里的原始下标。行级暂存的选中键 `${hi}:${li}` 依赖这个下标,
  *  所以折叠/配对过程中必须把它带着走,展开后键不变。 */
@@ -98,4 +98,64 @@ export function buildSbsRows(refs: LineRef[]): SbsRow[] {
     for (let k = 0; k < max; k++) rows.push({ left: dels[k] ?? null, right: adds[k] ?? null });
   }
   return rows;
+}
+
+/** 折叠块的稳定键:hunk 下标 + 该块首个被折叠行的原始 li。展开集合按此键存。 */
+export function foldKey(hi: number, chunk: DiffChunk): string {
+  return `${hi}:${chunk.refs[0]?.li ?? 0}`;
+}
+
+export type ViewMode = "unified" | "split";
+
+/** 一维渲染项:hunk 头 / 折叠条 / 统一行 / 并排配对行。虚拟化吃这个扁平数组。 */
+export type DiffRow =
+  | { kind: "hunk"; hi: number; hunk: HunkDto }
+  | { kind: "fold"; hi: number; foldKey: string; count: number }
+  | { kind: "uline"; hi: number; ref: LineRef }
+  | { kind: "pair"; hi: number; row: SbsRow };
+
+/**
+ * 把整个 FileDiff 拍平成一维渲染项数组:每个 hunk 先出 hunk 头,再按 collapseContext
+ * 折叠,未展开的折叠块出 fold 项,其余按视图模式出 uline(统一)或 pair(并排)项。
+ * 纯函数,可测;虚拟化只认行数 + 等高,无需理解 diff 结构。
+ */
+export function buildDiffRows(diff: FileDiffDto, expanded: Set<string>, view: ViewMode): DiffRow[] {
+  const rows: DiffRow[] = [];
+  diff.hunks.forEach((hunk, hi) => {
+    rows.push({ kind: "hunk", hi, hunk });
+    for (const chunk of collapseContext(hunk.lines)) {
+      const key = foldKey(hi, chunk);
+      if (chunk.kind === "fold" && !expanded.has(key)) {
+        rows.push({ kind: "fold", hi, foldKey: key, count: chunk.refs.length });
+        continue;
+      }
+      if (view === "unified") {
+        for (const ref of chunk.refs) rows.push({ kind: "uline", hi, ref });
+      } else {
+        for (const row of buildSbsRows(chunk.refs)) rows.push({ kind: "pair", hi, row });
+      }
+    }
+  });
+  return rows;
+}
+
+/** 统一视图最长内容列数(用于算横向滚动宽度)。 */
+export function maxContentCols(diff: FileDiffDto): number {
+  let m = 0;
+  for (const h of diff.hunks) for (const l of h.lines) if (l.content.length > m) m = l.content.length;
+  return m;
+}
+
+/** 并排视图左(删+context)/右(增+context)各自最长内容列数。 */
+export function maxSideCols(diff: FileDiffDto): { left: number; right: number } {
+  let left = 0;
+  let right = 0;
+  for (const h of diff.hunks) {
+    for (const l of h.lines) {
+      const len = l.content.length;
+      if (l.kind !== "add" && len > left) left = len; // del / context 在左
+      if (l.kind !== "del" && len > right) right = len; // add / context 在右
+    }
+  }
+  return { left, right };
 }

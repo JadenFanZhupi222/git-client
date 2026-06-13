@@ -1,6 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { collapseContext, buildSbsRows, toRefs, type DiffChunk } from "./diffRows";
-import { type DiffLineDto } from "../ipc";
+import {
+  collapseContext,
+  buildSbsRows,
+  buildDiffRows,
+  maxContentCols,
+  maxSideCols,
+  toRefs,
+  type DiffChunk,
+} from "./diffRows";
+import { type DiffLineDto, type FileDiffDto, type HunkDto } from "../ipc";
 
 // diff 行折叠 + 并排配对纯逻辑回归。
 // collapseContext 锁:保留下标、顶住 ctx 行、隐藏阈值、首尾单侧、多改动块。
@@ -123,5 +131,71 @@ describe("buildSbsRows", () => {
       [1, 2],
       [3, 3],
     ]);
+  });
+});
+
+// 造一个带内容长度的行,验证宽度统计。
+const line = (kind: string, content: string): DiffLineDto => ({
+  kind,
+  old_lineno: kind === "add" ? null : 1,
+  new_lineno: kind === "del" ? null : 1,
+  content,
+});
+const hunk = (lines: DiffLineDto[]): HunkDto => ({ header: "@@ -1 +1 @@", lines });
+const fileDiff = (hunks: HunkDto[]): FileDiffDto => ({
+  path: "f",
+  is_binary: false,
+  too_large: false,
+  is_lfs_pointer: false,
+  lfs_size: "",
+  is_image: false,
+  old_image: null,
+  new_image: null,
+  hunks,
+});
+
+describe("buildDiffRows", () => {
+  it("每个 hunk 先出一条 hunk 头", () => {
+    const diff = fileDiff([hunk([line("add", "x")]), hunk([line("del", "y")])]);
+    const rows = buildDiffRows(diff, new Set(), "unified");
+    expect(rows.filter((r) => r.kind === "hunk")).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ kind: "hunk", hi: 0 });
+  });
+
+  it("unified:折叠块未展开出 fold 项,展开后出 uline 行", () => {
+    // 一段够长的 context 会折叠
+    const lines = [line("del", "d"), ...Array.from({ length: 8 }, () => line("context", "c")), line("add", "a")];
+    const diff = fileDiff([hunk(lines)]);
+    const collapsed = buildDiffRows(diff, new Set(), "unified");
+    const fold = collapsed.find((r) => r.kind === "fold");
+    expect(fold).toBeTruthy();
+    // 展开该 fold 后,fold 项消失,行变多
+    const expanded = buildDiffRows(diff, new Set([fold!.kind === "fold" ? fold!.foldKey : ""]), "unified");
+    expect(expanded.find((r) => r.kind === "fold")).toBeUndefined();
+    expect(expanded.filter((r) => r.kind === "uline").length).toBeGreaterThan(
+      collapsed.filter((r) => r.kind === "uline").length,
+    );
+  });
+
+  it("split:行出 pair 项,不出 uline", () => {
+    const diff = fileDiff([hunk([line("del", "d"), line("add", "a")])]);
+    const rows = buildDiffRows(diff, new Set(), "split");
+    expect(rows.some((r) => r.kind === "pair")).toBe(true);
+    expect(rows.some((r) => r.kind === "uline")).toBe(false);
+  });
+});
+
+describe("宽度统计", () => {
+  it("maxContentCols 取所有行最长内容", () => {
+    const diff = fileDiff([hunk([line("context", "ab"), line("add", "abcde"), line("del", "abc")])]);
+    expect(maxContentCols(diff)).toBe(5);
+  });
+
+  it("maxSideCols:左算删+context,右算增+context", () => {
+    const diff = fileDiff([
+      hunk([line("del", "delxx"), line("add", "ad"), line("context", "ctx")]),
+    ]);
+    // 左:del(5) / context(3) → 5;右:add(2) / context(3) → 3
+    expect(maxSideCols(diff)).toEqual({ left: 5, right: 3 });
   });
 });
