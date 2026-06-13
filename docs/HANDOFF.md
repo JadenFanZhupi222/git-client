@@ -2,7 +2,7 @@
 
 > 这份文件在 git 仓库里,会随 push/pull 跟到新机器。记录当前进度、铁律、下一步。
 > 配套必读:`CLAUDE.md`(铁律)、`ARCHITECTURE.md`(架构)、`README.md`(启动)。
-> 最近更新:2026-06-13(M6.1 并排 diff 体验补强完成:折叠未改区 + DiffView 拍平+虚拟化 + 并排纵横联动)。
+> 最近更新:2026-06-13(M6.3 完成:file_history/line_history/pickaxe 接 ref 域 LRU 缓存。M6.1 之前已完成)。
 
 ## 当前状态
 - 阶段 0/1/2/3 全部完成,**阶段 4 核心(交互式 rebase)已落地**。
@@ -106,10 +106,17 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
     行级暂存键(hi:li)/词级高亮全部不变。**后端零改动**;tsc + vitest(58)+ build 全绿。
     ⚠️ **真机视觉验收待做**:大 diff 滚动是否 60fps 无错位、并排纵横联动、折叠条展开手感、
     短 diff 是否铺满视口、行级暂存在并排里照常。
-  - 下一刀建议 **M6.3**(CLI 读路径 file_history/line_history/pickaxe 接 LRU 缓存 + 取消,
-    后端小刀、低风险、立刻和 M1 基建一致),再 M6.2(图片去 base64,破坏性)/ M6.6 / M6.4。
+  - ✅ **M6.3 CLI 读路径接缓存**(已合 main,后端小刀):`file_history`/`line_history`/`pickaxe`
+    此前直透后端绕过缓存,现接 `RepoCache` 三个 ref 域 LRU(键分别 (file,limit) /
+    (file,start,end) / (query,regex,limit)),与 log/blame 一致。`invalidate(GitRef)` 清这三者,
+    WorkingTree 不动(工作区改动不改提交历史)。FakeBackend 补这三方法 + 调用计数,
+    app-service 加 3 个命中/失效测试。**零行为变化**;cargo test/clippy/fmt 全绿。
+    取消(子进程可杀)按 plan「按需」顺延——前端已 keepPreviousData,缓存命中即跳过重跑。
+  - 下一刀建议(M6.1/M6.3 已收口):**M6.6**(面板键盘 a11y,纯前端低风险)或
+    **M6.2**(图片去 base64+对比模式,破坏性改 FileDiff,双轨过渡);**M6.4**(specta 自动类型)
+    最 invasive,放最后。
 - ⚠️ **全 M5 + 图片 diff + M6.1 真机视觉验收仍待做**(自动门 test/clippy/fmt/tsc/build 全过;
-  M5 已 push origin,**M6.1 已合 main 但尚未 push**)。
+  M5 + M6.1 已 push origin;**M6.3 已合 main 但尚未 push**,后端纯逻辑无需真机视觉验收)。
 - 零散续做:worktree 切换/新建(M4.5 只做展示);log 里 ctrl-多选两提交→比较。
 - 工程收尾:真机验收交互式 rebase(尤其中途冲突的继续/中止、大仓库 cp/exec 路径);CI 加 `fmt --check` + `clippy -D warnings` 卡口(属 infra,之前没动 .github);push 到 origin。
 - 已知小项:composite 40+ 透传样板(Rust 固有税,可选 delegate crate)。
