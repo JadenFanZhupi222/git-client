@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { type DiffLineDto, type FileDiffDto, type ImageDataDto } from "../ipc";
-import { buildSbsRows, toRefs, type SbsRow } from "../lib/diffRows";
+import { buildSbsRows, collapseContext, type DiffChunk, type LineRef, type SbsRow } from "../lib/diffRows";
+import { ChevronDownIcon } from "./icons";
 
 type ViewMode = "unified" | "split";
 const VIEW_KEY = "diff-view-mode";
@@ -27,6 +28,10 @@ export function DiffView({
   // 选中的行:键 `${hunkIdx}:${lineIdx}`。diff 变化(切文件)时清空。
   const [selected, setSelected] = useState<Set<string>>(new Set());
   useEffect(() => { setSelected(new Set()); }, [diff]);
+  // 已展开的折叠块:键 `${hunkIdx}:${首个被折叠行的 li}`。切文件时清空。
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  useEffect(() => { setExpanded(new Set()); }, [diff]);
+  const expand = (key: string) => setExpanded((prev) => new Set(prev).add(key));
   const [view, setView] = useState<ViewMode>(getStoredView);
   const setViewPersist = (v: ViewMode) => { setView(v); localStorage.setItem(VIEW_KEY, v); };
   const toggle = (key: string) =>
@@ -75,9 +80,9 @@ export function DiffView({
     <div className="fade-in flex flex-1 flex-col overflow-hidden font-mono text-[12px] leading-5">
       <ViewToggle view={view} onChange={setViewPersist} />
       {view === "split" ? (
-        <SplitDiff diff={diff} selected={selected} toggle={toggle} lineStage={lineStage} hunkAction={hunkAction} />
+        <SplitDiff diff={diff} selected={selected} toggle={toggle} lineStage={lineStage} hunkAction={hunkAction} expanded={expanded} expand={expand} />
       ) : (
-        <UnifiedDiff diff={diff} selected={selected} toggle={toggle} lineStage={lineStage} hunkAction={hunkAction} />
+        <UnifiedDiff diff={diff} selected={selected} toggle={toggle} lineStage={lineStage} hunkAction={hunkAction} expanded={expanded} expand={expand} />
       )}
     </div>
   );
@@ -110,8 +115,19 @@ type StageProps = {
   hunkAction?: { label: string; onAct: (hunkIndex: number) => void; disabled?: boolean };
 };
 
-/** unified 视图:旧/新双列行号 + 整行增删着色 + 词级行内高亮。 */
-function UnifiedDiff({ diff, selected, toggle, lineStage, hunkAction }: { diff: FileDiffDto } & StageProps) {
+/** 折叠相关 props:已展开的折叠块键集合 + 展开回调。 */
+type FoldProps = {
+  expanded: Set<string>;
+  expand: (key: string) => void;
+};
+
+/** 折叠块的稳定键:hunk 下标 + 该块首个被折叠行的原始 li。 */
+function foldKey(hi: number, chunk: DiffChunk): string {
+  return `${hi}:${chunk.refs[0]?.li ?? 0}`;
+}
+
+/** unified 视图:旧/新双列行号 + 整行增删着色 + 词级行内高亮。未改区按 collapseContext 折叠。 */
+function UnifiedDiff({ diff, selected, toggle, lineStage, hunkAction, expanded, expand }: { diff: FileDiffDto } & StageProps & FoldProps) {
   return (
     <div className="flex-1 overflow-auto">
       {/* min-w-max:整个 diff 体宽 = 最长行(全短行时则铺满视口);内部各行 min-w-full
@@ -119,38 +135,18 @@ function UnifiedDiff({ diff, selected, toggle, lineStage, hunkAction }: { diff: 
       <div className="min-w-max">
         {diff.hunks.map((h, hi) => {
           const selCount = h.lines.filter((_, li) => selected.has(`${hi}:${li}`)).length;
+          const chunks = collapseContext(h.lines);
           return (
             <div key={hi}>
               <StageHeader h={h} hi={hi} selCount={selCount} selected={selected} lineStage={lineStage} hunkAction={hunkAction} />
-              {h.lines.map((l, li) => {
-                const add = l.kind === "add";
-                const del = l.kind === "del";
-                const rowBg = add ? "bg-success/10" : del ? "bg-danger/10" : "";
-                const sign = add ? "+" : del ? "-" : " ";
-                const signCls = add ? "text-success" : del ? "text-danger" : "text-fg-subtle";
-                const selectable = !!lineStage && (add || del);
-                const key = `${hi}:${li}`;
-                const on = selected.has(key);
-                return (
-                  <div
-                    key={li}
-                    onClick={selectable ? () => toggle(key) : undefined}
-                    // min-w-full:行宽 = 外层 min-w-max 体宽(= 最长行),所有行齐平铺满。
-                    className={`flex min-w-full ${rowBg} ${selectable ? "cursor-pointer" : ""} ${on ? "ring-1 ring-inset ring-accent/60" : ""}`}
-                  >
-                    {lineStage && (
-                      <span className="w-4 shrink-0 select-none text-center text-[10px] text-accent">
-                        {selectable ? (on ? "✓" : "·") : ""}
-                      </span>
-                    )}
-                    <Gutter n={l.old_lineno} />
-                    <Gutter n={l.new_lineno} border />
-                    <span className={`w-4 shrink-0 select-none text-center ${signCls}`}>{sign}</span>
-                    <span className="flex-1 whitespace-pre pr-3 text-fg">
-                      <LineContent line={l} add={add} del={del} />
-                    </span>
-                  </div>
-                );
+              {chunks.map((chunk, ci) => {
+                const key = foldKey(hi, chunk);
+                if (chunk.kind === "fold" && !expanded.has(key)) {
+                  return <FoldBar key={`f${ci}`} count={chunk.refs.length} onExpand={() => expand(key)} />;
+                }
+                return chunk.refs.map((ref) => (
+                  <UnifiedLine key={ref.li} hi={hi} ref_={ref} selected={selected} toggle={toggle} lineStage={lineStage} />
+                ));
               })}
             </div>
           );
@@ -160,19 +156,65 @@ function UnifiedDiff({ diff, selected, toggle, lineStage, hunkAction }: { diff: 
   );
 }
 
-/** split 视图:左旧 / 右新 两列。每列独立横向滚动;左右行数配平 → 同序行等高对齐。 */
-function SplitDiff({ diff, selected, toggle, lineStage, hunkAction }: { diff: FileDiffDto } & StageProps) {
+/** unified 视图的一行。 */
+function UnifiedLine({ hi, ref_, selected, toggle, lineStage }: { hi: number; ref_: LineRef } & Pick<StageProps, "selected" | "toggle" | "lineStage">) {
+  const l = ref_.line;
+  const add = l.kind === "add";
+  const del = l.kind === "del";
+  const rowBg = add ? "bg-success/10" : del ? "bg-danger/10" : "";
+  const sign = add ? "+" : del ? "-" : " ";
+  const signCls = add ? "text-success" : del ? "text-danger" : "text-fg-subtle";
+  const selectable = !!lineStage && (add || del);
+  const key = `${hi}:${ref_.li}`;
+  const on = selected.has(key);
+  return (
+    <div
+      onClick={selectable ? () => toggle(key) : undefined}
+      // min-w-full:行宽 = 外层 min-w-max 体宽(= 最长行),所有行齐平铺满。
+      className={`flex min-w-full ${rowBg} ${selectable ? "cursor-pointer" : ""} ${on ? "ring-1 ring-inset ring-accent/60" : ""}`}
+    >
+      {lineStage && (
+        <span className="w-4 shrink-0 select-none text-center text-[10px] text-accent">
+          {selectable ? (on ? "✓" : "·") : ""}
+        </span>
+      )}
+      <Gutter n={l.old_lineno} />
+      <Gutter n={l.new_lineno} border />
+      <span className={`w-4 shrink-0 select-none text-center ${signCls}`}>{sign}</span>
+      <span className="flex-1 whitespace-pre pr-3 text-fg">
+        <LineContent line={l} add={add} del={del} />
+      </span>
+    </div>
+  );
+}
+
+/** 折叠条:替代一段被折叠的未改区,点击展开。统一/并排共用。 */
+function FoldBar({ count, onExpand }: { count: number; onExpand: () => void }) {
+  return (
+    <div
+      onClick={onExpand}
+      className="flex min-w-full cursor-pointer select-none items-center justify-center gap-1 border-y border-line/60 bg-overlay/40 py-0.5 text-[11px] text-fg-subtle transition-colors hover:bg-overlay hover:text-accent"
+    >
+      <ChevronDownIcon className="h-3 w-3" />
+      展开 {count} 行
+    </div>
+  );
+}
+
+/** split 视图:左旧 / 右新 两列。每列独立横向滚动;左右行数配平 → 同序行等高对齐。
+ *  未改区按 collapseContext 折叠;两列吃同一份 chunks → 折叠条与配对行在两侧同位等高。 */
+function SplitDiff({ diff, selected, toggle, lineStage, hunkAction, expanded, expand }: { diff: FileDiffDto } & StageProps & FoldProps) {
   return (
     <div className="flex-1 overflow-y-auto">
       {diff.hunks.map((h, hi) => {
         const selCount = h.lines.filter((_, li) => selected.has(`${hi}:${li}`)).length;
-        const rows = buildSbsRows(toRefs(h.lines));
+        const chunks = collapseContext(h.lines);
         return (
           <div key={hi}>
             <StageHeader h={h} hi={hi} selCount={selCount} selected={selected} lineStage={lineStage} hunkAction={hunkAction} />
             <div className="flex">
-              <SideColumn hi={hi} side="old" rows={rows} selected={selected} toggle={toggle} lineStage={lineStage} />
-              <SideColumn hi={hi} side="new" rows={rows} selected={selected} toggle={toggle} lineStage={lineStage} border />
+              <SideColumn hi={hi} side="old" chunks={chunks} selected={selected} toggle={toggle} lineStage={lineStage} expanded={expanded} expand={expand} />
+              <SideColumn hi={hi} side="new" chunks={chunks} selected={selected} toggle={toggle} lineStage={lineStage} expanded={expanded} expand={expand} border />
             </div>
           </div>
         );
@@ -181,60 +223,72 @@ function SplitDiff({ diff, selected, toggle, lineStage, hunkAction }: { diff: Fi
   );
 }
 
-/** 并排的一列(old 或 new),自带横向滚动;逐行渲染,空单元格占位以保持左右等高。 */
+/** 并排的一列(old 或 new),自带横向滚动;逐 chunk 渲染:折叠块出折叠条(两侧同位),
+ *  其余配对成 SbsRow 后逐行渲染,空单元格占位以保持左右等高。 */
 function SideColumn({
   hi,
   side,
-  rows,
+  chunks,
   selected,
   toggle,
   lineStage,
+  expanded,
+  expand,
   border,
 }: {
   hi: number;
   side: "old" | "new";
-  rows: SbsRow[];
+  chunks: DiffChunk[];
   border?: boolean;
-} & Pick<StageProps, "selected" | "toggle" | "lineStage">) {
+} & Pick<StageProps, "selected" | "toggle" | "lineStage"> & FoldProps) {
   return (
     <div className={`w-1/2 overflow-x-auto ${border ? "border-l border-line" : ""}`}>
       <div className="min-w-max">
-        {rows.map((r, ri) => {
-          const cell = side === "old" ? r.left : r.right;
-          if (!cell) {
-            // 占位空行:对侧有内容、本侧无对应行。
-            return <div key={ri} className="flex min-w-full bg-overlay/40">&nbsp;</div>;
+        {chunks.map((chunk, ci) => {
+          const key = foldKey(hi, chunk);
+          if (chunk.kind === "fold" && !expanded.has(key)) {
+            return <FoldBar key={`f${ci}`} count={chunk.refs.length} onExpand={() => expand(key)} />;
           }
-          const l = cell.line;
-          const add = l.kind === "add";
-          const del = l.kind === "del";
-          const rowBg = add ? "bg-success/10" : del ? "bg-danger/10" : "";
-          const sign = add ? "+" : del ? "-" : " ";
-          const signCls = add ? "text-success" : del ? "text-danger" : "text-fg-subtle";
-          const selectable = !!lineStage && (add || del);
-          const key = `${hi}:${cell.li}`;
-          const on = selected.has(key);
-          const lineno = side === "old" ? l.old_lineno : l.new_lineno;
-          return (
-            <div
-              key={ri}
-              onClick={selectable ? () => toggle(key) : undefined}
-              className={`flex min-w-full ${rowBg} ${selectable ? "cursor-pointer" : ""} ${on ? "ring-1 ring-inset ring-accent/60" : ""}`}
-            >
-              {lineStage && (
-                <span className="w-4 shrink-0 select-none text-center text-[10px] text-accent">
-                  {selectable ? (on ? "✓" : "·") : ""}
-                </span>
-              )}
-              <Gutter n={lineno} border />
-              <span className={`w-4 shrink-0 select-none text-center ${signCls}`}>{sign}</span>
-              <span className="flex-1 whitespace-pre pr-3 text-fg">
-                <LineContent line={l} add={add} del={del} />
-              </span>
-            </div>
-          );
+          return buildSbsRows(chunk.refs).map((r, ri) => (
+            <SideCell key={`${ci}:${ri}`} hi={hi} side={side} row={r} selected={selected} toggle={toggle} lineStage={lineStage} />
+          ));
         })}
       </div>
+    </div>
+  );
+}
+
+/** 并排某一列的一格(取 row 的 left 或 right);对侧有内容本侧无则占位空行。 */
+function SideCell({ hi, side, row, selected, toggle, lineStage }: { hi: number; side: "old" | "new"; row: SbsRow } & Pick<StageProps, "selected" | "toggle" | "lineStage">) {
+  const cell = side === "old" ? row.left : row.right;
+  if (!cell) {
+    return <div className="flex min-w-full bg-overlay/40">&nbsp;</div>;
+  }
+  const l = cell.line;
+  const add = l.kind === "add";
+  const del = l.kind === "del";
+  const rowBg = add ? "bg-success/10" : del ? "bg-danger/10" : "";
+  const sign = add ? "+" : del ? "-" : " ";
+  const signCls = add ? "text-success" : del ? "text-danger" : "text-fg-subtle";
+  const selectable = !!lineStage && (add || del);
+  const key = `${hi}:${cell.li}`;
+  const on = selected.has(key);
+  const lineno = side === "old" ? l.old_lineno : l.new_lineno;
+  return (
+    <div
+      onClick={selectable ? () => toggle(key) : undefined}
+      className={`flex min-w-full ${rowBg} ${selectable ? "cursor-pointer" : ""} ${on ? "ring-1 ring-inset ring-accent/60" : ""}`}
+    >
+      {lineStage && (
+        <span className="w-4 shrink-0 select-none text-center text-[10px] text-accent">
+          {selectable ? (on ? "✓" : "·") : ""}
+        </span>
+      )}
+      <Gutter n={lineno} border />
+      <span className={`w-4 shrink-0 select-none text-center ${signCls}`}>{sign}</span>
+      <span className="flex-1 whitespace-pre pr-3 text-fg">
+        <LineContent line={l} add={add} del={del} />
+      </span>
     </div>
   );
 }
