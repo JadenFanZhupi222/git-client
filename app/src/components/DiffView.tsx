@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { type DiffLineDto, type FileDiffDto, type ImageDataDto } from "../ipc";
+import { buildSbsRows, toRefs, type SbsRow } from "../lib/diffRows";
 
 type ViewMode = "unified" | "split";
 const VIEW_KEY = "diff-view-mode";
@@ -165,7 +166,7 @@ function SplitDiff({ diff, selected, toggle, lineStage, hunkAction }: { diff: Fi
     <div className="flex-1 overflow-y-auto">
       {diff.hunks.map((h, hi) => {
         const selCount = h.lines.filter((_, li) => selected.has(`${hi}:${li}`)).length;
-        const rows = buildSbsRows(h.lines);
+        const rows = buildSbsRows(toRefs(h.lines));
         return (
           <div key={hi}>
             <StageHeader h={h} hi={hi} selCount={selCount} selected={selected} lineStage={lineStage} hunkAction={hunkAction} />
@@ -236,30 +237,6 @@ function SideColumn({
       </div>
     </div>
   );
-}
-
-type SbsCell = { line: DiffLineDto; li: number } | null;
-type SbsRow = { left: SbsCell; right: SbsCell };
-
-/** 把 hunk 的扁平行列表配对成并排行:context 两侧同行;连续删块 del[i] 配连续增块 add[i],多余行对侧留空。 */
-function buildSbsRows(lines: DiffLineDto[]): SbsRow[] {
-  const rows: SbsRow[] = [];
-  let i = 0;
-  while (i < lines.length) {
-    const l = lines[i];
-    if (l.kind !== "del" && l.kind !== "add") {
-      rows.push({ left: { line: l, li: i }, right: { line: l, li: i } });
-      i++;
-      continue;
-    }
-    const dels: SbsCell[] = [];
-    while (i < lines.length && lines[i].kind === "del") { dels.push({ line: lines[i], li: i }); i++; }
-    const adds: SbsCell[] = [];
-    while (i < lines.length && lines[i].kind === "add") { adds.push({ line: lines[i], li: i }); i++; }
-    const max = Math.max(dels.length, adds.length);
-    for (let k = 0; k < max; k++) rows.push({ left: dels[k] ?? null, right: adds[k] ?? null });
-  }
-  return rows;
 }
 
 /** hunk 头(带行级暂存按钮)。这里把「选中行下标」从 selected 里实算出来传给 onStage。 */
