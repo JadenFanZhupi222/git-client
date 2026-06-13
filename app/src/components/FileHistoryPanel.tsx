@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { type CommitDto } from "../ipc";
+import { useEffect, useRef, useState } from "react";
 import { useFileHistory, useCommitDiff } from "../lib/queries";
+import { useModalListNav } from "../lib/listNav";
 import { formatRelative } from "../lib/time";
 import { DiffView } from "./DiffView";
 import { IconButton } from "./ui/IconButton";
@@ -18,13 +18,23 @@ export function FileHistoryPanel({
 }) {
   const q = useFileHistory(repo, file);
   const commits = q.data ?? [];
-  const [selected, setSelected] = useState<CommitDto | null>(null);
+  // 下标驱动选中:键盘 ↑↓ 直接走 navTarget,免去 null+effect 的择一。
+  const [idx, setIdx] = useState(0);
+  useEffect(() => { setIdx(0); }, [file]); // 换文件回到最新一条
+  const safeIdx = Math.min(idx, Math.max(0, commits.length - 1));
+  const selected = commits[safeIdx] ?? null;
 
-  // 换文件 / 首次加载完成时,默认选中最新一条。
-  useEffect(() => { setSelected(null); }, [file]);
+  const { dialogRef, onKeyDown } = useModalListNav({
+    count: commits.length,
+    index: safeIdx,
+    onSelect: setIdx,
+    onClose,
+  });
+  // 键盘移动时把选中行滚进可视区。
+  const listRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!selected && commits.length > 0) setSelected(commits[0]);
-  }, [commits, selected]);
+    listRef.current?.querySelector<HTMLElement>("[data-active='true']")?.scrollIntoView({ block: "nearest" });
+  }, [safeIdx]);
 
   const diffQ = useCommitDiff(repo, selected?.id ?? null, file);
   const name = file.slice(file.lastIndexOf("/") + 1);
@@ -32,7 +42,13 @@ export function FileHistoryPanel({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
       <div
-        className="flex h-[85vh] w-[90vw] max-w-[1200px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas shadow-2xl"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`文件历史 ${name}`}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
+        className="flex h-[85vh] w-[90vw] max-w-[1200px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas shadow-2xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
@@ -45,7 +61,7 @@ export function FileHistoryPanel({
         <div className="flex min-h-0 flex-1">
           {/* 左:提交列表 */}
           <div className="flex w-[340px] shrink-0 flex-col overflow-hidden border-r border-line">
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
               {q.isLoading ? (
                 <div className="p-4 text-xs text-fg-subtle">加载中…</div>
               ) : q.error ? (
@@ -53,12 +69,13 @@ export function FileHistoryPanel({
               ) : commits.length === 0 ? (
                 <div className="p-4 text-xs text-fg-subtle">该文件没有提交历史</div>
               ) : (
-                commits.map((c) => {
-                  const on = selected?.id === c.id;
+                commits.map((c, i) => {
+                  const on = i === safeIdx;
                   return (
                     <div
                       key={c.id}
-                      onClick={() => setSelected(c)}
+                      data-active={on}
+                      onClick={() => setIdx(i)}
                       title={c.summary}
                       className={`cursor-pointer border-b border-line/60 px-3 py-2 transition-colors ${
                         on ? "bg-overlay" : "hover:bg-elevated"

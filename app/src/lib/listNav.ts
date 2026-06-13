@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 
 /**
  * 列表的全局键盘导航(M3「Fluid」)——j/k 上下移动、g/G 跳首尾,选中即驱动详情/diff。
@@ -86,4 +87,81 @@ export function useListKeyboardNav({ count, index, onSelect, enabled = true }: L
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [count, index, onSelect, enabled]);
+}
+
+/** 把焦点圈在容器内(模态焦点陷阱):Tab 到尾回头、Shift+Tab 到头回尾。 */
+function trapFocus(container: HTMLElement | null, e: ReactKeyboardEvent) {
+  if (!container) return;
+  const focusable = container.querySelectorAll<HTMLElement>(
+    'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  );
+  if (focusable.length === 0) {
+    e.preventDefault(); // 无可聚焦元素:别让 Tab 跑到模态外
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement as HTMLElement | null;
+  if (e.shiftKey) {
+    if (active === first || active === container) {
+      e.preventDefault();
+      last.focus();
+    }
+  } else if (active === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
+export interface ModalListNavOptions {
+  /** 列表项数量 */
+  count: number;
+  /** 当前选中下标 */
+  index: number;
+  /** 把选中移动到下标 i */
+  onSelect: (i: number) => void;
+  /** Esc 关闭模态 */
+  onClose: () => void;
+}
+
+/**
+ * 模态弹层(file/line history 这类 overlay)的键盘 a11y:
+ * - 挂载时把焦点移到弹层、卸载时还回原处(打开前聚焦的元素);
+ * - Esc 关闭;↑↓/j/k/g/G/Home/End 在列表内移动选中(复用 [`navTarget`]);
+ * - Tab 焦点陷阱(不逃出模态)。
+ *
+ * 返回 `{ dialogRef, onKeyDown }`:把 ref 挂到弹层根 div(需 `tabIndex={-1}` +
+ * `role="dialog"` + `aria-modal`),onKeyDown 也挂在该 div 上。导航键 `stopPropagation`,
+ * 避免背景列表的全局 [`useListKeyboardNav`] 也跟着动。
+ */
+export function useModalListNav({ count, index, onSelect, onClose }: ModalListNavOptions) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  // 打开即聚焦弹层;关闭还原焦点到打开前的元素(键盘用户不丢上下文)。
+  useEffect(() => {
+    const prev = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus();
+    return () => prev?.focus?.();
+  }, []);
+
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      onClose();
+      return;
+    }
+    if (e.key === "Tab") {
+      trapFocus(dialogRef.current, e);
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (isTypingTarget(e.target)) return;
+    const next = navTarget(e.key, index, count);
+    if (next === null) return;
+    e.preventDefault();
+    e.stopPropagation(); // 别让背景列表的全局监听也响应
+    onSelect(next);
+  };
+
+  return { dialogRef, onKeyDown };
 }
