@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { TabBar, type Tab } from "./components/TabBar";
+import type { Tab } from "./components/TabBar";
+import { Sidebar } from "./components/Sidebar";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
 import { CompareView } from "./views/CompareView";
@@ -39,6 +40,7 @@ export default function App() {
   const [pulling, setPulling] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [pullRebase, setPullRebase] = useState(() => localStorage.getItem("pull.rebase") === "1");
+  const [sideCollapsed, setSideCollapsed] = useState(() => localStorage.getItem("sidebar.collapsed") === "1");
   const [pullMenu, setPullMenu] = useState(false);
   const [selectedRemote, setSelectedRemote] = useState<string | null>(null);
   const [remoteMenu, setRemoteMenu] = useState(false);
@@ -495,12 +497,21 @@ export default function App() {
         </div>
       </header>
 
-      {repo && <TabBar active={tab} onChange={setTab} hasSubmodules={hasSubmodules} hasWorktrees={hasWorktrees} hasSparse={hasSparse} />}
-
       {/* 主体 */}
       {repo ? (
-        <div className="min-h-0 flex-1">
-          {tab === "changes" ? <ChangesView repo={repo} /> : tab === "history" ? <HistoryView repo={repo} /> : tab === "compare" ? <CompareView repo={repo} /> : tab === "submodules" ? <SubmodulesView repo={repo} /> : tab === "worktrees" ? <WorktreesView repo={repo} /> : tab === "sparse" ? <SparseCheckoutView repo={repo} /> : <BlameView repo={repo} />}
+        <div className="flex min-h-0 flex-1">
+          <Sidebar
+            active={tab}
+            onChange={setTab}
+            collapsed={sideCollapsed}
+            onToggleCollapse={() => { const n = !sideCollapsed; setSideCollapsed(n); localStorage.setItem("sidebar.collapsed", n ? "1" : "0"); }}
+            hasSubmodules={hasSubmodules}
+            hasWorktrees={hasWorktrees}
+            hasSparse={hasSparse}
+          />
+          <div className="min-h-0 min-w-0 flex-1">
+            {tab === "changes" ? <ChangesView repo={repo} /> : tab === "history" ? <HistoryView repo={repo} /> : tab === "compare" ? <CompareView repo={repo} /> : tab === "submodules" ? <SubmodulesView repo={repo} /> : tab === "worktrees" ? <WorktreesView repo={repo} /> : tab === "sparse" ? <SparseCheckoutView repo={repo} /> : <BlameView repo={repo} />}
+          </div>
         </div>
       ) : (
         <EmptyState onPick={pickRepo} />
