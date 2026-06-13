@@ -2,7 +2,7 @@
 
 > 这份文件在 git 仓库里,会随 push/pull 跟到新机器。记录当前进度、铁律、下一步。
 > 配套必读:`CLAUDE.md`(铁律)、`ARCHITECTURE.md`(架构)、`README.md`(启动)。
-> 最近更新:2026-06-12(图片 diff 完成:DiffView 并排预览新旧图;M5「更深的 diff 与历史」全部完成)。
+> 最近更新:2026-06-13(M6.1 并排 diff 体验补强完成:折叠未改区 + DiffView 拍平+虚拟化 + 并排纵横联动)。
 
 ## 当前状态
 - 阶段 0/1/2/3 全部完成,**阶段 4 核心(交互式 rebase)已落地**。
@@ -90,11 +90,26 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
     `is_binary` 前)并排两栏(旧|新,新增只显新、删除只显旧),`.checkerboard` 棋盘格衬透明 + 显尺寸/体积。
     base64 crate 跟 `git2-backend` feature。spec 无(实现直接,设计写在提交信息)。
   - **M5「更深的 diff 与历史」全部完成**(5.1 词级 / 5.2 并排 / 5.3 文件历史 / 5.4 行历史 / 5.5 pickaxe / 图片 diff)。
-- **下一里程碑:M6 · Polish & Harden(打磨与硬化)** —— 不堆新功能,还 M5 留的债。
+- **当前里程碑:M6 · Polish & Harden(打磨与硬化)** —— 不堆新功能,还 M5 留的债。
   **完整切片见 `docs/superpowers/plans/2026-06-12-m6-polish-harden.md`**(M6.1 并排同步滚动+折叠+虚拟化 /
   M6.2 图片去 base64+对比模式 / M6.3 新 CLI 读路径接缓存取消 / M6.4 specta 自动类型 / M6.5 M5 测试补齐 /
-  M6.6 面板键盘 a11y)。建议起手 M6.1(价值最高、纯前端)。原 roadmap「M6 协作/PR」顺延为 M7。
-- ⚠️ **全 M5 + 图片 diff 真机视觉验收仍待做**(自动门 test/clippy/fmt/tsc/build 全过;M5 已 push origin)。
+  M6.6 面板键盘 a11y)。原 roadmap「M6 协作/PR」顺延为 M7。
+  - ✅ **M6.1 并排 diff 体验补强**(已合 main,纯前端,三刀):
+    新增纯函数库 `app/src/lib/diffRows.ts`(+ vitest):`collapseContext` 折叠未改区
+    (改动块上下各留 ctx=3 行,隐藏 ≥ minFold=2 才折,带原始 li)、`buildSbsRows`(从
+    DiffView 迁来,吃 LineRef[] 保留 li)、`buildDiffRows` 把整个 FileDiff 拍平成一维渲染项
+    (hunk头/折叠条/统一行/并排配对行)、`maxContentCols`/`maxSideCols` 算横滚体宽。
+    DiffView 改用单个虚拟化纵向滚动容器(`useVirtualizer`,固定行高 ROW_H=20「估计=实际」),
+    近 2 万行也只挂可视窗口;并排从「两列各自横滚」改成**单容器配对行 PairRow/HalfCell**
+    (左半定宽、右半 flex-1 吸余量)→ 纵横联动(同步滚动)。折叠条点开就地展开(expanded 集合,
+    切文件清空,单向展开)。StageHeader 适配固定行高(去 sticky/ml-auto,按钮就近左排)。
+    行级暂存键(hi:li)/词级高亮全部不变。**后端零改动**;tsc + vitest(58)+ build 全绿。
+    ⚠️ **真机视觉验收待做**:大 diff 滚动是否 60fps 无错位、并排纵横联动、折叠条展开手感、
+    短 diff 是否铺满视口、行级暂存在并排里照常。
+  - 下一刀建议 **M6.3**(CLI 读路径 file_history/line_history/pickaxe 接 LRU 缓存 + 取消,
+    后端小刀、低风险、立刻和 M1 基建一致),再 M6.2(图片去 base64,破坏性)/ M6.6 / M6.4。
+- ⚠️ **全 M5 + 图片 diff + M6.1 真机视觉验收仍待做**(自动门 test/clippy/fmt/tsc/build 全过;
+  M5 已 push origin,**M6.1 已合 main 但尚未 push**)。
 - 零散续做:worktree 切换/新建(M4.5 只做展示);log 里 ctrl-多选两提交→比较。
 - 工程收尾:真机验收交互式 rebase(尤其中途冲突的继续/中止、大仓库 cp/exec 路径);CI 加 `fmt --check` + `clippy -D warnings` 卡口(属 infra,之前没动 .github);push 到 origin。
 - 已知小项:composite 40+ 透传样板(Rust 固有税,可选 delegate crate)。
