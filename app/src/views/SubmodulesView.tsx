@@ -50,7 +50,7 @@ function SubmoduleRow({ repo, sub }: { repo: string; sub: SubmoduleInfoDto }) {
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const qc = useQueryClient();
-  const meta = STATUS_META[sub.status];
+  const meta = STATUS_META[sub.status as SubmoduleStatusStr];
   // 未初始化 → 初始化检出;未同步 → 更新到记录版本。两者同一后端命令,文案/图标不同。
   const action =
     sub.status === "uninitialized"

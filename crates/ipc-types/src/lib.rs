@@ -9,10 +9,12 @@ use git_core::model::{
     SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus, WorktreeInfo,
 };
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// 传给前端的提交 DTO。这里特意和领域模型 Commit 分开:
 /// 领域模型可以很丰富,DTO 只暴露前端真正需要的字段。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct CommitDto {
     pub id: String,
     pub short_id: String,
@@ -21,6 +23,7 @@ pub struct CommitDto {
     pub body: String,
     pub author_name: String,
     pub author_email: String,
+    #[ts(type = "number")]
     pub timestamp: i64,
     pub parents: Vec<String>,
 }
@@ -41,7 +44,8 @@ impl From<Commit> for CommitDto {
 }
 
 /// 一条 reflog 记录 DTO。`new_oid` 是"重置回这一步"时 reset 的目标提交。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct ReflogEntryDto {
     pub index: usize,
     pub selector: String,
@@ -49,6 +53,7 @@ pub struct ReflogEntryDto {
     pub new_short: String,
     pub message: String,
     pub committer_name: String,
+    #[ts(type = "number")]
     pub timestamp: i64,
 }
 
@@ -68,7 +73,8 @@ impl From<ReflogEntry> for ReflogEntryDto {
 
 /// 一步 Undo / Redo 的描述:`label`=操作中文名,`target_short`=移动后 HEAD 的短 SHA。
 /// 既用于 `undo`/`redo` 的返回(已执行),也用于 [`UndoStateDto`] 里描述「下一步能做什么」。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct UndoStepDto {
     /// 操作的中文名,如 "提交"、"重置(reset)"。
     pub label: String,
@@ -81,7 +87,8 @@ pub struct UndoStepDto {
 
 /// 撤销/重做的当前可用性。驱动顶栏「撤销」「重做」两个按钮的显隐与文案。
 /// `None` = 该方向无可用项(按钮不显);来自 `RepoContext` 内的操作时间线 + 光标。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct UndoStateDto {
     /// 后退一步(撤销最近一次操作)。
     pub can_undo: Option<UndoStepDto>,
@@ -90,19 +97,22 @@ pub struct UndoStateDto {
 }
 
 /// 操作日志的一项:本工具做过的一次写操作的落点。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct OpLogEntryDto {
     /// 操作中文名,如 "提交"、"cherry-pick";时间线基点为 "起点"。
     pub label: String,
     /// 该操作后 HEAD 的短 SHA。
     pub target_short: String,
     /// Unix 时间戳(秒),供「几分钟前」显示。
+    #[ts(type = "number")]
     pub timestamp: i64,
 }
 
 /// 操作日志面板数据:本会话写操作时间线(oldest→newest)+ 当前光标位置。
 /// 点击第 i 项 = goto(i),沿时间线 reset --soft 跳过去。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct OpLogDto {
     pub entries: Vec<OpLogEntryDto>,
     /// 当前 HEAD 所在的项下标(高亮「现在在哪」)。
@@ -110,7 +120,8 @@ pub struct OpLogDto {
 }
 
 /// 跨 IPC 边界的错误:带错误码(前端做逻辑分支)+ 友好信息 + 是否可重试。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct IpcError {
     pub code: String,
     pub message: String,
@@ -118,14 +129,16 @@ pub struct IpcError {
 }
 
 /// 工作区单个文件状态的 DTO。state 用字符串,前端直接渲染徽章。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct FileEntryDto {
     pub path: String,
     pub state: String, // modified | added | deleted | renamed | untracked | conflicted
     pub staged: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct StatusDto {
     pub entries: Vec<FileEntryDto>,
 }
@@ -156,7 +169,8 @@ impl From<WorkingTreeStatus> for StatusDto {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct FileChangeDto {
     pub path: String,
     pub status: String, // added | modified | deleted | renamed | untracked | conflicted
@@ -184,7 +198,8 @@ impl From<FileChange> for FileChangeDto {
 }
 
 /// 当前分支相对上游的领先/落后 DTO。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct AheadBehindDto {
     pub ahead: usize,
     pub behind: usize,
@@ -200,12 +215,14 @@ impl From<AheadBehind> for AheadBehindDto {
 }
 
 /// blame 一行 DTO。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct BlameLineDto {
     pub line_no: u32,
     pub commit_id: String,
     pub short_id: String,
     pub author_name: String,
+    #[ts(type = "number")]
     pub timestamp: i64,
     pub content: String,
 }
@@ -224,7 +241,8 @@ impl From<BlameLine> for BlameLineDto {
 }
 
 /// 提交签名 DTO。status: "none" | "good" | "unverified" | "bad"。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct SignatureInfoDto {
     pub status: String,
     pub signer: String,
@@ -246,7 +264,8 @@ impl From<SignatureInfo> for SignatureInfoDto {
 }
 
 /// 子模块 DTO。status: "uninitialized" | "up-to-date" | "modified" | "conflict"。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct SubmoduleInfoDto {
     pub path: String,
     pub url: String,
@@ -276,7 +295,8 @@ impl From<SubmoduleInfo> for SubmoduleInfoDto {
 }
 
 /// 工作树 DTO。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct WorktreeInfoDto {
     pub path: String,
     pub head_sha: String,
@@ -306,7 +326,8 @@ impl From<WorktreeInfo> for WorktreeInfoDto {
 }
 
 /// 冲突文件三方内容 DTO(base/ours/theirs,某方缺失为 null)。供三栏合并编辑器用。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct ConflictSidesDto {
     pub base: Option<String>,
     pub ours: Option<String>,
@@ -324,7 +345,8 @@ impl From<ConflictSides> for ConflictSidesDto {
 }
 
 /// 一条贮藏 DTO。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct StashDto {
     pub index: usize,
     pub message: String,
@@ -340,7 +362,8 @@ impl From<StashEntry> for StashDto {
 }
 
 /// 本地分支 DTO。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct BranchDto {
     pub name: String,
     pub is_head: bool,
@@ -356,7 +379,8 @@ impl From<BranchInfo> for BranchDto {
 }
 
 /// 删分支影响预览 DTO:`unmerged_commits`>0 时前端做强危险二次确认。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct BranchDeleteImpactDto {
     pub unmerged_commits: usize,
     pub sample_summaries: Vec<String>,
@@ -372,7 +396,8 @@ impl From<BranchDeleteImpact> for BranchDeleteImpactDto {
 }
 
 /// 一次 fetch 的结果 DTO。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct FetchResultDto {
     pub remote: String,
     pub summary: String,
@@ -388,7 +413,8 @@ impl From<FetchOutcome> for FetchResultDto {
 }
 
 /// 一次 pull 的成功结果 DTO。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct PullResultDto {
     pub summary: String,
 }
@@ -400,7 +426,8 @@ impl From<PullOutcome> for PullResultDto {
 }
 
 /// 一次 push 的成功结果 DTO。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct PushResultDto {
     pub summary: String,
     /// 本次是否顺带建立了上游(首次 push 自动 -u 时为 true,前端可特别提示)。
@@ -418,7 +445,8 @@ impl From<PushOutcome> for PushResultDto {
 
 /// 图谱中一段连线:在某行单元格内,从 `from` 列连到 `to` 列。
 /// 上半段语义为 顶边→节点(中点),下半段为 节点(中点)→底边。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct GraphSegDto {
     pub from: u32,
     pub to: u32,
@@ -426,7 +454,8 @@ pub struct GraphSegDto {
 }
 
 /// 指向某 commit 的引用 DTO。kind:head | local | remote。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct RefDto {
     pub name: String,
     pub kind: String,
@@ -448,7 +477,8 @@ impl From<CommitRef> for RefDto {
 }
 
 /// 图谱一行:嵌入提交信息 + 节点列/颜色 + 上下半段连线 + 指向该提交的引用。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct GraphRowDto {
     pub commit: CommitDto,
     pub column: u32,
@@ -462,7 +492,8 @@ pub struct GraphRowDto {
 }
 
 /// 行内一段 DTO。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct SegDto {
     pub text: String,
     pub changed: bool,
@@ -478,13 +509,15 @@ impl From<Seg> for SegDto {
 }
 
 /// 行级 diff 的一行 DTO。kind:context | add | del。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct DiffLineDto {
     pub kind: String,
     pub old_lineno: Option<u32>,
     pub new_lineno: Option<u32>,
     pub content: String,
     /// 行内词级段;None = 整行着色。
+    #[ts(optional)]
     pub emphasis: Option<Vec<SegDto>>,
 }
 
@@ -507,7 +540,8 @@ impl From<DiffLine> for DiffLineDto {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct HunkDto {
     pub header: String,
     pub lines: Vec<DiffLineDto>,
@@ -524,7 +558,8 @@ impl From<Hunk> for HunkDto {
 
 /// 一侧图片的取图句柄(M6.2:不再内联 base64)。前端用 `(mime, oid)` + 文件路径经
 /// `read_image` 命令取原始字节转 Blob URL。`oid` 空串表示读工作区文件。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct ImageRefDto {
     pub mime: String,
     pub oid: String,
@@ -539,7 +574,8 @@ impl From<ImageRef> for ImageRefDto {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct FileDiffDto {
     pub path: String,
     pub is_binary: bool,
@@ -569,7 +605,8 @@ impl From<FileDiff> for FileDiffDto {
 }
 
 /// 行历史的一条:某提交 + 它对选中行范围的 diff。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct LineHistoryEntryDto {
     pub commit: CommitDto,
     pub diff: FileDiffDto,
