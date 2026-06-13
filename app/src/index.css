@@ -248,15 +248,31 @@ body {
 }
 
 /* 液态玻璃:三档由 <html data-glass="..."> 控制(refract/blur/solid)。
-   .glass 基类只管表面 + 描边 + 阴影;backdrop-filter 由档位决定。 */
+   .glass 只管表面 + 描边 + 阴影。贴边外壳只留发丝过渡 + 极淡投影,
+   避免与相邻区域交界生硬;大投影留给真正的浮层(命令面板/菜单)。 */
 .glass {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.03) 42%, rgba(255, 255, 255, 0.06));
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03) 42%, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--color-line);
+  box-shadow: 0 1px 2px rgba(15, 30, 50, 0.04), 0 6px 18px rgba(15, 30, 50, 0.05);
 }
-:root[data-glass="refract"] .glass { backdrop-filter: url(#lgWarp) blur(3px) saturate(165%); }
-:root[data-glass="blur"] .glass { backdrop-filter: blur(12px) saturate(160%); -webkit-backdrop-filter: blur(12px) saturate(160%); }
-:root[data-glass="solid"] .glass { background: var(--color-elevated); border-color: var(--color-line-strong); backdrop-filter: none; }
-
-/* 浅色下玻璃较难出彩:默认收一档对比 */
-:root:not([data-theme]):not([data-glass="solid"]) .glass { background: linear-gradient(135deg, rgba(255,255,255,.6), rgba(255,255,255,.35)); border-color: var(--color-line-strong); }
+:root[data-theme="dark"] .glass {
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+:root[data-glass="refract"] .glass {
+  backdrop-filter: url(#lgWarp) blur(3px) saturate(160%);
+}
+:root[data-glass="blur"] .glass {
+  backdrop-filter: blur(12px) saturate(155%);
+  -webkit-backdrop-filter: blur(12px) saturate(155%);
+}
+:root[data-glass="solid"] .glass {
+  background: var(--color-elevated);
+  border-color: var(--color-line);
+  backdrop-filter: none;
+  box-shadow: none;
+}
+/* 浅色下玻璃近乎与画布同调,只留发丝边,消除生硬交界 */
+:root:not([data-theme]):not([data-glass="solid"]) .glass {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.42));
+  border-color: var(--color-line);
+}
