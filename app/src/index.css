@@ -6,32 +6,33 @@
    想换主题/调对比度,只改这里一处,所有组件跟着变。
    ──────────────────────────────────────────────────────────── */
 @theme {
-  /* 表面层级(浅色):基底白 → hover 浅灰 → 选中更深灰。
-     浅色主题靠「渐深 + 细边框」表达层次,而非暗色那种填充深浅。 */
-  --color-canvas: #ffffff; /* 应用背景 / 列表 / 输入 */
-  --color-elevated: #f3f5f8; /* 面板 / chip / footer / hover 表面 */
-  --color-overlay: #e7ecf2; /* 选中行 / 更高一层(微冷灰) */
+  /* 浅色:白底 + 青绿身份。靠渐深 + 细边框表达层次。 */
+  --color-canvas: #ffffff;
+  --color-elevated: #f3f6f9;
+  --color-overlay: #e7eef2;
 
-  /* 描边 */
-  --color-line: #e6e9ee; /* 常规分隔线(发丝级) */
-  --color-line-strong: #d0d7de; /* 强调描边 / 提交轨 / 滚动条 */
+  --color-line: #e3e8ee;
+  --color-line-strong: #ccd5dd;
 
-  /* 文字(近黑而非纯黑,更柔和;对比度满足 AA) */
-  --color-fg: #1f2328; /* 主文字 */
-  --color-fg-muted: #59636e; /* 次要文字 */
-  --color-fg-subtle: #818b98; /* 占位 / 禁用 */
+  --color-fg: #16202c;
+  --color-fg-muted: #51606e;
+  --color-fg-subtle: #7b8794;
 
-  /* 语义色(加深以适配白底) */
-  --color-accent: #0969da; /* 链接 / 焦点 / 当前提交 */
-  --color-accent-emphasis: #0550ae; /* 选中高亮边(更深一档) */
-  --color-success: #1a7f37; /* 新增 / 成功 */
-  --color-danger: #cf222e; /* 删除 / 错误 */
-  --color-warning: #9a6700; /* 重命名 / 警告 */
-  --color-done: #1f883d; /* 提交按钮(实心绿),配白字 */
+  --color-accent: #0d9488;          /* 青绿(白底加深保 AA) */
+  --color-accent-emphasis: #0f766e;
+  --color-success: #0f9d6b;
+  --color-danger: #d64545;
+  --color-warning: #c2691c;
+  --color-done: #0d9488;            /* 提交按钮:青绿实心 + 白字 */
 
-  /* 字体 */
   --font-sans: ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
   --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+
+  /* 圆角阶梯 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
 }
 
 /* 提交图谱泳道调色板(数据可视化色,与语义 UI token 分开)。
@@ -56,23 +57,23 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --color-canvas: #0d1117;
-  --color-elevated: #161b22;
-  --color-overlay: #1c2128;
+  --color-canvas: #0a0f18;
+  --color-elevated: #121a28;
+  --color-overlay: #1a2333;
 
-  --color-line: #21262d;
-  --color-line-strong: #30363d;
+  --color-line: rgba(120, 140, 170, 0.14);
+  --color-line-strong: rgba(120, 140, 170, 0.28);
 
-  --color-fg: #e6edf3;
-  --color-fg-muted: #8b949e;
-  --color-fg-subtle: #6e7681;
+  --color-fg: #e6edf6;
+  --color-fg-muted: #8b9bb0;
+  --color-fg-subtle: #5f6e85;
 
-  --color-accent: #58a6ff;
-  --color-accent-emphasis: #1f6feb;
-  --color-success: #3fb950;
-  --color-danger: #f85149;
-  --color-warning: #d29922;
-  --color-done: #238636;
+  --color-accent: #2dd4bf;
+  --color-accent-emphasis: #14b8a6;
+  --color-success: #34c78c;
+  --color-danger: #f46e6e;
+  --color-warning: #f0883e;
+  --color-done: #16b3a3;
 
   /* 泳道:暗底用更亮的一组(原暗色版配色) */
   --lane-0: #58a6ff;
