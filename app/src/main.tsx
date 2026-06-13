@@ -4,10 +4,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "./index.css";
 import App from "./App";
 import { ToastProvider } from "./components/Toast";
-import { applyTheme, getStoredTheme } from "./lib/theme";
+import { applyTheme, getStoredTheme, applyGlassMode } from "./lib/theme";
 
 // 渲染前先定主题,避免首屏从浅色「闪」到暗色
 applyTheme(getStoredTheme());
+// 渲染前定玻璃档位,写到 <html data-glass>
+applyGlassMode();
 
 function GlassFilter() {
   return (
