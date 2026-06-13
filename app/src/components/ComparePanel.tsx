@@ -40,7 +40,7 @@ export function ComparePanel({ repo, from, to }: { repo: string; from: string; t
         </div>
         <Resizer onDown={col.onDown} />
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!file} />
+          <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!file} repo={repo} />
         </main>
       </div>
     </div>

@@ -48,11 +48,13 @@ pub struct Hunk {
     pub lines: Vec<DiffLine>,
 }
 
-/// 一张图片的内容:MIME 类型 + base64 编码的字节。前端拼成 `data:<mime>;base64,<base64>` 渲染。
+/// 一侧图片的「取图句柄」(M6.2:不再内联 base64,避免 5MB 图膨胀 33% 还当 JSON 字符串解析)。
+/// 前端拿 `(mime, oid)` 经 `read_image` 命令取原始字节、转 Blob URL 渲染。
+/// `oid` 为该侧 blob 的十六进制对象 id;空串表示读工作区文件(未暂存新一侧,内容尚未入库)。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ImageData {
+pub struct ImageRef {
     pub mime: String,
-    pub base64: String,
+    pub oid: String,
 }
 
 /// 单个文件的行级 diff。
@@ -73,10 +75,10 @@ pub struct FileDiff {
     pub lfs_size: String,
     /// 是否图片文件(按扩展名识别;同时 is_binary=true)。
     pub is_image: bool,
-    /// 旧版图片(改动前);新增文件为 None。
-    pub old_image: Option<ImageData>,
-    /// 新版图片(改动后);删除文件为 None。
-    pub new_image: Option<ImageData>,
+    /// 旧版图片取图句柄(改动前);新增文件为 None。
+    pub old_image: Option<ImageRef>,
+    /// 新版图片取图句柄(改动后);删除文件为 None。
+    pub new_image: Option<ImageRef>,
     pub hunks: Vec<Hunk>,
 }
 

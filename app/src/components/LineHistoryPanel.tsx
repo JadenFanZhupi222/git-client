@@ -101,7 +101,7 @@ export function LineHistoryPanel({
 
           {/* 右:选中提交里这几行的 diff(来自 entry,无需另查) */}
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <DiffView diff={selected?.diff ?? null} loading={false} hasFile={!!selected} />
+            <DiffView diff={selected?.diff ?? null} loading={false} hasFile={!!selected} repo={repo} />
           </div>
         </div>
       </div>

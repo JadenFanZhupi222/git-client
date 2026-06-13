@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { type DiffLineDto, type FileDiffDto, type ImageDataDto } from "../ipc";
+import { readImage, type DiffLineDto, type FileDiffDto, type ImageRefDto } from "../ipc";
 import { buildDiffRows, maxContentCols, maxSideCols, type DiffRow, type LineRef, type SbsRow } from "../lib/diffRows";
 import { ChevronDownIcon } from "./icons";
 
@@ -18,12 +18,15 @@ export function DiffView({
   diff,
   loading,
   hasFile,
+  repo,
   hunkAction,
   lineStage,
 }: {
   diff: FileDiffDto | null;
   loading: boolean;
   hasFile: boolean;
+  /** 仓库路径:图片 diff 取字节(read_image)用;非图片可省。 */
+  repo?: string;
   /** 可选:每个 hunk 头部显示一个动作按钮(Changes 视图的「暂存/取消暂存此块」)。 */
   hunkAction?: { label: string; onAct: (hunkIndex: number) => void; disabled?: boolean };
   /** 可选:开启行级选择暂存(仅未暂存改动)。点 +/- 行选中,hunk 头出现「暂存选中行」。 */
@@ -68,7 +71,10 @@ export function DiffView({
     if (!diff.old_image && !diff.new_image) {
       return <Center>图片过大或无法读取，已跳过预览</Center>;
     }
-    return <ImageDiff diff={diff} />;
+    if (!repo) {
+      return <Center>无法加载图片预览</Center>;
+    }
+    return <ImageDiff diff={diff} repo={repo} />;
   }
   if (diff.is_binary) {
     return <Center>二进制文件，无法显示行级 diff</Center>;
@@ -378,42 +384,174 @@ function LineContent({ line, add, del }: { line: DiffLineDto; add: boolean; del:
   return <>{line.content || " "}</>;
 }
 
-/** 图片 diff:并排预览新旧两版(新增只显新、删除只显旧)。 */
-function ImageDiff({ diff }: { diff: FileDiffDto }) {
-  const { old_image, new_image } = diff;
-  // 新增(无旧)→ 单栏「新增」;删除(无新)→ 单栏「已删除」;否则旧 | 新两栏。
-  const both = !!old_image && !!new_image;
+type ImgMode = "side" | "swipe" | "onion";
+const IMG_MODE_KEY = "img-diff-mode";
+function getStoredImgMode(): ImgMode {
+  const v = localStorage.getItem(IMG_MODE_KEY);
+  return v === "swipe" || v === "onion" ? v : "side";
+}
+
+/** 一张图的字节加载状态:经 read_image 取 ArrayBuffer → Blob URL(随依赖变化/卸载时 revoke)。 */
+type LoadedImage = { url: string | null; bytes: number; loading: boolean; error: boolean };
+function useImageUrl(repo: string, ref: ImageRefDto | null, path: string): LoadedImage {
+  const [state, setState] = useState<LoadedImage>({ url: null, bytes: 0, loading: !!ref, error: false });
+  useEffect(() => {
+    if (!ref) {
+      setState({ url: null, bytes: 0, loading: false, error: false });
+      return;
+    }
+    let url: string | null = null;
+    let alive = true;
+    setState({ url: null, bytes: 0, loading: true, error: false });
+    readImage(repo, ref.oid, path)
+      .then((buf) => {
+        if (!alive) return;
+        url = URL.createObjectURL(new Blob([buf], { type: ref.mime }));
+        setState({ url, bytes: buf.byteLength, loading: false, error: false });
+      })
+      .catch(() => alive && setState({ url: null, bytes: 0, loading: false, error: true }));
+    return () => {
+      alive = false;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [repo, ref?.oid, ref?.mime, path]);
+  return state;
+}
+
+/** 图片 diff:新旧两版预览。两版都在时给「并排 / 滑块 / 洋葱皮」三种对比模式;只有一侧时直接显该侧。 */
+function ImageDiff({ diff, repo }: { diff: FileDiffDto; repo: string }) {
+  const oldImg = useImageUrl(repo, diff.old_image, diff.path);
+  const newImg = useImageUrl(repo, diff.new_image, diff.path);
+  const both = !!diff.old_image && !!diff.new_image;
+  const [mode, setMode] = useState<ImgMode>(getStoredImgMode);
+  const setModePersist = (m: ImgMode) => { setMode(m); localStorage.setItem(IMG_MODE_KEY, m); };
+
+  if (!both) {
+    // 新增 → 单栏「新增」;删除 → 单栏「已删除」。
+    return (
+      <div className="fade-in flex flex-1 items-stretch gap-3 overflow-auto p-4">
+        {diff.old_image && <ImagePane img={oldImg} label="已删除" tone="danger" />}
+        {diff.new_image && <ImagePane img={newImg} label="新增" tone="success" />}
+      </div>
+    );
+  }
+
   return (
-    <div className="fade-in flex flex-1 items-stretch gap-3 overflow-auto p-4">
-      {old_image && <ImagePane img={old_image} label={both ? "旧" : "已删除"} tone="danger" />}
-      {new_image && <ImagePane img={new_image} label={both ? "新" : "新增"} tone="success" />}
+    <div className="fade-in flex flex-1 flex-col overflow-hidden">
+      <ImgModeBar mode={mode} onChange={setModePersist} />
+      {mode === "side" ? (
+        <div className="flex flex-1 items-stretch gap-3 overflow-auto p-4">
+          <ImagePane img={oldImg} label="旧" tone="danger" />
+          <ImagePane img={newImg} label="新" tone="success" />
+        </div>
+      ) : mode === "swipe" ? (
+        <SwipeCompare oldImg={oldImg} newImg={newImg} />
+      ) : (
+        <OnionCompare oldImg={oldImg} newImg={newImg} />
+      )}
     </div>
   );
 }
 
-function ImagePane({ img, label, tone }: { img: ImageDataDto; label: string; tone: "danger" | "success" }) {
+/** 对比模式切换条。 */
+function ImgModeBar({ mode, onChange }: { mode: ImgMode; onChange: (m: ImgMode) => void }) {
+  const btn = (m: ImgMode, label: string) => (
+    <button
+      onClick={() => onChange(m)}
+      className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
+        mode === m ? "bg-accent/15 text-accent" : "text-fg-muted hover:text-fg"
+      }`}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div className="flex shrink-0 select-none items-center justify-end gap-1 border-b border-line bg-overlay px-3 py-1">
+      {btn("side", "并排")}
+      {btn("swipe", "滑块")}
+      {btn("onion", "洋葱皮")}
+    </div>
+  );
+}
+
+/** 滑块对比:新图叠在旧图上,按滑块位置左右裁切,露出左侧新右侧旧。 */
+function SwipeCompare({ oldImg, newImg }: { oldImg: LoadedImage; newImg: LoadedImage }) {
+  const [pct, setPct] = useState(50);
+  return (
+    <div className="flex flex-1 flex-col gap-2 overflow-hidden p-4">
+      <div className="checkerboard relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded border border-line bg-overlay">
+        {oldImg.url && <img src={oldImg.url} alt="旧" className="max-h-full max-w-full object-contain" />}
+        {newImg.url && (
+          <img
+            src={newImg.url}
+            alt="新"
+            className="absolute inset-0 m-auto max-h-full max-w-full object-contain"
+            style={{ clipPath: `inset(0 ${100 - pct}% 0 0)` }}
+          />
+        )}
+        {/* 分界竖线 */}
+        <div className="pointer-events-none absolute inset-y-0 w-px bg-accent" style={{ left: `${pct}%` }} />
+      </div>
+      <div className="flex shrink-0 items-center gap-2 text-[11px] text-fg-subtle">
+        <span className="text-danger">旧</span>
+        <input type="range" min={0} max={100} value={pct} onChange={(e) => setPct(Number(e.target.value))} className="flex-1 accent-accent" aria-label="滑块位置" />
+        <span className="text-success">新</span>
+      </div>
+    </div>
+  );
+}
+
+/** 洋葱皮对比:新图以可调不透明度叠在旧图上。 */
+function OnionCompare({ oldImg, newImg }: { oldImg: LoadedImage; newImg: LoadedImage }) {
+  const [opacity, setOpacity] = useState(50);
+  return (
+    <div className="flex flex-1 flex-col gap-2 overflow-hidden p-4">
+      <div className="checkerboard relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded border border-line bg-overlay">
+        {oldImg.url && <img src={oldImg.url} alt="旧" className="max-h-full max-w-full object-contain" />}
+        {newImg.url && (
+          <img
+            src={newImg.url}
+            alt="新"
+            className="absolute inset-0 m-auto max-h-full max-w-full object-contain"
+            style={{ opacity: opacity / 100 }}
+          />
+        )}
+      </div>
+      <div className="flex shrink-0 items-center gap-2 text-[11px] text-fg-subtle">
+        <span className="text-danger">旧</span>
+        <input type="range" min={0} max={100} value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} className="flex-1 accent-accent" aria-label="新图不透明度" />
+        <span className="text-success">新</span>
+      </div>
+    </div>
+  );
+}
+
+/** 单侧图片面板:居中保持比例,棋盘格衬透明区,显尺寸 + 体积。 */
+function ImagePane({ img, label, tone }: { img: LoadedImage; label: string; tone: "danger" | "success" }) {
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
-  const src = `data:${img.mime};base64,${img.base64}`;
-  // base64 长度估算原始字节数(去掉 padding)。
-  const bytes = Math.max(0, Math.floor((img.base64.length * 3) / 4) - (img.base64.endsWith("==") ? 2 : img.base64.endsWith("=") ? 1 : 0));
   const toneCls = tone === "danger" ? "text-danger" : "text-success";
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <div className="mb-2 flex shrink-0 items-center gap-2 text-[11px]">
         <span className={`font-semibold ${toneCls}`}>{label}</span>
         <span className="text-fg-subtle">
-          {dims ? `${dims.w}×${dims.h}` : ""}{dims ? " · " : ""}{formatBytes(String(bytes))}
+          {dims ? `${dims.w}×${dims.h}` : ""}{dims && img.bytes ? " · " : ""}{img.bytes ? formatBytes(String(img.bytes)) : ""}
         </span>
       </div>
-      {/* 居中、保持比例;棋盘格底衬出透明区域 */}
       <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto rounded border border-line bg-overlay p-3 checkerboard">
-        <img
-          src={src}
-          alt={label}
-          onLoad={(e) => setDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
-          className="max-h-full max-w-full object-contain"
-          style={{ imageRendering: "auto" }}
-        />
+        {img.loading ? (
+          <span className="text-[11px] text-fg-subtle">加载中…</span>
+        ) : img.error || !img.url ? (
+          <span className="text-[11px] text-danger">图片加载失败</span>
+        ) : (
+          <img
+            src={img.url}
+            alt={label}
+            onLoad={(e) => setDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+            className="max-h-full max-w-full object-contain"
+            style={{ imageRendering: "auto" }}
+          />
+        )}
       </div>
     </div>
   );

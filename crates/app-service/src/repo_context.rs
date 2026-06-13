@@ -52,6 +52,24 @@ fn lru<K: std::hash::Hash + Eq, V>(cap: usize) -> Mutex<LruCache<K, V>> {
     Mutex::new(LruCache::new(NonZeroUsize::new(cap).unwrap()))
 }
 
+/// 图片工作区读取的大小上限(与 engine 内联上限一致),防止读超大文件爆内存。
+const MAX_IMAGE_BYTES: u64 = 8_000_000;
+
+/// 把仓库相对路径安全拼到 repo 根下:只接受普通路径段,拒绝绝对路径 / `..` / 盘符前缀
+/// (防 `read_image` 越权读 workdir 之外的文件)。纯词法、不碰文件系统,可单测。
+pub fn safe_join(base: &Path, rel: &str) -> Option<PathBuf> {
+    use std::path::Component;
+    let mut out = base.to_path_buf();
+    for comp in Path::new(rel).components() {
+        match comp {
+            Component::Normal(c) => out.push(c),
+            Component::CurDir => {} // "./" 无害,跳过
+            _ => return None,       // RootDir / Prefix(盘符)/ ParentDir(..) 一律拒绝
+        }
+    }
+    Some(out)
+}
+
 /// 图谱累加器(M1.5 增量泳道):`rows` 是已算好的前缀(含 refs/sync),`state` 是
 /// 续算泳道的断点,`complete` 表示已到历史开端。「加载更多」时只续算尾段并 append,
 /// 不重算全量;`GitRef` 失效时整体重置。
@@ -296,6 +314,23 @@ impl RepoContext {
         let v = self.service.pickaxe(&self.path, query, regex, limit)?;
         self.cache.pickaxe.lock().unwrap().put(key, v.clone());
         Ok(v)
+    }
+    /// 取一侧图片的原始字节(M6.2,`read_image` 命令用,不再走 base64-in-JSON)。
+    /// `oid` 非空 → 读对象库 blob;为空 → 读工作区文件 `rel_path`(经 safe_join 防越权 + 大小上限)。
+    /// 不缓存:字节大、按 oid 不可变,浏览器 Blob 层自有缓存。
+    pub fn read_image_bytes(&self, oid: &str, rel_path: &str) -> Result<Vec<u8>, GitError> {
+        if !oid.is_empty() {
+            return self.service.read_blob(&self.path, oid);
+        }
+        let full = safe_join(&self.path, rel_path)
+            .ok_or_else(|| GitError::Backend("非法图片路径".into()))?;
+        let meta = std::fs::metadata(&full).map_err(|e| GitError::Backend(e.to_string()))?;
+        if meta.len() > MAX_IMAGE_BYTES {
+            return Err(GitError::FileTooLarge {
+                limit: MAX_IMAGE_BYTES as usize,
+            });
+        }
+        std::fs::read(&full).map_err(|e| GitError::Backend(e.to_string()))
     }
     pub fn reflog(&self, limit: usize) -> Result<Vec<ReflogEntryDto>, GitError> {
         self.service.reflog(&self.path, limit)
@@ -1148,6 +1183,45 @@ mod tests {
         // -S 与 -G(regex 不同)是不同 key
         ctx.pickaxe("needle", true, 200).unwrap();
         assert_eq!(fb.pickaxe_call_count(), 3);
+    }
+
+    // ---- M6.2:图片字节取图(read_image_bytes / safe_join)----
+
+    #[test]
+    fn safe_join_accepts_normal_rejects_escape() {
+        let base = Path::new("/repo");
+        assert_eq!(
+            safe_join(base, "a/b.png"),
+            Some(PathBuf::from("/repo/a/b.png"))
+        );
+        assert_eq!(
+            safe_join(base, "./a.png"),
+            Some(PathBuf::from("/repo/a.png"))
+        );
+        // 越权一律拒绝
+        assert_eq!(safe_join(base, "../secret"), None);
+        assert_eq!(safe_join(base, "a/../../etc/passwd"), None);
+        assert_eq!(safe_join(base, "/etc/passwd"), None);
+    }
+
+    #[test]
+    fn read_image_bytes_oid_reads_blob() {
+        let bytes = vec![0x89, b'P', b'N', b'G', 1, 2, 3];
+        let fb = Arc::new(FakeBackend::default().with_blob(bytes.clone()));
+        let ctx = RepoRegistry::new(fb).context(Path::new("/r"));
+        // oid 非空 → 走 read_blob(fake 回 canned_blob)
+        assert_eq!(ctx.read_image_bytes("deadbeef", "logo.png").unwrap(), bytes);
+    }
+
+    #[test]
+    fn read_image_bytes_workdir_rejects_escape() {
+        let fb = Arc::new(FakeBackend::default());
+        let ctx = RepoRegistry::new(fb).context(Path::new("/r"));
+        // oid 空 + 越权路径 → 非法路径错误(不碰 fs)
+        assert!(matches!(
+            ctx.read_image_bytes("", "../../etc/passwd"),
+            Err(GitError::Backend(_))
+        ));
     }
 
     // ---- M2.1 多级 Undo/Redo(RepoContext 把纯时间线接到后端 reset)----

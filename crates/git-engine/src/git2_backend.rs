@@ -1,6 +1,6 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
-    DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry, FileState, Hunk, ImageData, RefKind,
+    DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry, FileState, Hunk, ImageRef, RefKind,
     ReflogEntry, RepoState, ResetMode, Signature, SyncCommits, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
@@ -141,32 +141,33 @@ fn image_mime(path: &str) -> Option<&'static str> {
     })
 }
 
-/// 取一侧图片的内容编成 ImageData。`oid` 非零 → 读对象库 blob;为零 → 退回读工作区文件
-/// (未暂存改动的新一侧:工作区内容尚未入库,oid 为零)。超过大小上限或读不到 → None。
+/// 取一侧图片的「取图句柄」(M6.2:只回 mime + oid,字节由 `read_image` 命令按需流式取,
+/// 不再内联 base64)。`oid` 非零 → 句柄 oid=该 blob 十六进制;为零 → 退回工作区文件,句柄
+/// oid="" 表示前端按 path 读工作区(未暂存改动的新一侧:内容尚未入库)。超大小上限/读不到 → None。
 fn load_image_side(
     repo: &git2::Repository,
     oid: git2::Oid,
     mime: &str,
     workdir_file: Option<&Path>,
-) -> Option<ImageData> {
-    use base64::Engine;
-    let bytes: Vec<u8> = if !oid.is_zero() {
+) -> Option<ImageRef> {
+    let resolved_oid: String = if !oid.is_zero() {
         let blob = repo.find_blob(oid).ok()?;
         if blob.size() > MAX_IMAGE_BYTES {
             return None;
         }
-        blob.content().to_vec()
+        oid.to_string()
     } else {
+        // 工作区一侧:确认文件存在且不超上限,句柄留空 oid(前端读工作区文件)。
         let path = workdir_file?;
         let meta = std::fs::metadata(path).ok()?;
         if meta.len() as usize > MAX_IMAGE_BYTES {
             return None;
         }
-        std::fs::read(path).ok()?
+        String::new()
     };
-    Some(ImageData {
+    Some(ImageRef {
         mime: mime.to_string(),
-        base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+        oid: resolved_oid,
     })
 }
 
@@ -305,7 +306,7 @@ fn file_diff_from(
         if p != Some(target) {
             continue;
         }
-        // 图片(按扩展名):二进制的一种,但能并排预览新旧图。读两侧 blob 编 base64。
+        // 图片(按扩展名):二进制的一种,但能并排预览新旧图。两侧只取「取图句柄」(mime+oid)。
         if let Some(mime) = image_mime(file) {
             result.is_binary = true;
             result.is_image = true;
@@ -687,6 +688,21 @@ impl GitBackend for Git2Backend {
         }
         Ok(out)
     }
+    fn read_blob(&self, path: &Path, oid: &str) -> Result<Vec<u8>, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let oid = git2::Oid::from_str(oid).map_err(|e| GitError::Backend(e.to_string()))?;
+        let blob = repo
+            .find_blob(oid)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        if blob.size() > MAX_IMAGE_BYTES {
+            return Err(GitError::FileTooLarge {
+                limit: MAX_IMAGE_BYTES,
+            });
+        }
+        Ok(blob.content().to_vec())
+    }
+
     fn commit_files(&self, path: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError> {
         let repo =
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
@@ -1911,13 +1927,12 @@ mod tests {
         assert!(diff.old_image.is_none(), "新增文件无旧图");
         let new = diff.new_image.expect("应有新图");
         assert_eq!(new.mime, "image/png");
-        use base64::Engine;
+        assert!(!new.oid.is_empty(), "提交侧应有 blob oid");
+        // M6.2:句柄改回 read_blob 取字节,应还原原始内容
         assert_eq!(
-            base64::engine::general_purpose::STANDARD
-                .decode(&new.base64)
-                .unwrap(),
+            b.read_blob(&repo, &new.oid).unwrap(),
             PNG_V1,
-            "base64 解码应还原原始字节"
+            "oid 应取回原始字节"
         );
     }
 
@@ -1932,15 +1947,15 @@ mod tests {
 
         let diff = b.commit_file_diff(&repo, &sha, "logo.png").unwrap();
         assert!(diff.is_image);
-        use base64::Engine;
-        let dec = |s: &str| base64::engine::general_purpose::STANDARD.decode(s).unwrap();
-        assert_eq!(dec(&diff.old_image.unwrap().base64), PNG_V1, "旧图 = 改前");
-        assert_eq!(dec(&diff.new_image.unwrap().base64), PNG_V2, "新图 = 改后");
+        let old = diff.old_image.expect("旧图句柄");
+        let new = diff.new_image.expect("新图句柄");
+        assert_eq!(b.read_blob(&repo, &old.oid).unwrap(), PNG_V1, "旧图 = 改前");
+        assert_eq!(b.read_blob(&repo, &new.oid).unwrap(), PNG_V2, "新图 = 改后");
     }
 
     #[test]
     fn working_diff_unstaged_image_reads_new_from_workdir() {
-        // 未暂存改动:新一侧在工作区(oid 为零),应退回读工作区文件。
+        // 未暂存改动:新一侧在工作区(oid 为零),句柄 oid 留空 → 前端读工作区文件。
         let (_tmp, repo) = init_repo();
         let b = Git2Backend;
         stage_bytes(&repo, "logo.png", PNG_V1);
@@ -1950,9 +1965,13 @@ mod tests {
 
         let diff = b.working_diff(&repo, "logo.png", false).unwrap();
         assert!(diff.is_image);
-        use base64::Engine;
-        let dec = |s: &str| base64::engine::general_purpose::STANDARD.decode(s).unwrap();
-        assert_eq!(dec(&diff.new_image.expect("工作区新图").base64), PNG_V2);
+        let new = diff.new_image.expect("工作区新图句柄");
+        assert!(new.oid.is_empty(), "工作区一侧句柄 oid 应为空");
+        // 旧一侧来自 HEAD blob,可经 read_blob 取回改前内容
+        assert_eq!(
+            b.read_blob(&repo, &diff.old_image.unwrap().oid).unwrap(),
+            PNG_V1
+        );
     }
 
     #[test]

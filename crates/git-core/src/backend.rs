@@ -107,6 +107,12 @@ pub trait GitBackend: Send + Sync {
         Err(GitError::Unsupported)
     }
 
+    /// 读某个 blob 的原始字节(M6.2 图片取图:按十六进制 oid 取对象库内容)。
+    /// 供 `read_image` 命令把图片字节直接流给前端(不再走 base64-in-JSON)。默认 Unsupported。
+    fn read_blob(&self, _repo: &Path, _oid: &str) -> Result<Vec<u8>, GitError> {
+        Err(GitError::Unsupported)
+    }
+
     /// 某提交相对第一个父的改动文件(文件级)。
     fn commit_files(&self, repo: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError>;
 

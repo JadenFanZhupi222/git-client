@@ -385,6 +385,10 @@ impl RepoService {
         }
         .to_string())
     }
+    /// 用例:按 oid 读 blob 原始字节(M6.2 图片取图)。
+    pub fn read_blob(&self, repo_path: &Path, oid: &str) -> Result<Vec<u8>, GitError> {
+        self.backend.read_blob(repo_path, oid)
+    }
     /// 用例:逐行 blame。
     pub fn blame(
         &self,

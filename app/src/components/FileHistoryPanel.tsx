@@ -101,7 +101,7 @@ export function FileHistoryPanel({
 
           {/* 右:选中提交里该文件的 diff */}
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!selected} />
+            <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!selected} repo={repo} />
           </div>
         </div>
       </div>

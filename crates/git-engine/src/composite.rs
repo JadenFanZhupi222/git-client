@@ -85,6 +85,9 @@ impl GitBackend for CompositeBackend {
     fn reflog(&self, repo: &Path, limit: usize) -> Result<Vec<ReflogEntry>, GitError> {
         self.git2.reflog(repo, limit)
     }
+    fn read_blob(&self, repo: &Path, oid: &str) -> Result<Vec<u8>, GitError> {
+        self.git2.read_blob(repo, oid)
+    }
     fn commit_files(&self, repo: &Path, commit_id: &str) -> Result<Vec<FileChange>, GitError> {
         self.git2.commit_files(repo, commit_id)
     }

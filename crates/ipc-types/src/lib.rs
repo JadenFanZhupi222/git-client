@@ -5,9 +5,8 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk,
-    ImageData, LineHistoryEntry, PullOutcome, PushOutcome, RefKind, ReflogEntry, Seg,
-    SignatureInfo, SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus,
-    WorktreeInfo,
+    ImageRef, LineHistoryEntry, PullOutcome, PushOutcome, RefKind, ReflogEntry, Seg, SignatureInfo,
+    SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus, WorktreeInfo,
 };
 use serde::{Deserialize, Serialize};
 
@@ -523,17 +522,19 @@ impl From<Hunk> for HunkDto {
     }
 }
 
+/// 一侧图片的取图句柄(M6.2:不再内联 base64)。前端用 `(mime, oid)` + 文件路径经
+/// `read_image` 命令取原始字节转 Blob URL。`oid` 空串表示读工作区文件。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ImageDataDto {
+pub struct ImageRefDto {
     pub mime: String,
-    pub base64: String,
+    pub oid: String,
 }
 
-impl From<ImageData> for ImageDataDto {
-    fn from(i: ImageData) -> Self {
-        ImageDataDto {
+impl From<ImageRef> for ImageRefDto {
+    fn from(i: ImageRef) -> Self {
+        ImageRefDto {
             mime: i.mime,
-            base64: i.base64,
+            oid: i.oid,
         }
     }
 }
@@ -546,8 +547,8 @@ pub struct FileDiffDto {
     pub is_lfs_pointer: bool,
     pub lfs_size: String,
     pub is_image: bool,
-    pub old_image: Option<ImageDataDto>,
-    pub new_image: Option<ImageDataDto>,
+    pub old_image: Option<ImageRefDto>,
+    pub new_image: Option<ImageRefDto>,
     pub hunks: Vec<HunkDto>,
 }
 
@@ -560,8 +561,8 @@ impl From<FileDiff> for FileDiffDto {
             is_lfs_pointer: d.is_lfs_pointer,
             lfs_size: d.lfs_size,
             is_image: d.is_image,
-            old_image: d.old_image.map(ImageDataDto::from),
-            new_image: d.new_image.map(ImageDataDto::from),
+            old_image: d.old_image.map(ImageRefDto::from),
+            new_image: d.new_image.map(ImageRefDto::from),
             hunks: d.hunks.into_iter().map(HunkDto::from).collect(),
         }
     }

@@ -931,6 +931,23 @@ async fn read_working_file(repo_path: String, file: String) -> Result<String, Ip
     })
 }
 
+/// 读一侧图片的原始字节(M6.2:不再走 base64-in-JSON)。字节以 ArrayBuffer 直传前端,
+/// 前端转 Blob URL 渲染。`oid` 非空 → 对象库 blob;为空 → 工作区文件(safe_join 防越权)。
+#[tauri::command]
+async fn read_image(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    oid: String,
+    path: String,
+) -> Result<tauri::ipc::Response, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    let bytes = tokio::task::spawn_blocking(move || ctx.read_image_bytes(&oid, &path))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 #[tauri::command]
 async fn stash_list(
     registry: tauri::State<'_, RepoRegistry>,
@@ -1101,6 +1118,7 @@ pub fn run() {
             blame,
             conflict_sides,
             read_working_file,
+            read_image,
             write_resolved,
             stash_list,
             stash_save,

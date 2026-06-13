@@ -411,9 +411,9 @@ export interface HunkDto {
   lines: DiffLineDto[];
 }
 
-export interface ImageDataDto {
+export interface ImageRefDto {
   mime: string;
-  base64: string;
+  oid: string; // 该侧 blob 十六进制 oid;空串 = 读工作区文件(未暂存新一侧)
 }
 
 export interface FileDiffDto {
@@ -422,10 +422,16 @@ export interface FileDiffDto {
   too_large: boolean;
   is_lfs_pointer: boolean; // Git LFS 指针文件(内容是指针而非真实文件)
   lfs_size: string;        // LFS 指针记录的实际字节数(字符串,非 LFS 为空)
-  is_image: boolean;       // 图片文件(同时 is_binary);old_image/new_image 为新旧两版
-  old_image: ImageDataDto | null; // 改动前(新增文件为 null)
-  new_image: ImageDataDto | null; // 改动后(删除文件为 null)
+  is_image: boolean;       // 图片文件(同时 is_binary);old_image/new_image 为新旧两版取图句柄
+  old_image: ImageRefDto | null; // 改动前(新增文件为 null)
+  new_image: ImageRefDto | null; // 改动后(删除文件为 null)
   hunks: HunkDto[];
+}
+
+/** 取一侧图片的原始字节(M6.2:不再走 base64-in-JSON)。返回 ArrayBuffer,前端转 Blob URL。
+ *  oid 非空 → 对象库 blob;空串 → 读工作区文件 file。 */
+export async function readImage(repoPath: string, oid: string, file: string): Promise<ArrayBuffer> {
+  return await invoke<ArrayBuffer>("read_image", { repoPath, oid, path: file });
 }
 
 export async function getCommitFileDiff(

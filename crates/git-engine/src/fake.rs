@@ -67,6 +67,8 @@ pub struct FakeBackend {
     line_history_calls: Mutex<u32>,
     pickaxe_calls: Mutex<u32>,
     canned_line_history: Mutex<Vec<LineHistoryEntry>>,
+    // M6.2:read_blob 预置返回(图片字节流)。
+    canned_blob: Mutex<Vec<u8>>,
 }
 
 impl FakeBackend {
@@ -87,6 +89,11 @@ impl FakeBackend {
     }
     pub fn with_log(self, commits: Vec<Commit>) -> Self {
         *self.canned_log.lock().unwrap() = commits;
+        self
+    }
+    /// 预置 read_blob 返回的字节(M6.2 图片字节流测试)。
+    pub fn with_blob(self, bytes: Vec<u8>) -> Self {
+        *self.canned_blob.lock().unwrap() = bytes;
         self
     }
     pub fn with_commit_files(self, files: Vec<FileChange>) -> Self {
@@ -414,6 +421,9 @@ impl GitBackend for FakeBackend {
             .take(limit)
             .cloned()
             .collect())
+    }
+    fn read_blob(&self, _path: &Path, _oid: &str) -> Result<Vec<u8>, GitError> {
+        Ok(self.canned_blob.lock().unwrap().clone())
     }
     fn commit_files(&self, _path: &Path, _commit_id: &str) -> Result<Vec<FileChange>, GitError> {
         Ok(self.canned_commit_files.lock().unwrap().clone())

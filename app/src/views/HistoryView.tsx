@@ -295,7 +295,7 @@ export function HistoryView({ repo }: { repo: string }) {
             <ColumnHead>
               {selectedFile ? <span className="font-mono normal-case tracking-normal text-fg">{selectedFile}</span> : "Diff"}
             </ColumnHead>
-            <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!selectedFile} />
+            <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!selectedFile} repo={repo} />
           </main>
         </>
       )}

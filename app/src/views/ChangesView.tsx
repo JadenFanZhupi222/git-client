@@ -343,7 +343,7 @@ export function ChangesView({ repo }: { repo: string }) {
         {isConflict && sel ? (
           <ConflictEditor repo={repo} file={sel.path} />
         ) : (
-          <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!sel} hunkAction={hunkAction} lineStage={lineStage} />
+          <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!sel} repo={repo} hunkAction={hunkAction} lineStage={lineStage} />
         )}
       </main>
       </div>

@@ -20,7 +20,7 @@ pub use branch::{
 pub use commit::{Commit, Signature};
 pub use conflict::ConflictSides;
 pub use diff::{
-    DiffLine, DiffLineKind, FileChange, FileDiff, Hunk, ImageData, LineHistoryEntry, Seg,
+    DiffLine, DiffLineKind, FileChange, FileDiff, Hunk, ImageRef, LineHistoryEntry, Seg,
 };
 pub use reflog::ReflogEntry;
 pub use remote::{FetchOutcome, PullOutcome, PushOutcome};
