@@ -2,7 +2,7 @@
 
 > 这份文件在 git 仓库里,会随 push/pull 跟到新机器。记录当前进度、铁律、下一步。
 > 配套必读:`CLAUDE.md`(铁律)、`ARCHITECTURE.md`(架构)、`README.md`(启动)。
-> 最近更新:2026-06-13(M6.3 完成:file_history/line_history/pickaxe 接 ref 域 LRU 缓存。M6.1 之前已完成)。
+> 最近更新:2026-06-13(M6 · Polish & Harden 全部完成:M6.1 并排虚拟化/M6.2 图片去 base64+对比/M6.3 CLI 读缓存/M6.4 ts-rs 自动类型/M6.6 面板 a11y)。
 
 ## 当前状态
 - 阶段 0/1/2/3 全部完成,**阶段 4 核心(交互式 rebase)已落地**。
@@ -90,10 +90,23 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
     `is_binary` 前)并排两栏(旧|新,新增只显新、删除只显旧),`.checkerboard` 棋盘格衬透明 + 显尺寸/体积。
     base64 crate 跟 `git2-backend` feature。spec 无(实现直接,设计写在提交信息)。
   - **M5「更深的 diff 与历史」全部完成**(5.1 词级 / 5.2 并排 / 5.3 文件历史 / 5.4 行历史 / 5.5 pickaxe / 图片 diff)。
-- **当前里程碑:M6 · Polish & Harden(打磨与硬化)** —— 不堆新功能,还 M5 留的债。
-  **完整切片见 `docs/superpowers/plans/2026-06-12-m6-polish-harden.md`**(M6.1 并排同步滚动+折叠+虚拟化 /
-  M6.2 图片去 base64+对比模式 / M6.3 新 CLI 读路径接缓存取消 / M6.4 specta 自动类型 / M6.5 M5 测试补齐 /
-  M6.6 面板键盘 a11y)。原 roadmap「M6 协作/PR」顺延为 M7。
+- **M6 · Polish & Harden 全部完成**(M6.1/M6.2/M6.3/M6.4/M6.6 均已合 main;M6.5 测试随各刀写入)。
+  **切片见 `docs/superpowers/plans/2026-06-12-m6-polish-harden.md`**。原 roadmap「M6 协作/PR」顺延为 **M7**。
+  - ✅ **M6.2 图片去 base64 + 对比模式**(已合 main,竖切):`ImageData{base64}` → `ImageRef{mime,oid}`
+    (oid 空=工作区文件);trait `read_blob` + git2 实现(超 8MB 拒);`read_image` 命令把字节以
+    `tauri::ipc::Response`(ArrayBuffer)直传,不再 base64-in-JSON。app-service `read_image_bytes`
+    (oid 读 blob / 空走 `safe_join` 防越权读工作区)+ 纯函数 safe_join 测试。前端 `useImageUrl`
+    钩子取字节转 Blob URL(revoke 清理);两版都在给「并排/滑块(clip-path)/洋葱皮(opacity)」模式
+    (localStorage)。DiffView 加 repo 入参(5 处透传)。base64 依赖移除。
+    ⚠️ 真机验收待做(图片加载、滑块/洋葱皮、工作区未暂存图)。**SVG 文本/预览切换顺延**(小后续)。
+  - ✅ **M6.4 ts-rs 自动生成 DTO 类型**(已合 main):31 个 DTO 加 `#[derive(TS)]`,
+    `app/src/bindings/*.ts` 自动生成(+手写 `index.ts` barrel);`ipc.ts` 删手写 interface 改 re-export。
+    **改 DTO 后必须重跑 `cargo test -p ipc-types` 刷新 bindings**(它就是生成器)。i64 字段标
+    `#[ts(type="number")]`、`emphasis` 标 `#[ts(optional)]`。注:RefDto.kind/GraphRowDto.sync/
+    SubmoduleInfoDto.status 由字面量联合变成 `string`(生成器不导出 Rust String 的字面量约束)。
+  - ✅ **M6.6 面板键盘 a11y**(已合 main,纯前端):`listNav.ts` 加 `useModalListNav`(Esc 关 /
+    ↑↓jk/gG 移动 / Tab 焦点陷阱 / 开关焦点还原,导航键 stopPropagation 不扰背景列表);
+    file/line history 面板改下标驱动选中 + role=dialog/aria-modal + 选中行 scrollIntoView。
   - ✅ **M6.1 并排 diff 体验补强**(已合 main,纯前端,三刀):
     新增纯函数库 `app/src/lib/diffRows.ts`(+ vitest):`collapseContext` 折叠未改区
     (改动块上下各留 ctx=3 行,隐藏 ≥ minFold=2 才折,带原始 li)、`buildSbsRows`(从
@@ -112,11 +125,11 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
     WorkingTree 不动(工作区改动不改提交历史)。FakeBackend 补这三方法 + 调用计数,
     app-service 加 3 个命中/失效测试。**零行为变化**;cargo test/clippy/fmt 全绿。
     取消(子进程可杀)按 plan「按需」顺延——前端已 keepPreviousData,缓存命中即跳过重跑。
-  - 下一刀建议(M6.1/M6.3 已收口):**M6.6**(面板键盘 a11y,纯前端低风险)或
-    **M6.2**(图片去 base64+对比模式,破坏性改 FileDiff,双轨过渡);**M6.4**(specta 自动类型)
-    最 invasive,放最后。
-- ⚠️ **全 M5 + 图片 diff + M6.1 真机视觉验收仍待做**(自动门 test/clippy/fmt/tsc/build 全过;
-  M5 + M6.1 已 push origin;**M6.3 已合 main 但尚未 push**,后端纯逻辑无需真机视觉验收)。
+- **下一里程碑:M7 · 协作/PR**(原 roadmap M6,见 `2026-06-08-world-class-roadmap.md`)。
+- ⚠️ **真机视觉/交互验收欠账**(自动门 test/clippy/fmt/tsc/build 全过):M5 各刀、图片 diff、
+  **M6.1**(大 diff 虚拟化滚动/并排联动/折叠)、**M6.2**(图片字节流加载/滑块/洋葱皮)、
+  **M6.6**(面板键盘)都需真机过一遍。M6.3/M6.4 是后端/类型纯逻辑,无需真机视觉验收。
+  push 节奏:M5+M6.1 已 push;**M6.2/M6.3/M6.4/M6.6 已合 main 待 push**(等用户发话)。
 - 零散续做:worktree 切换/新建(M4.5 只做展示);log 里 ctrl-多选两提交→比较。
 - 工程收尾:真机验收交互式 rebase(尤其中途冲突的继续/中止、大仓库 cp/exec 路径);CI 加 `fmt --check` + `clippy -D warnings` 卡口(属 infra,之前没动 .github);push 到 origin。
 - 已知小项:composite 40+ 透传样板(Rust 固有税,可选 delegate crate)。
