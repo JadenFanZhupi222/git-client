@@ -1,8 +1,8 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
-    FetchOutcome, FileChange, FileDiff, FileEntry, PullOutcome, PushOutcome, RebaseAction,
-    RebaseStep, ReflogEntry, RepoState, ResetMode, Signature, SignatureInfo, StashEntry,
-    SubmoduleInfo, SyncCommits, WorkingTreeStatus, WorktreeInfo,
+    FetchOutcome, FileChange, FileDiff, FileEntry, LineHistoryEntry, PullOutcome, PushOutcome,
+    RebaseAction, RebaseStep, ReflogEntry, RepoState, ResetMode, Signature, SignatureInfo,
+    StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus, WorktreeInfo,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -62,6 +62,11 @@ pub struct FakeBackend {
     working_diff_calls: Mutex<u32>,
     blame_calls: Mutex<u32>,
     refs_calls: Mutex<u32>,
+    // M6.3:三条 CLI 读路径的缓存测试用计数 + 预置返回值。
+    file_history_calls: Mutex<u32>,
+    line_history_calls: Mutex<u32>,
+    pickaxe_calls: Mutex<u32>,
+    canned_line_history: Mutex<Vec<LineHistoryEntry>>,
 }
 
 impl FakeBackend {
@@ -209,6 +214,15 @@ impl FakeBackend {
     pub fn refs_call_count(&self) -> u32 {
         *self.refs_calls.lock().unwrap()
     }
+    pub fn file_history_call_count(&self) -> u32 {
+        *self.file_history_calls.lock().unwrap()
+    }
+    pub fn line_history_call_count(&self) -> u32 {
+        *self.line_history_calls.lock().unwrap()
+    }
+    pub fn pickaxe_call_count(&self) -> u32 {
+        *self.pickaxe_calls.lock().unwrap()
+    }
     pub fn staged_hunks(&self) -> Vec<(String, usize)> {
         self.staged_hunks.lock().unwrap().clone()
     }
@@ -354,6 +368,49 @@ impl GitBackend for FakeBackend {
                     || c.author.name.to_lowercase().contains(&q)
                     || c.author.email.to_lowercase().contains(&q)
             })
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+    fn file_history(
+        &self,
+        _path: &Path,
+        _file: &str,
+        limit: usize,
+    ) -> Result<Vec<Commit>, GitError> {
+        *self.file_history_calls.lock().unwrap() += 1;
+        Ok(self
+            .canned_log
+            .lock()
+            .unwrap()
+            .iter()
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+    fn line_history(
+        &self,
+        _path: &Path,
+        _file: &str,
+        _start: u32,
+        _end: u32,
+    ) -> Result<Vec<LineHistoryEntry>, GitError> {
+        *self.line_history_calls.lock().unwrap() += 1;
+        Ok(self.canned_line_history.lock().unwrap().clone())
+    }
+    fn pickaxe(
+        &self,
+        _path: &Path,
+        _query: &str,
+        _regex: bool,
+        limit: usize,
+    ) -> Result<Vec<Commit>, GitError> {
+        *self.pickaxe_calls.lock().unwrap() += 1;
+        Ok(self
+            .canned_log
+            .lock()
+            .unwrap()
+            .iter()
             .take(limit)
             .cloned()
             .collect())
