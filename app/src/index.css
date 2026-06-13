@@ -246,3 +246,17 @@ body {
 .progress-bar {
   animation: progress-slide 1.1s ease-in-out infinite;
 }
+
+/* 液态玻璃:三档由 <html data-glass="..."> 控制(refract/blur/solid)。
+   .glass 基类只管表面 + 描边 + 阴影;backdrop-filter 由档位决定。 */
+.glass {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.03) 42%, rgba(255, 255, 255, 0.06));
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+:root[data-glass="refract"] .glass { backdrop-filter: url(#lgWarp) blur(3px) saturate(165%); -webkit-backdrop-filter: blur(10px) saturate(165%); }
+:root[data-glass="blur"] .glass { backdrop-filter: blur(12px) saturate(160%); -webkit-backdrop-filter: blur(12px) saturate(160%); }
+:root[data-glass="solid"] .glass { background: var(--color-elevated); border-color: var(--color-line-strong); backdrop-filter: none; }
+
+/* 浅色下玻璃较难出彩:默认收一档对比 */
+:root:not([data-theme]) .glass { background: linear-gradient(135deg, rgba(255,255,255,.6), rgba(255,255,255,.35)); border-color: var(--color-line-strong); }
