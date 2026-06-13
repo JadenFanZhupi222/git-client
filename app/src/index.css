@@ -86,6 +86,38 @@
   --lane-7: #e3b341;
 }
 
+/* 备用主题:暖石墨 + 琥珀。由 <html data-theme="amber-dark"> 激活。先实现,暂不进切换器。 */
+:root[data-theme="amber-dark"] {
+  color-scheme: dark;
+
+  --color-canvas: #15130f;
+  --color-elevated: #221e18;
+  --color-overlay: #2c271f;
+
+  --color-line: rgba(170, 150, 120, 0.16);
+  --color-line-strong: rgba(170, 150, 120, 0.30);
+
+  --color-fg: #f0e9df;
+  --color-fg-muted: #9a8e7c;
+  --color-fg-subtle: #6f6556;
+
+  --color-accent: #f5b54b;
+  --color-accent-emphasis: #e0a235;
+  --color-success: #46be82;
+  --color-danger: #e86e64;
+  --color-warning: #e0734a;
+  --color-done: #d89a2e;
+
+  --lane-0: #f5b54b;
+  --lane-1: #5fa8d3;
+  --lane-2: #e0734a;
+  --lane-3: #d06ba0;
+  --lane-4: #a78bdb;
+  --lane-5: #e86e64;
+  --lane-6: #46be82;
+  --lane-7: #c9a23a;
+}
+
 /* 全局基线 */
 html,
 body,
