@@ -248,22 +248,39 @@ body {
 }
 
 /* 液态玻璃:三档由 <html data-glass="..."> 控制(refract/blur/solid)。
-   .glass 只管表面 + 描边 + 阴影。贴边外壳只留发丝过渡 + 极淡投影,
-   避免与相邻区域交界生硬;大投影留给真正的浮层(命令面板/菜单)。 */
+   材质 = 强模糊/提亮/饱和(吃背后内容)+ 镜面亮边(::before 描边渐变,玻璃感的关键)。
+   贴边外壳与浮层共用;镜面边是柔亮发丝,不会造成生硬暗边。 */
 .glass {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03) 42%, rgba(255, 255, 255, 0.05));
-  border: 1px solid var(--color-line);
-  box-shadow: 0 1px 2px rgba(15, 30, 50, 0.04), 0 6px 18px rgba(15, 30, 50, 0.05);
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.02) 50%, rgba(255, 255, 255, 0.06));
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: 0 1px 2px rgba(15, 30, 50, 0.05), 0 10px 30px rgba(15, 30, 50, 0.07);
+}
+/* 镜面亮边:左上受光最亮 → 渐隐 → 右下淡回光。这道亮边是「玻璃」的招牌。 */
+.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0) 38%, rgba(255, 255, 255, 0) 64%, rgba(255, 255, 255, 0.22));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
 }
 :root[data-theme="dark"] .glass {
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
+/* refract(Chromium):轻模糊 + SVG 位移折射 + 提亮饱和,吃背后内容产生「液态」感 */
 :root[data-glass="refract"] .glass {
-  backdrop-filter: url(#lgWarp) blur(3px) saturate(160%);
+  backdrop-filter: url(#lgWarp) blur(6px) saturate(180%) brightness(1.08);
 }
+/* blur 回退(非 Chromium / 折射不支持):强磨砂玻璃 */
 :root[data-glass="blur"] .glass {
-  backdrop-filter: blur(12px) saturate(155%);
-  -webkit-backdrop-filter: blur(12px) saturate(155%);
+  backdrop-filter: blur(18px) saturate(180%) brightness(1.06);
+  -webkit-backdrop-filter: blur(18px) saturate(180%) brightness(1.06);
 }
 :root[data-glass="solid"] .glass {
   background: var(--color-elevated);
@@ -271,8 +288,9 @@ body {
   backdrop-filter: none;
   box-shadow: none;
 }
-/* 浅色下玻璃近乎与画布同调,只留发丝边,消除生硬交界 */
+:root[data-glass="solid"] .glass::before { display: none; }
+/* 浅色下玻璃较弱:略提白底透明度 + 保留镜面边 */
 :root:not([data-theme]):not([data-glass="solid"]) .glass {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.42));
-  border-color: var(--color-line);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.38));
+  border-color: rgba(255, 255, 255, 0.5);
 }
