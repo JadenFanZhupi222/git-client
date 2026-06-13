@@ -71,7 +71,8 @@ struct GraphAccum {
 /// 三类失效语义:
 /// - **不可变(按 SHA 寻址)**:`commit_files`/`commit_diff` —— 提交内容永不变,永不失效,只靠 LRU 淘汰。
 /// - **worktree 域**:`status`/`working_diff` —— 工作区/暂存区变化即失效。
-/// - **ref 域**:`graph`/`log`/`refs`/`branches`/`current_branch`/`ahead_behind`/`compare_*` —— 引用/提交变化即失效。
+/// - **ref 域**:`graph`/`log`/`refs`/`branches`/`current_branch`/`ahead_behind`/`compare_*` +
+///   M6.3 的 `file_history`/`line_history`/`pickaxe` —— 都基于提交历史,引用/提交变化即失效。
 /// - `blame` 两域都清(未提交改动会改变它的「尚未提交」行)。
 struct RepoCache {
     // 不可变(SHA 寻址,永不失效)
@@ -89,6 +90,10 @@ struct RepoCache {
     ahead_behind: Mutex<Option<Option<AheadBehindDto>>>,
     compare_files: Mutex<LruCache<(String, String), Vec<FileChangeDto>>>,
     compare_diff: Mutex<LruCache<(String, String, String), FileDiffDto>>,
+    // ref 域(M6.3:三条 CLI 读路径接缓存,与 log/blame 一致享受 M1 基建)
+    file_history: Mutex<LruCache<(String, usize), Vec<CommitDto>>>, // 键 (file, limit)
+    line_history: Mutex<LruCache<(String, u32, u32), Vec<LineHistoryEntryDto>>>, // 键 (file, start, end)
+    pickaxe: Mutex<LruCache<(String, bool, usize), Vec<CommitDto>>>, // 键 (query, regex, limit)
     // 两域都清
     blame: Mutex<LruCache<String, Vec<BlameLineDto>>>,
 }
@@ -108,6 +113,9 @@ impl Default for RepoCache {
             ahead_behind: Mutex::new(None),
             compare_files: lru(ENTRY_CACHE_CAP),
             compare_diff: lru(ENTRY_CACHE_CAP),
+            file_history: lru(ENTRY_CACHE_CAP),
+            line_history: lru(ENTRY_CACHE_CAP),
+            pickaxe: lru(ENTRY_CACHE_CAP),
             blame: lru(ENTRY_CACHE_CAP),
         }
     }
@@ -164,6 +172,9 @@ impl RepoContext {
                 *c.ahead_behind.lock().unwrap() = None;
                 c.compare_files.lock().unwrap().clear();
                 c.compare_diff.lock().unwrap().clear();
+                c.file_history.lock().unwrap().clear();
+                c.line_history.lock().unwrap().clear();
+                c.pickaxe.lock().unwrap().clear();
                 c.blame.lock().unwrap().clear();
             }
         }
@@ -245,27 +256,46 @@ impl RepoContext {
         self.service
             .search_commits(&self.path, query, limit, cancelled)
     }
-    /// 某文件的提交历史(git log --follow)。按需触发、结果短,不缓存。
+    /// 某文件的提交历史(git log --follow)。ref 域缓存:键 (file, limit),提交/分支变即失效。
+    /// 快速切文件时命中即瞬回,不重复 fork git 子进程。
     pub fn file_history(&self, file: &str, limit: usize) -> Result<Vec<CommitDto>, GitError> {
-        self.service.file_history(&self.path, file, limit)
+        let key = (file.to_string(), limit);
+        if let Some(hit) = self.cache.file_history.lock().unwrap().get(&key).cloned() {
+            return Ok(hit);
+        }
+        let v = self.service.file_history(&self.path, file, limit)?;
+        self.cache.file_history.lock().unwrap().put(key, v.clone());
+        Ok(v)
     }
-    /// 某文件某几行的演变史(git log -L)。按需触发,不缓存。
+    /// 某文件某几行的演变史(git log -L)。ref 域缓存:键 (file, start, end)。
     pub fn line_history(
         &self,
         file: &str,
         start: u32,
         end: u32,
     ) -> Result<Vec<LineHistoryEntryDto>, GitError> {
-        self.service.line_history(&self.path, file, start, end)
+        let key = (file.to_string(), start, end);
+        if let Some(hit) = self.cache.line_history.lock().unwrap().get(&key).cloned() {
+            return Ok(hit);
+        }
+        let v = self.service.line_history(&self.path, file, start, end)?;
+        self.cache.line_history.lock().unwrap().put(key, v.clone());
+        Ok(v)
     }
-    /// pickaxe 按 diff 内容搜提交(git log -S/-G)。按需触发,不缓存。
+    /// pickaxe 按 diff 内容搜提交(git log -S/-G)。ref 域缓存:键 (query, regex, limit)。
     pub fn pickaxe(
         &self,
         query: &str,
         regex: bool,
         limit: usize,
     ) -> Result<Vec<CommitDto>, GitError> {
-        self.service.pickaxe(&self.path, query, regex, limit)
+        let key = (query.to_string(), regex, limit);
+        if let Some(hit) = self.cache.pickaxe.lock().unwrap().get(&key).cloned() {
+            return Ok(hit);
+        }
+        let v = self.service.pickaxe(&self.path, query, regex, limit)?;
+        self.cache.pickaxe.lock().unwrap().put(key, v.clone());
+        Ok(v)
     }
     pub fn reflog(&self, limit: usize) -> Result<Vec<ReflogEntryDto>, GitError> {
         self.service.reflog(&self.path, limit)
@@ -1047,6 +1077,77 @@ mod tests {
         ctx.invalidate(ChangeKind::GitRef);
         ctx.refs().unwrap();
         assert_eq!(fb.refs_call_count(), 2);
+    }
+
+    // ---- M6.3:三条 CLI 读路径接缓存(ref 域)----
+
+    #[test]
+    fn file_history_cached_ref_domain() {
+        let fb = Arc::new(FakeBackend::default().with_log(vec![fake_commit()]));
+        let ctx = RepoRegistry::new(fb.clone()).context(Path::new("/r"));
+        ctx.file_history("a.txt", 200).unwrap();
+        ctx.file_history("a.txt", 200).unwrap();
+        assert_eq!(fb.file_history_call_count(), 1, "同 (file,limit) 命中缓存");
+        // 工作区变化不影响提交历史 → 不失效
+        ctx.invalidate(ChangeKind::WorkingTree);
+        ctx.file_history("a.txt", 200).unwrap();
+        assert_eq!(
+            fb.file_history_call_count(),
+            1,
+            "WorkingTree 不该使 file_history 失效"
+        );
+        // 引用/提交变化才失效
+        ctx.invalidate(ChangeKind::GitRef);
+        ctx.file_history("a.txt", 200).unwrap();
+        assert_eq!(fb.file_history_call_count(), 2, "GitRef 失效后重打");
+        // 不同 file / limit 是不同 key
+        ctx.file_history("b.txt", 200).unwrap();
+        ctx.file_history("a.txt", 50).unwrap();
+        assert_eq!(fb.file_history_call_count(), 4);
+    }
+
+    #[test]
+    fn line_history_cached_ref_domain() {
+        let fb = Arc::new(FakeBackend::default());
+        let ctx = RepoRegistry::new(fb.clone()).context(Path::new("/r"));
+        ctx.line_history("a.txt", 1, 10).unwrap();
+        ctx.line_history("a.txt", 1, 10).unwrap();
+        assert_eq!(
+            fb.line_history_call_count(),
+            1,
+            "同 (file,start,end) 命中缓存"
+        );
+        ctx.invalidate(ChangeKind::WorkingTree);
+        ctx.line_history("a.txt", 1, 10).unwrap();
+        assert_eq!(fb.line_history_call_count(), 1, "WorkingTree 不该失效");
+        ctx.invalidate(ChangeKind::GitRef);
+        ctx.line_history("a.txt", 1, 10).unwrap();
+        assert_eq!(fb.line_history_call_count(), 2, "GitRef 失效后重打");
+        // 不同行范围是不同 key
+        ctx.line_history("a.txt", 5, 20).unwrap();
+        assert_eq!(fb.line_history_call_count(), 3);
+    }
+
+    #[test]
+    fn pickaxe_cached_ref_domain() {
+        let fb = Arc::new(FakeBackend::default().with_log(vec![fake_commit()]));
+        let ctx = RepoRegistry::new(fb.clone()).context(Path::new("/r"));
+        ctx.pickaxe("needle", false, 200).unwrap();
+        ctx.pickaxe("needle", false, 200).unwrap();
+        assert_eq!(
+            fb.pickaxe_call_count(),
+            1,
+            "同 (query,regex,limit) 命中缓存"
+        );
+        ctx.invalidate(ChangeKind::WorkingTree);
+        ctx.pickaxe("needle", false, 200).unwrap();
+        assert_eq!(fb.pickaxe_call_count(), 1, "WorkingTree 不该失效");
+        ctx.invalidate(ChangeKind::GitRef);
+        ctx.pickaxe("needle", false, 200).unwrap();
+        assert_eq!(fb.pickaxe_call_count(), 2, "GitRef 失效后重打");
+        // -S 与 -G(regex 不同)是不同 key
+        ctx.pickaxe("needle", true, 200).unwrap();
+        assert_eq!(fb.pickaxe_call_count(), 3);
     }
 
     // ---- M2.1 多级 Undo/Redo(RepoContext 把纯时间线接到后端 reset)----
