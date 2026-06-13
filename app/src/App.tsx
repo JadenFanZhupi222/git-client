@@ -20,7 +20,8 @@ import type { Command } from "./lib/commands";
 import { useToast } from "./components/Toast";
 import { Button } from "./components/ui/Button";
 import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, useBranches, useSubmodules, useWorktrees, useSparseCheckout, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
-import { applyTheme, getStoredTheme, type Theme } from "./lib/theme";
+import { applyTheme, applyGlassMode, getStoredTheme, type Theme } from "./lib/theme";
+import { getStoredGlassPref, setStoredGlassPref } from "./lib/transparency";
 
 /** 把 git fetch 的原始摘要提炼成简洁细节:优先取 "->" 更新行。 */
 function fetchDetail(summary: string): string | undefined {
@@ -272,6 +273,17 @@ export default function App() {
     group: "外观",
     keywords: "theme dark light 主题 暗色 浅色 切换",
     run: toggleTheme,
+  });
+  commands.push({
+    id: "glass:toggle",
+    title: getStoredGlassPref() === "reduced" ? "开启玻璃透明效果" : "降低透明度(玻璃转实底)",
+    group: "外观",
+    keywords: "glass transparency 玻璃 透明 实底 无障碍",
+    run: () => {
+      const next = getStoredGlassPref() === "reduced" ? "auto" : "reduced";
+      setStoredGlassPref(next);
+      applyGlassMode();
+    },
   });
   commands.push(
     { id: "remote:fetch", title: "Fetch", subtitle: "从远程拉取更新", group: "远程", keywords: "拉取 远程 fetch", disabled: !repo || busy, run: doFetch },
