@@ -273,8 +273,11 @@ body {
 :root[data-theme="dark"] .glass {
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.10);
 }
-/* refract(Chromium):轻模糊 + SVG 位移折射 + 提亮饱和,吃背后内容产生「液态」感 */
+/* refract(Chromium,含 WebView2):轻模糊 + SVG 位移折射 + 提亮饱和,吃背后内容产生「液态」感。
+   注意:SVG url() 折射只在 Chromium 生效;Safari/WebKit 不支持(WebKit bug #245510),那条路由走 blur。
+   ⚠️ 只有玻璃**背后有内容**时折射才看得见;贴边外壳(顶栏/侧栏)背后是纯色,看不出效果是预期。 */
 :root[data-glass="refract"] .glass {
+  -webkit-backdrop-filter: url(#lgWarp) blur(6px) saturate(180%) brightness(1.08);
   backdrop-filter: url(#lgWarp) blur(6px) saturate(180%) brightness(1.08);
 }
 /* blur 回退(非 Chromium / 折射不支持):强磨砂玻璃 */

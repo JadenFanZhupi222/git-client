@@ -43,7 +43,7 @@ function RefBadges({ refs }: { refs: RefDto[] }) {
 }
 
 export function CommitGraph({
-  rows, selectedId, compareId, onSelect, onContext, onLoadMore, loading, hasMore, scrollToId,
+  rows, selectedId, compareId, onSelect, onContext, onLoadMore, loading, hasMore, scrollToId, topInset = 0,
 }: {
   rows: GraphRowDto[];
   selectedId: string | null;
@@ -57,6 +57,9 @@ export function CommitGraph({
   onLoadMore: () => void;
   loading: boolean;
   hasMore: boolean;
+  /** 顶部留白(px):液态玻璃工具栏浮在滚动体之上,这里预留出栏高,
+   *  让首条提交落在玻璃栏下方,而往上滚的提交从玻璃栏底下穿过(满汉折射效果)。 */
+  topInset?: number;
 }) {
   // 滚动容器:虚拟化以它为测量基准。必须在所有 hook 之后再分支返回,故 ref/虚拟器
   // 始终调用(React hooks 规则:不能在条件后才调 hook)。
@@ -66,6 +69,7 @@ export function CommitGraph({
     getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_H, // 行高固定,估计=实际,无需动态测量
     overscan: 12, // 视口外多渲染几行,快速滚动不露白
+    paddingStart: topInset, // 顶部为浮动玻璃工具栏预留;首条提交落其下,上滚穿过栏底
   });
 
   // 键盘选中变化 → 把该行滚进可视区。align "auto" 只在行不可见时滚动,鼠标点选/已可见不抖。
@@ -79,7 +83,7 @@ export function CommitGraph({
   // 首屏加载骨架(无数据时):不进虚拟化路径。
   if (loading && rows.length === 0) {
     return (
-      <div className="overflow-hidden">
+      <div className="h-full overflow-hidden" style={{ paddingTop: topInset }}>
         {Array.from({ length: 8 }).map((_, i) => (
           <div key={i} className="flex items-center gap-2 px-3" style={{ height: ROW_H, opacity: 1 - i * 0.1 }}>
             <div className="skeleton h-2.5 w-2.5 shrink-0 rounded-full" />
@@ -96,7 +100,7 @@ export function CommitGraph({
   const gutterW = gutterWidth(rows);
 
   return (
-    <div ref={parentRef} className="fade-in overflow-y-auto">
+    <div ref={parentRef} className="fade-in h-full overflow-y-auto">
       {/* 撑出全量高度的占位层;只有可见窗口内的行被真正渲染并绝对定位到各自位置。
           10 万提交也只挂十几个 DOM 节点,滚动恒定开销。 */}
       <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
