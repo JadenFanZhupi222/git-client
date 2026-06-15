@@ -114,12 +114,24 @@ export function CommitGraph({
   }
 
   const gutterW = gutterWidth(rows);
+  // 选中行下标 → 滑动高亮条的位置(只在选中变化时过渡,滚动不触发)。
+  const selIdx = selectedId ? rows.findIndex((r) => r.commit.id === selectedId) : -1;
 
   return (
     <div ref={parentRef} className="fade-in h-full overflow-y-auto" onMouseLeave={() => setHoverColor(null)}>
       {/* 撑出全量高度的占位层;只有可见窗口内的行被真正渲染并绝对定位到各自位置。
           10 万提交也只挂十几个 DOM 节点,滚动恒定开销。 */}
       <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+        {/* 滑动选中高亮条:单个元素,选中变化时 translateY 平滑滑到目标行(macOS 列表式)。
+            画在行之前 → 行内容绘于其上,文字/泳道清晰可读;pointer-events-none 不挡点击。
+            偏移 = topInset(paddingStart) + 下标×ROW_H,与虚拟器的行起点口径一致。 */}
+        {selIdx >= 0 && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute left-0 top-0 w-full border-l-2 border-accent-emphasis bg-overlay"
+            style={{ height: ROW_H, transform: `translateY(${topInset + selIdx * ROW_H}px)`, transition: "transform 0.18s cubic-bezier(0.22,1,0.36,1)" }}
+          />
+        )}
         {virtualizer.getVirtualItems().map((vrow) => {
           const r = rows[vrow.index];
           const isNew = isNewCommit(r.commit.id, vrow.index);
@@ -144,7 +156,7 @@ export function CommitGraph({
               onContextMenu={(e) => { if (onContext) { e.preventDefault(); onSelect(r.commit); onContext(r.commit, e.clientX, e.clientY); } }}
               title={syncTip}
               className={`flex cursor-pointer items-stretch border-l-2 transition-colors ${isNew ? "commit-enter" : ""} ${
-                on ? "border-accent-emphasis bg-overlay"
+                on ? "border-transparent"
                 : cmp ? "border-accent bg-accent/10"
                 : "border-transparent hover:bg-elevated"
               }`}
