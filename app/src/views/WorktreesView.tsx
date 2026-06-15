@@ -1,5 +1,6 @@
 import { useWorktrees } from "../lib/queries";
 import { WorktreeIcon, BranchIcon } from "../components/icons";
+import { EmptyHint } from "../components/ui/EmptyHint";
 import type { IpcError, WorktreeInfoDto } from "../ipc";
 
 /** 路径尾段(目录名),完整路径放 title。 */
@@ -25,7 +26,7 @@ export function WorktreesView({ repo }: { repo: string }) {
       ) : queryErr ? (
         <Center>{queryErr}</Center>
       ) : wts.length === 0 ? (
-        <Center>没有工作树信息</Center>
+        <EmptyHint icon={<WorktreeIcon width={24} height={24} />}>没有工作树信息</EmptyHint>
       ) : (
         <div className="fade-in flex-1 overflow-auto p-3">
           <div className="flex flex-col gap-2">

@@ -4,6 +4,7 @@ import { useSubmodules, qk, invalidateWorktree } from "../lib/queries";
 import { updateSubmodule, type IpcError, type SubmoduleInfoDto, type SubmoduleStatusStr } from "../ipc";
 import { SubmoduleIcon, SpinnerIcon, PullIcon, RefreshIcon } from "../components/icons";
 import { Button } from "../components/ui/Button";
+import { EmptyHint } from "../components/ui/EmptyHint";
 import { useToast } from "../components/Toast";
 
 /** 各状态的徽章样式 + 中文。颜色只用 @theme token,不硬编码 hex。 */
@@ -32,7 +33,7 @@ export function SubmodulesView({ repo }: { repo: string }) {
       ) : queryErr ? (
         <Center>{queryErr}</Center>
       ) : subs.length === 0 ? (
-        <Center>该仓库没有子模块</Center>
+        <EmptyHint icon={<SubmoduleIcon width={24} height={24} />}>该仓库没有子模块</EmptyHint>
       ) : (
         <div className="fade-in flex-1 overflow-auto p-3">
           <div className="flex flex-col gap-2">

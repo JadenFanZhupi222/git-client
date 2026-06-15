@@ -1,5 +1,6 @@
 import { useSparseCheckout } from "../lib/queries";
 import { FolderIcon } from "../components/icons";
+import { EmptyHint } from "../components/ui/EmptyHint";
 import type { IpcError } from "../ipc";
 
 export function SparseCheckoutView({ repo }: { repo: string }) {
@@ -20,7 +21,7 @@ export function SparseCheckoutView({ repo }: { repo: string }) {
       ) : queryErr ? (
         <Center>{queryErr}</Center>
       ) : patterns.length === 0 ? (
-        <Center>未开启稀疏检出</Center>
+        <EmptyHint icon={<FolderIcon width={24} height={24} />}>未开启稀疏检出</EmptyHint>
       ) : (
         <div className="fade-in flex-1 overflow-auto p-3">
           <p className="mb-2 text-xs text-fg-muted">

@@ -263,6 +263,31 @@ body {
   .hero-rise { animation: none; }
 }
 
+/* 浮层入场:遮罩淡入 + 面板上浮回弹(命令面板/模态用),spring 收尾显高级。 */
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+.overlay-in { animation: overlay-in 0.18s ease-out; }
+.panel-in { animation: panel-in 0.22s cubic-bezier(0.32, 0.72, 0, 1); }
+
+/* 下拉菜单入场:轻微上浮回弹(比模态更快更小)。与 .popover 并存(popover 只管阴影)。 */
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.menu-in {
+  animation: menu-in 0.13s cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: top;
+}
+@media (prefers-reduced-motion: reduce) {
+  .overlay-in, .panel-in, .menu-in { animation: none; }
+}
+
 /* 内容淡入:首屏/切换时柔和出现 */
 @keyframes fade-in {
   from {

@@ -3,6 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { readImage, type DiffLineDto, type FileDiffDto, type ImageRefDto } from "../ipc";
 import { buildDiffRows, maxContentCols, type DiffRow, type LineRef, type SbsRow } from "../lib/diffRows";
 import { ChevronDownIcon, FileDiffIcon } from "./icons";
+import { EmptyHint } from "./ui/EmptyHint";
 
 type Side = "old" | "new";
 
@@ -50,14 +51,7 @@ export function DiffView({
       return next;
     });
   if (!hasFile) {
-    return (
-      <div className="fade-in flex flex-1 flex-col items-center justify-center gap-3.5 p-6 text-center">
-        <div className="grid h-14 w-14 place-items-center rounded-[18px] border border-line bg-elevated/40 text-fg-subtle">
-          <FileDiffIcon width={24} height={24} />
-        </div>
-        <p className="max-w-[30ch] text-sm text-fg-muted">选择一个文件，在这里查看它的改动</p>
-      </div>
-    );
+    return <EmptyHint icon={<FileDiffIcon width={24} height={24} />}>选择一个文件，在这里查看它的改动</EmptyHint>;
   }
   if (loading) {
     return (

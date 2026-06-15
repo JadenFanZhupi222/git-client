@@ -20,9 +20,9 @@ export function ReflogPanel({
   const entries = q.data ?? [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
+    <div className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
       <div
-        className="flex max-h-[80vh] w-[680px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas shadow-2xl"
+        className="panel-in popover flex max-h-[80vh] w-[680px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">

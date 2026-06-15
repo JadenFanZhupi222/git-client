@@ -119,9 +119,9 @@ export function RebaseEditor({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
+    <div className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
       <div
-        className="flex max-h-[80vh] w-[640px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas shadow-2xl"
+        className="panel-in popover flex max-h-[80vh] w-[640px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
@@ -157,7 +157,7 @@ export function RebaseEditor({
                   <select
                     value={r.action}
                     onChange={(e) => setAction(i, e.target.value as RebaseActionKind)}
-                    className="shrink-0 rounded border border-line-strong bg-canvas px-1.5 py-1 text-xs text-fg focus:border-accent focus:outline-none"
+                    className="shrink-0 rounded border border-line-strong bg-canvas px-1.5 py-1 text-xs text-fg field"
                   >
                     {ACTIONS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
                   </select>
@@ -171,7 +171,7 @@ export function RebaseEditor({
                     value={r.message}
                     onChange={(e) => setMessage(i, e.target.value)}
                     placeholder="新的提交信息"
-                    className="mt-1 ml-7 w-[calc(100%-1.75rem)] rounded border border-line-strong bg-canvas px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none"
+                    className="mt-1 ml-7 w-[calc(100%-1.75rem)] rounded border border-line-strong bg-canvas px-2 py-1 text-xs text-fg field"
                   />
                 )}
               </div>

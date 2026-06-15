@@ -38,7 +38,7 @@ export function LineHistoryPanel({
   const rangeLabel = range.start === range.end ? `第 ${range.start} 行` : `第 ${range.start}–${range.end} 行`;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
+    <div className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
       <div
         ref={dialogRef}
         role="dialog"
@@ -46,7 +46,7 @@ export function LineHistoryPanel({
         aria-label={`行历史 ${name} ${rangeLabel}`}
         tabIndex={-1}
         onKeyDown={onKeyDown}
-        className="flex h-[85vh] w-[90vw] max-w-[1200px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas shadow-2xl outline-none"
+        className="panel-in popover flex h-[85vh] w-[90vw] max-w-[1200px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">

@@ -35,13 +35,13 @@ export function ConfirmDialog({
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
+      className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
       onClick={busy ? undefined : onCancel}
     >
       <div
         role="alertdialog"
         aria-label={title}
-        className="flex max-h-[80vh] w-[420px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas shadow-2xl"
+        className="panel-in popover flex max-h-[80vh] w-[420px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start gap-2.5 px-4 pt-4">

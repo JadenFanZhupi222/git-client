@@ -133,7 +133,7 @@ export function CommitContextMenu({
               onChange={(e) => setTagName(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") doTag(); if (e.key === "Escape") setView("main"); }}
               placeholder="标签名"
-              className="mt-1 w-full rounded border border-line-strong bg-canvas px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none"
+              className="mt-1 w-full rounded border border-line-strong bg-canvas px-2 py-1 text-xs text-fg field"
             />
             <Button variant="primary" size="sm" disabled={busy || !tagName.trim()} onClick={doTag} className="mt-1 w-full">创建标签</Button>
           </div>

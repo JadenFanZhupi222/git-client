@@ -355,7 +355,7 @@ export default function App() {
                   {remoteMenu && (
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setRemoteMenu(false)} />
-                      <div className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs popover">
+                      <div className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs menu-in popover">
                         {remotes.map((r) => (
                           <button
                             key={r}
@@ -439,7 +439,7 @@ export default function App() {
                   {pullMenu && (
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setPullMenu(false)} />
-                      <div className="absolute right-0 top-full z-50 mt-1.5 w-44 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs popover">
+                      <div className="absolute right-0 top-full z-50 mt-1.5 w-44 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs menu-in popover">
                         <PullModeItem active={!pullRebase} onClick={() => { setPullMode(false); doPull(false); }}>
                           合并(merge)
                         </PullModeItem>
@@ -497,7 +497,7 @@ export default function App() {
             {moreMenu && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setMoreMenu(false)} />
-                <div className="absolute right-0 top-full z-50 mt-1.5 w-48 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs popover">
+                <div className="absolute right-0 top-full z-50 mt-1.5 w-48 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs menu-in popover">
                   {repo && (
                     <MoreItem icon={<HistoryIcon width={14} height={14} />} onClick={() => { setMoreMenu(false); setOpLogOpen(true); }}>
                       操作日志
@@ -570,7 +570,7 @@ export default function App() {
               {upMenu && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setUpMenu(false)} />
-                  <div className="absolute bottom-full left-0 z-50 mb-1 w-48 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs popover">
+                  <div className="absolute bottom-full left-0 z-50 mb-1 w-48 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs menu-in popover">
                     <div className="border-b border-line px-2.5 py-1 text-[10px] uppercase tracking-wide text-fg-subtle">设为上游</div>
                     {remotes.map((r) => (
                       <button

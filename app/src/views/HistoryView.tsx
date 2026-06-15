@@ -16,6 +16,7 @@ import { Button } from "../components/ui/Button";
 import { IconButton } from "../components/ui/IconButton";
 import { Glass } from "../components/ui/Glass";
 import { CommitFileList } from "../components/CommitFileList";
+import { EmptyHint } from "../components/ui/EmptyHint";
 import { CommitDetail } from "../components/CommitDetail";
 import { DiffView } from "../components/DiffView";
 import { Resizer, useResizableWidth } from "../components/Resizer";
@@ -609,14 +610,7 @@ function MidColumn({
         <div className="min-h-0 flex-1 overflow-hidden">
           {commit
             ? <CommitFileList files={list} selected={selectedFile} onSelect={onSelectFile} onFileHistory={onFileHistory} />
-            : (
-              <div className="fade-in flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-                <div className="grid h-12 w-12 place-items-center rounded-[16px] border border-line bg-elevated/40 text-fg-subtle">
-                  <CommitIcon width={20} height={20} />
-                </div>
-                <p className="max-w-[26ch] text-xs text-fg-muted">从左侧图谱选择一个提交，查看详情与改动文件</p>
-              </div>
-            )}
+            : <EmptyHint icon={<CommitIcon width={24} height={24} />}>从左侧图谱选择一个提交，查看详情与改动文件</EmptyHint>}
         </div>
       </div>
       <Resizer onDown={col.onDown} />

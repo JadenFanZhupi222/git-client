@@ -47,9 +47,9 @@ export function OpLogPanel({
   const rows = log ? log.entries.map((e, i) => ({ e, i })).reverse() : [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
+    <div className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
       <Glass
-        className="flex max-h-[80vh] w-[560px] flex-col overflow-hidden rounded-lg"
+        className="panel-in flex max-h-[80vh] w-[560px] flex-col overflow-hidden rounded-lg"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">

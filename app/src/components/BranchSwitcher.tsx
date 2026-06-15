@@ -159,14 +159,14 @@ export function BranchSwitcher({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={close} />
-          <div className={`absolute left-0 z-50 w-64 overflow-hidden rounded-md border border-line-strong bg-elevated popover ${direction === "down" ? "top-full mt-1.5" : "bottom-full mb-1.5"}`}>
+          <div className={`absolute left-0 z-50 w-64 overflow-hidden rounded-md border border-line-strong bg-elevated menu-in popover ${direction === "down" ? "top-full mt-1.5" : "bottom-full mb-1.5"}`}>
             <div className="border-b border-line p-1.5">
               <input
                 autoFocus
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 placeholder="筛选分支…"
-                className="w-full rounded bg-canvas px-2 py-1 text-xs text-fg placeholder:text-fg-subtle focus:outline-none"
+                className="w-full rounded bg-canvas px-2 py-1 text-xs text-fg placeholder:text-fg-subtle field"
               />
             </div>
 
@@ -227,7 +227,7 @@ export function BranchSwitcher({
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
                     placeholder="新分支名(基于当前 HEAD)…"
-                    className="min-w-0 flex-1 rounded bg-canvas px-2 py-1 font-mono text-xs text-fg placeholder:text-fg-subtle focus:outline-none"
+                    className="min-w-0 flex-1 rounded bg-canvas px-2 py-1 font-mono text-xs text-fg placeholder:text-fg-subtle field"
                   />
                   <Button type="submit" variant="commit" size="sm" disabled={!newName.trim() || busy !== null} className="shrink-0">
                     创建

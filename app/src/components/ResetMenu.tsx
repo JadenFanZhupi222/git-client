@@ -64,7 +64,7 @@ export function ResetMenu({
         <>
           {/* 点击外部关闭 */}
           <div className="fixed inset-0 z-10" onClick={close} />
-          <div className="absolute right-0 z-20 mt-1 w-60 overflow-hidden rounded-md border border-line-strong bg-elevated popover">
+          <div className="absolute right-0 z-20 mt-1 w-60 overflow-hidden rounded-md border border-line-strong bg-elevated menu-in popover">
             {MODES.map((m) => (
               <button
                 key={m.mode}
