@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { type CommitDto, type GraphRowDto, type RefDto } from "../ipc";
 import { CommitLines } from "./CommitLines";
@@ -80,6 +80,22 @@ export function CommitGraph({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollToId]);
 
+  // 「活的图谱」新提交入场:记住见过的提交 id;只有「从未见过 + 落在顶部少数行」的提交
+  // 才播入场动画(= 真正的新提交,如 commit/pull 后的 HEAD;翻页追加的旧提交在底部,不动)。
+  // 首屏(isFirst)整体走容器 fade-in,不逐行闪。
+  const seenIds = useRef<Set<string>>(new Set());
+  const isFirst = useRef(true);
+  const isNewCommit = (id: string, index: number) =>
+    !isFirst.current && index < 8 && !seenIds.current.has(id);
+  useEffect(() => {
+    rows.forEach((r) => seenIds.current.add(r.commit.id));
+    isFirst.current = false;
+  }, [rows]);
+
+  // hover 高亮:记住鼠标所在提交的泳道色,渲染时把同色泳道/节点点亮、其余淡下。
+  // 设同值是 no-op(React 自动 bail),跨行移动只在颜色变化时重渲;离开整列才清空(避免行间闪烁)。
+  const [hoverColor, setHoverColor] = useState<number | null>(null);
+
   // 首屏加载骨架(无数据时):不进虚拟化路径。
   if (loading && rows.length === 0) {
     return (
@@ -100,12 +116,14 @@ export function CommitGraph({
   const gutterW = gutterWidth(rows);
 
   return (
-    <div ref={parentRef} className="fade-in h-full overflow-y-auto">
+    <div ref={parentRef} className="fade-in h-full overflow-y-auto" onMouseLeave={() => setHoverColor(null)}>
       {/* 撑出全量高度的占位层;只有可见窗口内的行被真正渲染并绝对定位到各自位置。
           10 万提交也只挂十几个 DOM 节点,滚动恒定开销。 */}
       <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
         {virtualizer.getVirtualItems().map((vrow) => {
           const r = rows[vrow.index];
+          const isNew = isNewCommit(r.commit.id, vrow.index);
+          const nodeDim = hoverColor !== null && r.color !== hoverColor;
           const on = selectedId === r.commit.id;
           const cmp = !on && compareId === r.commit.id;
           const isHead = r.refs.some((x) => x.kind === "head");
@@ -121,10 +139,11 @@ export function CommitGraph({
           return (
             <div
               key={r.commit.id}
+              onMouseEnter={() => setHoverColor(r.color)}
               onClick={(e) => onSelect(r.commit, { compare: e.metaKey || e.ctrlKey })}
               onContextMenu={(e) => { if (onContext) { e.preventDefault(); onSelect(r.commit); onContext(r.commit, e.clientX, e.clientY); } }}
               title={syncTip}
-              className={`flex cursor-pointer items-stretch border-l-2 transition-colors ${
+              className={`flex cursor-pointer items-stretch border-l-2 transition-colors ${isNew ? "commit-enter" : ""} ${
                 on ? "border-accent-emphasis bg-overlay"
                 : cmp ? "border-accent bg-accent/10"
                 : "border-transparent hover:bg-elevated"
@@ -145,18 +164,27 @@ export function CommitGraph({
               />
               {/* 图谱泳道 */}
               <svg width={gutterW} height={ROW_H} className="shrink-0" style={{ minWidth: gutterW }}>
-                {r.top.map((s, j) => (
-                  <path key={`t${j}`} d={topPath(s.from, s.to)} fill="none"
-                    stroke={laneColor(s.color)} strokeWidth={2} strokeLinecap="round" />
-                ))}
-                {r.bottom.map((s, j) => (
-                  <path key={`b${j}`} d={botPath(s.from, s.to)} fill="none"
-                    stroke={laneColor(s.color)} strokeWidth={2} strokeLinecap="round" />
-                ))}
+                {r.top.map((s, j) => {
+                  const hl = hoverColor === null || s.color === hoverColor;
+                  return (
+                    <path key={`t${j}`} className="lane-path" d={topPath(s.from, s.to)} fill="none"
+                      stroke={laneColor(s.color)} strokeWidth={hl ? 2.4 : 2} strokeOpacity={hl ? 1 : 0.2} strokeLinecap="round" />
+                  );
+                })}
+                {r.bottom.map((s, j) => {
+                  const hl = hoverColor === null || s.color === hoverColor;
+                  return (
+                    <path key={`b${j}`} className="lane-path" d={botPath(s.from, s.to)} fill="none"
+                      stroke={laneColor(s.color)} strokeWidth={hl ? 2.4 : 2} strokeOpacity={hl ? 1 : 0.2} strokeLinecap="round" />
+                  );
+                })}
                 {/* 光晕:用画布色描边把节点背后的泳道线「挖空」,圆点更干净 */}
                 <circle cx={cx(r.column)} cy={ROW_H / 2} r={6.5} fill="var(--color-canvas)" />
-                {/* 节点:已同步=实心(泳道色);未 push/未 pull=空心环(同步色),仿 JetBrains */}
+                {/* 节点:已同步=实心(泳道色);未 push/未 pull=空心环(同步色),仿 JetBrains。
+                    新提交时 node-pop 弹入(SVG scale,transform-box:fill-box 以圆心为原点)。 */}
                 <circle cx={cx(r.column)} cy={ROW_H / 2} r={4.5}
+                  className={isNew ? "node-pop" : undefined}
+                  style={{ opacity: nodeDim ? 0.3 : 1, transition: "opacity 0.16s ease" }}
                   fill={syncColor ? "var(--color-canvas)" : laneColor(r.color)}
                   stroke={syncColor ?? (isHead ? "var(--color-accent)" : "transparent")}
                   strokeWidth={syncColor ? 2.5 : isHead ? 2.5 : 0} />

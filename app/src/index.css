@@ -288,6 +288,33 @@ body {
   .overlay-in, .panel-in, .menu-in { animation: none; }
 }
 
+/* 活的图谱 · 新提交入场:行淡入 + 青绿微光退场(背景从 accent 微染渐隐到透明),
+   节点圆点弹入。只作用于「真正新出现」的提交(见 CommitGraph 的 seenIds 判定)。
+   不碰 transform —— 行的 translateY 由虚拟化掌管,这里只动 opacity/background。 */
+@keyframes commit-enter {
+  0% { opacity: 0; background-color: color-mix(in oklab, var(--color-accent) 22%, transparent); }
+  70% { background-color: color-mix(in oklab, var(--color-accent) 13%, transparent); }
+  100% { opacity: 1; background-color: transparent; }
+}
+.commit-enter { animation: commit-enter 0.55s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes node-pop {
+  0% { transform: scale(0.2); }
+  60% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+.node-pop {
+  animation: node-pop 0.5s cubic-bezier(0.32, 0.72, 0, 1);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+/* hover 高亮:泳道线/节点的明暗随 hover 平滑过渡(图谱「对鼠标有反应」)。 */
+.lane-path {
+  transition: stroke-opacity 0.16s ease, stroke-width 0.16s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .commit-enter, .node-pop { animation: none; }
+}
+
 /* 内容淡入:首屏/切换时柔和出现 */
 @keyframes fade-in {
   from {
