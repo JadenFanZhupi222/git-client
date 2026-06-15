@@ -25,14 +25,20 @@
   --color-warning: #c2691c;
   --color-done: #0d9488;            /* 提交按钮:青绿实心 + 白字 */
 
-  --font-sans: ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
-  --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  /* Geist 领衔拉丁/数字(开发者工具气质);CJK 无字形,逐字回退 YaHei/system。 */
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
 
   /* 圆角阶梯 */
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 16px;
   --radius-pill: 999px;
+
+  /* 高级感缓动:重质感弹性曲线(替换 linear/ease-in-out 的生硬过渡)。
+     Tailwind v4 自动生成 ease-spring / ease-out-quint 工具类。 */
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* 提交图谱泳道调色板(数据可视化色,与语义 UI token 分开)。
@@ -131,6 +137,9 @@ body {
   color: var(--color-fg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* 数据密集型客户端:等宽数字,让计数/行号/SHA/领先落后角标对齐不抖动 */
+  font-variant-numeric: tabular-nums;
 }
 
 /* 细滚动条,跟随主题 token */
@@ -159,6 +168,46 @@ body {
   outline-offset: 1px;
 }
 
+/* 文本选区:青绿微染,呼应主色(替换浏览器默认的生硬蓝) */
+::selection {
+  background: color-mix(in oklab, var(--color-accent) 28%, transparent);
+}
+
+/* 浮层标高:柔和、带主题色调的双层投影(替换生硬的 shadow-lg 黑投影)。
+   用于下拉菜单/弹出层,给浮层真实的「漂浮」纵深。 */
+.popover {
+  box-shadow:
+    0 2px 6px -1px rgba(8, 15, 26, 0.08),
+    0 16px 40px -10px rgba(8, 15, 26, 0.20);
+}
+:root[data-theme="dark"] .popover {
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.40),
+    0 18px 48px -12px rgba(0, 0, 0, 0.62);
+}
+
+/* 输入软聚焦环:柔和强调环替代生硬换边,精致且不刺眼。
+   给关键输入(提交框/搜索框)加 .field 启用。 */
+.field:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 15%, transparent);
+}
+
+/* 物理按压反馈(audit #3「无 active/pressed 态」):未禁用按钮按下时轻微下沉,
+   模拟真实点击,让界面「活」起来。一处全局命中按钮原语 + 所有内联 <button>。
+   尊重 prefers-reduced-motion;`:root` 前缀抬高特异性,把 transform 叠加进
+   组件原有的 Tailwind transition-colors(否则同名 transition-property 被工具类盖掉)。 */
+@media (prefers-reduced-motion: no-preference) {
+  :root button:not(:disabled) {
+    transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+    transition-duration: 150ms;
+  }
+  :root button:not(:disabled):active {
+    transform: scale(0.98);
+  }
+}
+
 /* 骨架屏:加载占位的微光流动效果 */
 @keyframes shimmer {
   0% {
@@ -180,6 +229,40 @@ body {
   border-radius: 4px;
 }
 
+/* ──────────────────────────────────────────────────────────────
+   启动屏氛围层:深岩板上的青绿光晕 + 细噪点,营造「打开即高级」的空间纵深。
+   玻璃浮层叠在它之上才显出真正的液态折射(解决「玻璃贴纯色 = 看不见」)。
+   仅启动屏(未选仓库)使用,工作区仍是干净的 bg-canvas,零性能负担。
+   ────────────────────────────────────────────────────────────── */
+.launch-ambient {
+  background-color: var(--color-canvas);
+  background-image:
+    radial-gradient(58% 52% at 15% 8%, color-mix(in oklab, var(--color-accent) 24%, transparent), transparent 68%),
+    radial-gradient(54% 48% at 88% 94%, color-mix(in oklab, var(--color-accent-emphasis) 18%, transparent), transparent 70%),
+    radial-gradient(42% 40% at 64% 36%, color-mix(in oklab, var(--color-accent) 9%, transparent), transparent 80%);
+}
+/* 细噪点叠层:绝对定位、不吃指针(性能护栏:只贴静止层,不随内容滚动)。 */
+.grain-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.045;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* 电影级入场:柔和上浮 + 去模糊,配合 stagger 延迟逐个登场。 */
+@keyframes hero-rise {
+  from { opacity: 0; transform: translateY(16px); filter: blur(8px); }
+  to { opacity: 1; transform: none; filter: blur(0); }
+}
+.hero-rise {
+  animation: hero-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-rise { animation: none; }
+}
+
 /* 内容淡入:首屏/切换时柔和出现 */
 @keyframes fade-in {
   from {
@@ -193,6 +276,14 @@ body {
 }
 .fade-in {
   animation: fade-in 0.18s ease-out;
+}
+
+/* 隐藏滚动条但保留滚动能力(并排 diff 每半栏横向滚动用,避免每行都冒出一根丑滚动条)。 */
+.hide-scrollbar {
+  scrollbar-width: none;
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 /* 棋盘格:图片 diff 衬透明区域。用主题分隔线色,深浅自动跟随。 */

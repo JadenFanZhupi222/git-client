@@ -17,9 +17,11 @@ const SIZES: Record<ButtonSize, string> = {
   md: "rounded-md px-3.5 py-1.5 text-sm",
 };
 
+// primary/commit 用主题色的柔和投影抬升,做出「可按的实体」高级感;
+// 全局 button:active 已加按压回弹,这里只补静止态的标高。
 const VARIANTS: Record<ButtonVariant, string> = {
-  primary: "bg-accent text-white hover:opacity-90",
-  commit: "bg-done text-white hover:opacity-90",
+  primary: "bg-accent text-white shadow-[0_1px_2px_rgba(8,15,26,0.10),0_8px_22px_-10px_color-mix(in_oklab,var(--color-accent)_60%,transparent)] hover:opacity-95",
+  commit: "bg-done text-white shadow-[0_1px_2px_rgba(8,15,26,0.10),0_8px_22px_-10px_color-mix(in_oklab,var(--color-done)_60%,transparent)] hover:opacity-95",
   secondary: "border border-line-strong bg-elevated text-fg-muted hover:bg-overlay hover:text-fg",
   danger: "border border-danger/50 text-danger hover:bg-danger/15",
   ghost: "text-fg-muted hover:bg-overlay hover:text-fg",

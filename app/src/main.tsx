@@ -1,6 +1,10 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+// 自托管 Geist 可变字体(离线打包,不依赖网络)。拉丁字母/数字走 Geist,
+// 中文无 Geist 字形 → 逐字回退到字体栈里的 YaHei/system(见 index.css 的 --font-*)。
+import "@fontsource-variable/geist";
+import "@fontsource-variable/geist-mono";
 import "./index.css";
 import App from "./App";
 import { ToastProvider } from "./components/Toast";

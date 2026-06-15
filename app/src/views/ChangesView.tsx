@@ -296,7 +296,7 @@ export function ChangesView({ repo }: { repo: string }) {
         {/* 提交框(固定底部) */}
         <div className="shrink-0 border-t border-line p-3">
           <textarea
-            className="w-full resize-none rounded-md border border-line bg-canvas p-2.5 text-sm text-fg placeholder:text-fg-subtle focus:border-accent focus:outline-none"
+            className="field w-full resize-none rounded-md border border-line bg-canvas p-2.5 text-sm text-fg placeholder:text-fg-subtle"
             rows={3}
             placeholder="提交信息…  (⌘/Ctrl+Enter 提交)"
             value={message}

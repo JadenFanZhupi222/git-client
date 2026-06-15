@@ -11,7 +11,7 @@ import { WorktreesView } from "./views/WorktreesView";
 import { SparseCheckoutView } from "./views/SparseCheckoutView";
 import { useQueryClient } from "@tanstack/react-query";
 import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, checkoutBranch, type IpcError } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon } from "./components/icons";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon, MoreIcon, DropletIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
 import { StashMenu } from "./components/StashMenu";
@@ -19,7 +19,6 @@ import { OpLogPanel } from "./components/OpLogPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import type { Command } from "./lib/commands";
 import { useToast } from "./components/Toast";
-import { Button } from "./components/ui/Button";
 import { Glass } from "./components/ui/Glass";
 import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, useBranches, useSubmodules, useWorktrees, useSparseCheckout, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
 import { applyTheme, applyGlassMode, getStoredTheme, type Theme } from "./lib/theme";
@@ -35,6 +34,9 @@ function fetchDetail(summary: string): string | undefined {
 
 export default function App() {
   const [repo, setRepo] = useState<string | null>(null);
+  // 上次打开的仓库:不自动跳入(保留启动屏作为每次开 app 的第一印象),
+  // 而是在启动屏给一个「继续上次」快捷入口(Linear/Things 式「跳回上次」)。
+  const lastRepo = localStorage.getItem("repo.last");
   const [tab, setTab] = useState<Tab>("changes");
   const [theme, setTheme] = useState<Theme>(getStoredTheme);
   const [fetching, setFetching] = useState(false);
@@ -49,6 +51,7 @@ export default function App() {
   const [undoing, setUndoing] = useState(false);
   const [opLogOpen, setOpLogOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [moreMenu, setMoreMenu] = useState(false);
   const toast = useToast();
   const qc = useQueryClient();
 
@@ -201,6 +204,9 @@ export default function App() {
   // 切仓库时重置远程选择(回到默认)
   useEffect(() => { setSelectedRemote(null); }, [repo]);
 
+  // 记住当前仓库,供下次启动屏「继续上次」用。
+  useEffect(() => { if (repo) localStorage.setItem("repo.last", repo); }, [repo]);
+
   // 动态标签(子模块/工作树)随仓库出现/消失;切到不再可用的标签时退回「更改」,免得停在空标签。
   useEffect(() => {
     if ((tab === "submodules" && !hasSubmodules) || (tab === "worktrees" && !hasWorktrees) || (tab === "sparse" && !hasSparse)) setTab("changes");
@@ -312,13 +318,24 @@ export default function App() {
   const repoName = repo?.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? null;
 
   return (
-    <div className="flex h-screen flex-col bg-canvas text-fg">
+    <div className={`flex h-screen flex-col text-fg ${repo ? "bg-canvas" : "launch-ambient"}`}>
       {busy && <TopProgress />}
       {/* 顶栏:轻、紧凑、左标题右仓库 */}
       <Glass as="header" className="relative z-20 flex h-11 shrink-0 items-center gap-3 border-b border-line px-3">
-        <div className="flex items-center gap-2 font-semibold">
+        <div className="flex min-w-0 items-center gap-2">
           <BranchMark />
-          <span className="text-sm">Git 客户端</span>
+          {repo ? (
+            <span className="max-w-[12rem] truncate font-mono text-sm font-medium text-fg" title={repo}>{repoName}</span>
+          ) : (
+            <span className="text-sm font-semibold">Git 客户端</span>
+          )}
+          {repo && (
+            <div className="flex min-w-0 items-center gap-2 text-xs">
+              <span className="text-fg-subtle">/</span>
+              <BranchSwitcher repo={repo} branch={branch} direction="down" />
+              <SyncBadge sync={sync} />
+            </div>
+          )}
         </div>
 
         <div className="ml-auto flex items-center gap-2">
@@ -338,7 +355,7 @@ export default function App() {
                   {remoteMenu && (
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setRemoteMenu(false)} />
-                      <div className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs shadow-lg">
+                      <div className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs popover">
                         {remotes.map((r) => (
                           <button
                             key={r}
@@ -378,98 +395,84 @@ export default function App() {
                   {`重做${canRedo.label}`}
                 </button>
               )}
-              <button
-                onClick={() => setOpLogOpen(true)}
-                title="操作日志(本会话写操作时间线，可点回跳)"
-                aria-label="操作日志"
-                className="grid h-7 w-7 place-items-center rounded-md border border-line-strong bg-elevated text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle"
-              >
-                <HistoryIcon width={14} height={14} />
-              </button>
-              <button
-                onClick={doFetch}
-                disabled={busy}
-                title="Fetch(从远程拉取更新，不改工作区)"
-                className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50"
-              >
-                {fetching ? (
-                  <SpinnerIcon width={13} height={13} />
-                ) : (
-                  <FetchIcon width={13} height={13} />
-                )}
-                {fetching ? "Fetch…" : "Fetch"}
-              </button>
-              <div className="relative flex items-stretch">
+              {/* 同步操作托盘:Fetch · Pull · Push 收成一组,读作一个单元(双层贝塞尔托盘)。
+                  各按钮无独立边框,托盘承载边框;可 Pull/Push 时用强调色文字 + ↓N/↑N 角标提示。 */}
+              <div className="flex items-center gap-0.5 rounded-lg border border-line bg-elevated/60 p-0.5">
                 <button
-                  onClick={() => doPull(pullRebase)}
+                  onClick={doFetch}
                   disabled={busy}
-                  title={canPull ? `落后上游 ${sync!.behind} 个提交，建议 Pull` : `Pull(${pullRebase ? "变基" : "合并"}到当前分支)`}
-                  className={`flex items-center gap-1.5 rounded-l-md border bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50 ${
-                    canPull ? "border-accent/60" : "border-line-strong"
+                  title="Fetch(从远程拉取更新，不改工作区)"
+                  className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay disabled:opacity-50"
+                >
+                  {fetching ? (
+                    <SpinnerIcon width={13} height={13} />
+                  ) : (
+                    <FetchIcon width={13} height={13} />
+                  )}
+                  {fetching ? "Fetch…" : "Fetch"}
+                </button>
+                <div className="relative flex items-stretch">
+                  <button
+                    onClick={() => doPull(pullRebase)}
+                    disabled={busy}
+                    title={canPull ? `落后上游 ${sync!.behind} 个提交，建议 Pull` : `Pull(${pullRebase ? "变基" : "合并"}到当前分支)`}
+                    className={`flex items-center gap-1.5 rounded-l-md px-2.5 py-1 text-xs transition-colors hover:bg-overlay disabled:opacity-50 ${
+                      canPull ? "text-accent" : "text-fg"
+                    }`}
+                  >
+                    {pulling ? <SpinnerIcon width={13} height={13} /> : <PullIcon width={13} height={13} />}
+                    {pulling ? "Pull…" : pullRebase ? "Pull · 变基" : "Pull"}
+                    {canPull && !pulling && (
+                      <span className="rounded-full bg-accent/15 px-1 font-mono text-[10px] font-semibold text-accent">
+                        ↓{sync!.behind}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setPullMenu((o) => !o)}
+                    disabled={busy}
+                    title="选择拉取方式"
+                    className="grid place-items-center rounded-r-md px-1 text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
+                  >
+                    <ChevronDownIcon width={11} height={11} />
+                  </button>
+                  {pullMenu && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setPullMenu(false)} />
+                      <div className="absolute right-0 top-full z-50 mt-1.5 w-44 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs popover">
+                        <PullModeItem active={!pullRebase} onClick={() => { setPullMode(false); doPull(false); }}>
+                          合并(merge)
+                        </PullModeItem>
+                        <PullModeItem active={pullRebase} onClick={() => { setPullMode(true); doPull(true); }}>
+                          变基(rebase)
+                        </PullModeItem>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <button
+                  onClick={doPush}
+                  disabled={busy}
+                  title={canPush ? `领先上游 ${sync!.ahead} 个提交，建议 Push` : "Push(把当前分支推到远程；首次自动建立上游)"}
+                  className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors hover:bg-overlay disabled:opacity-50 ${
+                    canPush ? "text-success" : "text-fg"
                   }`}
                 >
-                  {pulling ? <SpinnerIcon width={13} height={13} /> : <PullIcon width={13} height={13} />}
-                  {pulling ? "Pull…" : pullRebase ? "Pull · 变基" : "Pull"}
-                  {canPull && !pulling && (
-                    <span className="rounded-full bg-accent/15 px-1 font-mono text-[10px] font-semibold text-accent">
-                      ↓{sync!.behind}
+                  {pushing ? (
+                    <SpinnerIcon width={13} height={13} />
+                  ) : (
+                    <PushIcon width={13} height={13} />
+                  )}
+                  {pushing ? "Push…" : "Push"}
+                  {canPush && !pushing && (
+                    <span className="rounded-full bg-success/15 px-1 font-mono text-[10px] font-semibold text-success">
+                      ↑{sync!.ahead}
                     </span>
                   )}
                 </button>
-                <button
-                  onClick={() => setPullMenu((o) => !o)}
-                  disabled={busy}
-                  title="选择拉取方式"
-                  className={`grid place-items-center rounded-r-md border border-l-0 bg-elevated px-1 text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50 ${
-                    canPull ? "border-accent/60" : "border-line-strong"
-                  }`}
-                >
-                  <ChevronDownIcon width={11} height={11} />
-                </button>
-                {pullMenu && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setPullMenu(false)} />
-                    <div className="absolute right-0 top-full z-50 mt-1 w-44 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs shadow-lg">
-                      <PullModeItem active={!pullRebase} onClick={() => { setPullMode(false); doPull(false); }}>
-                        合并(merge)
-                      </PullModeItem>
-                      <PullModeItem active={pullRebase} onClick={() => { setPullMode(true); doPull(true); }}>
-                        变基(rebase)
-                      </PullModeItem>
-                    </div>
-                  </>
-                )}
               </div>
-              <button
-                onClick={doPush}
-                disabled={busy}
-                title={canPush ? `领先上游 ${sync!.ahead} 个提交，建议 Push` : "Push(把当前分支推到远程；首次自动建立上游)"}
-                className={`flex items-center gap-1.5 rounded-md border bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle disabled:opacity-50 ${
-                  canPush ? "border-success/60 ring-1 ring-success/40" : "border-line-strong"
-                }`}
-              >
-                {pushing ? (
-                  <SpinnerIcon width={13} height={13} />
-                ) : (
-                  <PushIcon width={13} height={13} />
-                )}
-                {pushing ? "Push…" : "Push"}
-                {canPush && !pushing && (
-                  <span className="rounded-full bg-success/15 px-1 font-mono text-[10px] font-semibold text-success">
-                    ↑{sync!.ahead}
-                  </span>
-                )}
-              </button>
               <StashMenu repo={repo} />
             </div>
-          )}
-          {repo && (
-            <span
-              title={repo}
-              className="max-w-[16rem] truncate rounded-md bg-elevated px-2 py-1 font-mono text-xs text-fg-muted"
-            >
-              {repoName}
-            </span>
           )}
           <button
             onClick={() => setPaletteOpen(true)}
@@ -480,14 +483,48 @@ export default function App() {
             <SearchIcon width={13} height={13} />
             <kbd className="font-mono text-[10px]">{modLabel}</kbd>
           </button>
-          <button
-            onClick={toggleTheme}
-            title={theme === "dark" ? "切换到浅色" : "切换到暗色"}
-            aria-label="切换主题"
-            className="grid h-7 w-7 place-items-center rounded-md border border-line-strong bg-elevated text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle"
-          >
-            {theme === "dark" ? <SunIcon width={14} height={14} /> : <MoonIcon width={14} height={14} />}
-          </button>
+
+          {/* 溢出菜单:次要外观/会话动作(操作日志 / 主题 / 玻璃)收纳于此,给顶栏减负。 */}
+          <div className="relative">
+            <button
+              onClick={() => setMoreMenu((o) => !o)}
+              title="更多"
+              aria-label="更多"
+              className="grid h-7 w-7 place-items-center rounded-md border border-line-strong bg-elevated text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle"
+            >
+              <MoreIcon width={15} height={15} />
+            </button>
+            {moreMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setMoreMenu(false)} />
+                <div className="absolute right-0 top-full z-50 mt-1.5 w-48 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs popover">
+                  {repo && (
+                    <MoreItem icon={<HistoryIcon width={14} height={14} />} onClick={() => { setMoreMenu(false); setOpLogOpen(true); }}>
+                      操作日志
+                    </MoreItem>
+                  )}
+                  <MoreItem
+                    icon={theme === "dark" ? <SunIcon width={14} height={14} /> : <MoonIcon width={14} height={14} />}
+                    onClick={() => { toggleTheme(); setMoreMenu(false); }}
+                  >
+                    {theme === "dark" ? "切换到浅色主题" : "切换到暗色主题"}
+                  </MoreItem>
+                  <MoreItem
+                    icon={<DropletIcon width={14} height={14} />}
+                    onClick={() => {
+                      const next = getStoredGlassPref() === "reduced" ? "auto" : "reduced";
+                      setStoredGlassPref(next);
+                      applyGlassMode();
+                      setMoreMenu(false);
+                    }}
+                  >
+                    {getStoredGlassPref() === "reduced" ? "开启玻璃效果" : "降低透明度"}
+                  </MoreItem>
+                </div>
+              </>
+            )}
+          </div>
+
           <button
             onClick={pickRepo}
             className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle"
@@ -515,14 +552,12 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <EmptyState onPick={pickRepo} />
+        <EmptyState onPick={pickRepo} lastRepo={lastRepo} onResume={setRepo} />
       )}
 
       {/* 底部状态栏:分支 + 仓库路径,IDE 风格 */}
       {repo && (
         <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-elevated px-3 text-[11px] text-fg-muted">
-          <BranchSwitcher repo={repo} branch={branch} />
-          <SyncBadge sync={sync} />
           {!sync && branch && remotes.length > 0 && (
             <div className="relative">
               <button
@@ -535,7 +570,7 @@ export default function App() {
               {upMenu && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setUpMenu(false)} />
-                  <div className="absolute bottom-full left-0 z-50 mb-1 w-48 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs shadow-lg">
+                  <div className="absolute bottom-full left-0 z-50 mb-1 w-48 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs popover">
                     <div className="border-b border-line px-2.5 py-1 text-[10px] uppercase tracking-wide text-fg-subtle">设为上游</div>
                     {remotes.map((r) => (
                       <button
@@ -588,6 +623,19 @@ function PullModeItem({ active, onClick, children }: { active: boolean; onClick:
   );
 }
 
+/** 溢出菜单项:左侧图标 + 文字,统一观感 */
+function MoreItem({ icon, onClick, children }: { icon?: React.ReactNode; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
+    >
+      {icon && <span className="grid w-4 shrink-0 place-items-center text-fg-subtle">{icon}</span>}
+      <span className="flex-1">{children}</span>
+    </button>
+  );
+}
+
 /** 顶部不确定态进度条:非阻塞的全局加载信号(fetch 等后台操作进行时显示) */
 function TopProgress() {
   return (
@@ -611,20 +659,86 @@ function BranchMark() {
   );
 }
 
-/** 没选仓库时的引导空态 */
-function EmptyState({ onPick }: { onPick: () => void }) {
+/** 没选仓库时的启动屏 —— 每次开 app 的第一印象。
+ *  双层贝塞尔玻璃品牌牌折射背后的氛围光晕,大字标题 + 磁吸 CTA,逐元素电影级入场。 */
+function EmptyState({ onPick, lastRepo, onResume }: { onPick: () => void; lastRepo: string | null; onResume: (r: string) => void }) {
+  const lastName = lastRepo?.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? null;
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
-      <div className="grid h-16 w-16 place-items-center rounded-2xl bg-elevated text-fg-subtle">
-        <FolderIcon width={30} height={30} />
+    <div className="relative flex flex-1 items-center justify-center overflow-hidden px-8">
+      {/* 细噪点叠层:给纯数字渐变一层物理颗粒感 */}
+      <div className="grain-overlay" />
+
+      <div className="relative z-10 flex w-full max-w-md flex-col items-center text-center">
+        {/* 微缩眉签 */}
+        <span
+          className="hero-rise rounded-full border border-line-strong bg-elevated/60 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.22em] text-fg-muted backdrop-blur-sm"
+          style={{ animationDelay: "0ms" }}
+        >
+          本地优先 · 纯 Rust 内核
+        </span>
+
+        {/* 品牌牌:外层贝塞尔托盘 + 内层液态玻璃芯,折射背后光晕 */}
+        <div
+          className="hero-rise mt-7 rounded-[28px] border border-line/70 bg-elevated/30 p-2"
+          style={{ animationDelay: "80ms" }}
+        >
+          <Glass className="grid h-20 w-20 place-items-center rounded-[20px] text-accent">
+            <svg width={34} height={34} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="4" cy="3.5" r="1.6" />
+              <circle cx="4" cy="12.5" r="1.6" />
+              <circle cx="12" cy="3.5" r="1.6" />
+              <path d="M4 5.1v5.8M12 5.1v1.2a3 3 0 0 1-3 3H4" />
+            </svg>
+          </Glass>
+        </div>
+
+        {/* 大字标题(Geist,紧字距,平衡换行) */}
+        <h1
+          className="hero-rise mt-7 text-[2rem] font-semibold leading-tight tracking-[-0.02em] text-fg text-balance"
+          style={{ animationDelay: "150ms" }}
+        >
+          Git 客户端
+        </h1>
+        <p
+          className="hero-rise mt-2.5 max-w-[34ch] text-[15px] leading-relaxed text-fg-muted text-pretty"
+          style={{ animationDelay: "210ms" }}
+        >
+          选择一个本地仓库开始。所有操作都在本机完成 —— 快，且私密。
+        </p>
+
+        {/* 磁吸 CTA:全圆角药丸 + 内嵌圆形箭头(button-in-button),按压回弹 */}
+        <button
+          onClick={onPick}
+          className="hero-rise group mt-8 flex items-center gap-3 rounded-full bg-done py-2.5 pl-6 pr-2.5 text-sm font-medium text-white shadow-[0_10px_30px_-8px_color-mix(in_oklab,var(--color-done)_60%,transparent)] transition-[transform,box-shadow,opacity] duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:opacity-95 active:scale-[0.98]"
+          style={{ animationDelay: "280ms" }}
+        >
+          选择仓库
+          <span className="grid h-8 w-8 place-items-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-0.5">
+            <svg width={15} height={15} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3.5 8h9M8.5 4l4 4-4 4" />
+            </svg>
+          </span>
+        </button>
+
+        {/* 继续上次:跳回上次打开的仓库(Linear/Things 式) */}
+        {lastRepo && lastName && (
+          <button
+            onClick={() => onResume(lastRepo)}
+            title={lastRepo}
+            className="hero-rise group mt-4 flex max-w-full items-center gap-2 rounded-full border border-line bg-elevated/50 py-1.5 pl-3.5 pr-4 text-xs text-fg-muted backdrop-blur-sm transition-[transform,color,background-color] duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-elevated hover:text-fg active:scale-[0.98]"
+            style={{ animationDelay: "330ms" }}
+          >
+            <HistoryIcon width={13} height={13} className="shrink-0 text-fg-subtle transition-colors group-hover:text-accent" />
+            <span className="shrink-0">继续上次</span>
+            <span className="truncate font-mono text-fg-subtle">{lastName}</span>
+          </button>
+        )}
+
+        {/* 键盘提示 */}
+        <p className="hero-rise mt-5 text-xs text-fg-subtle" style={{ animationDelay: "400ms" }}>
+          或按 <kbd className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-fg-muted">⌘K</kbd> 打开命令面板
+        </p>
       </div>
-      <div>
-        <p className="text-base font-medium text-fg">还没有打开仓库</p>
-        <p className="mt-1 text-sm text-fg-muted">选择一个本地 git 仓库开始工作。</p>
-      </div>
-      <Button variant="commit" size="md" onClick={onPick}>
-        选择仓库
-      </Button>
     </div>
   );
 }

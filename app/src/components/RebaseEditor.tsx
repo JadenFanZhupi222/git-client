@@ -197,7 +197,7 @@ export function RebaseEditor({
       {/* 拖拽预览:跟随指针的浮层(fixed 不被 modal overflow 裁剪) */}
       {preview && (
         <div
-          className="pointer-events-none fixed z-[60] flex max-w-[20rem] items-center gap-2 rounded border border-accent/50 bg-elevated px-2 py-1 text-[13px] shadow-lg"
+          className="pointer-events-none fixed z-[60] flex max-w-[20rem] items-center gap-2 rounded border border-accent/50 bg-elevated px-2 py-1 text-[13px] popover"
           style={{ left: preview.x + 12, top: preview.y + 8 }}
         >
           <span className="shrink-0 font-mono text-[11px] text-accent">{preview.short}</span>

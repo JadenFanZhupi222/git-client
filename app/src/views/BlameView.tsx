@@ -96,7 +96,15 @@ export function BlameView({ repo }: { repo: string }) {
 
       {/* 内容 */}
       {!file ? (
-        <Center>选择一个文件查看逐行追溯(blame)</Center>
+        <div className="fade-in flex h-full flex-col items-center justify-center gap-3.5 p-6 text-center">
+          <div className="grid h-14 w-14 place-items-center rounded-[18px] border border-line bg-elevated/40 text-fg-subtle">
+            <HistoryIcon width={24} height={24} />
+          </div>
+          <p className="max-w-[30ch] text-sm text-fg-muted">选择一个文件，逐行追溯它的提交来源</p>
+          <Button variant="secondary" size="sm" onClick={pick}>
+            <FileDiffIcon width={13} height={13} /> 选择文件
+          </Button>
+        </div>
       ) : q.isLoading ? (
         <Center>加载中…</Center>
       ) : queryErr ? (

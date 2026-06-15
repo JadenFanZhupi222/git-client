@@ -23,9 +23,12 @@ import { BranchIcon, CheckIcon, PlusIcon, TrashIcon } from "./icons";
 export function BranchSwitcher({
   repo,
   branch,
+  direction = "up",
 }: {
   repo: string;
   branch: string | null;
+  /** 下拉弹出方向:底栏用 "up"(向上),顶栏用 "down"(向下)。 */
+  direction?: "up" | "down";
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -156,7 +159,7 @@ export function BranchSwitcher({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={close} />
-          <div className="absolute bottom-full left-0 z-50 mb-1.5 w-64 overflow-hidden rounded-md border border-line-strong bg-elevated shadow-lg">
+          <div className={`absolute left-0 z-50 w-64 overflow-hidden rounded-md border border-line-strong bg-elevated popover ${direction === "down" ? "top-full mt-1.5" : "bottom-full mb-1.5"}`}>
             <div className="border-b border-line p-1.5">
               <input
                 autoFocus

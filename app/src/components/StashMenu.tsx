@@ -63,7 +63,7 @@ export function StashMenu({ repo }: { repo: string }) {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-50 mt-1 w-72 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs shadow-lg">
+          <div className="absolute right-0 top-full z-50 mt-1 w-72 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs popover">
             {/* 贮藏当前改动 */}
             <form
               onSubmit={(e) => { e.preventDefault(); save(); }}
