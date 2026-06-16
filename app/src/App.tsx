@@ -674,19 +674,10 @@ function EmptyState({ onPick, lastRepo, onResume }: { onPick: () => void; lastRe
       <div className="grain-overlay" />
 
       <div className="relative z-10 flex w-full max-w-md flex-col items-center text-center">
-        {/* 状态行:呼吸光点 + 身份语(取代旧的大写宽字距眉签,呼应「活」的主题) */}
+        {/* 品牌牌:外层贝塞尔托盘 + 内层液态玻璃芯,折射背后图谱与光晕(首个入场元素) */}
         <div
-          className="hero-rise flex items-center gap-2 text-xs font-medium text-fg-muted"
+          className="hero-rise rounded-[28px] border border-line/70 bg-elevated/30 p-2"
           style={{ animationDelay: "0ms" }}
-        >
-          <span className="live-dot inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
-          本地优先 · 纯 Rust 内核
-        </div>
-
-        {/* 品牌牌:外层贝塞尔托盘 + 内层液态玻璃芯,折射背后光晕 */}
-        <div
-          className="hero-rise mt-7 rounded-[28px] border border-line/70 bg-elevated/30 p-2"
-          style={{ animationDelay: "80ms" }}
         >
           <Glass className="grid h-20 w-20 place-items-center rounded-[20px] text-accent">
             <svg width={34} height={34} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
@@ -705,12 +696,6 @@ function EmptyState({ onPick, lastRepo, onResume }: { onPick: () => void; lastRe
         >
           Git 客户端
         </h1>
-        <p
-          className="hero-rise mt-3 max-w-[34ch] text-[15px] leading-relaxed text-fg-muted text-pretty"
-          style={{ animationDelay: "210ms" }}
-        >
-          选择一个本地仓库开始。所有操作都在本机完成 —— 快，且私密。
-        </p>
 
         {/* 磁吸 CTA:全圆角药丸 + 内嵌圆形箭头(button-in-button),按压回弹 */}
         <button
@@ -742,7 +727,7 @@ function EmptyState({ onPick, lastRepo, onResume }: { onPick: () => void; lastRe
 
         {/* 键盘提示 */}
         <p className="hero-rise mt-5 text-xs text-fg-subtle" style={{ animationDelay: "400ms" }}>
-          或按 <kbd className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-fg-muted">⌘K</kbd> 打开命令面板
+          <kbd className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-fg-muted">⌘K</kbd> 打开命令面板
         </p>
       </div>
     </div>

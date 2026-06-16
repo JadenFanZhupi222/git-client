@@ -273,18 +273,6 @@ body {
   .launch-graph-drift { animation: none; }
 }
 
-/* 启动屏状态光点:呼吸式柔光(替代旧的大写宽字距眉签,呼应「活」的主题)。 */
-@keyframes live-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.45; transform: scale(0.8); }
-}
-.live-dot {
-  animation: live-pulse 2.4s ease-in-out infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .live-dot { animation: none; }
-}
-
 /* 电影级入场:柔和上浮 + 去模糊,配合 stagger 延迟逐个登场。 */
 @keyframes hero-rise {
   from { opacity: 0; transform: translateY(16px); filter: blur(8px); }
