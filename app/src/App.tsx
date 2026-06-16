@@ -20,6 +20,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import type { Command } from "./lib/commands";
 import { useToast } from "./components/Toast";
 import { Glass } from "./components/ui/Glass";
+import { LaunchGraph } from "./components/LaunchGraph";
 import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, useBranches, useSubmodules, useWorktrees, useSparseCheckout, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
 import { applyTheme, applyGlassMode, getStoredTheme, type Theme } from "./lib/theme";
 import { getStoredGlassPref, setStoredGlassPref } from "./lib/transparency";
@@ -373,29 +374,30 @@ export default function App() {
                   )}
                 </div>
               )}
-              {/* 撤销/重做收成方形图标按钮(顶栏减负):标签移入 title/aria-label,
-                  保留撤销的 accent 着色让它仍醒目。形状对齐右侧「⋯」按钮,观感统一。 */}
-              {canUndo && (
-                <button
-                  onClick={() => doNav("undo")}
-                  disabled={busy}
-                  aria-label={`撤销${canUndo.label}`}
-                  title={`撤销刚才的「${canUndo.label}」(回到 ${canUndo.target_short}；${canUndo.worktree_restored ? "还原工作区，有未提交改动会先拦下" : "改动回暂存区，不丢工作区"})`}
-                  className="grid h-7 w-7 place-items-center rounded-md border border-accent/60 bg-accent/10 text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
-                >
-                  {undoing ? <SpinnerIcon width={14} height={14} /> : <UndoIcon width={14} height={14} />}
-                </button>
-              )}
-              {canRedo && (
-                <button
-                  onClick={() => doNav("redo")}
-                  disabled={busy}
-                  aria-label={`重做${canRedo.label}`}
-                  title={`重做「${canRedo.label}」(前进到 ${canRedo.target_short})`}
-                  className="grid h-7 w-7 place-items-center rounded-md border border-line-strong bg-elevated text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle disabled:opacity-50"
-                >
-                  <RedoIcon width={14} height={14} />
-                </button>
+              {/* 撤销/重做:成对收进中性托盘(↩↪ 一眼是「撤销/重做」而非「返回」;不用 accent
+                  免被当成主导航键)。任一可用即显示,另一侧不可用时变暗;标签在 title/aria-label。
+                  进行中状态由顶部 TopProgress(busy)统一信号,这里不放内联 spinner。 */}
+              {(canUndo || canRedo) && (
+                <div className="flex items-center gap-0.5 rounded-lg border border-line bg-elevated/60 p-0.5">
+                  <button
+                    onClick={() => doNav("undo")}
+                    disabled={busy || !canUndo}
+                    aria-label={canUndo ? `撤销${canUndo.label}` : "撤销"}
+                    title={canUndo ? `撤销刚才的「${canUndo.label}」(回到 ${canUndo.target_short}；${canUndo.worktree_restored ? "还原工作区，有未提交改动会先拦下" : "改动回暂存区，不丢工作区"})` : "暂无可撤销的操作"}
+                    className="grid h-7 w-7 place-items-center rounded-md text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-fg-muted"
+                  >
+                    <UndoIcon width={14} height={14} />
+                  </button>
+                  <button
+                    onClick={() => doNav("redo")}
+                    disabled={busy || !canRedo}
+                    aria-label={canRedo ? `重做${canRedo.label}` : "重做"}
+                    title={canRedo ? `重做「${canRedo.label}」(前进到 ${canRedo.target_short})` : "暂无可重做的操作"}
+                    className="grid h-7 w-7 place-items-center rounded-md text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-fg-muted"
+                  >
+                    <RedoIcon width={14} height={14} />
+                  </button>
+                </div>
               )}
               {/* 同步操作托盘:Fetch · Pull · Push 收成一组,读作一个单元(双层贝塞尔托盘)。
                   各按钮无独立边框,托盘承载边框;可 Pull/Push 时用强调色文字 + ↓N/↑N 角标提示。 */}
@@ -529,10 +531,13 @@ export default function App() {
 
           <button
             onClick={pickRepo}
+            title={repo ? "切换仓库" : "选择仓库"}
+            aria-label={repo ? "切换仓库" : "选择仓库"}
             className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle"
           >
             <FolderIcon width={14} height={14} />
-            {repo ? "切换仓库" : "选择仓库"}
+            {/* 窄屏(< lg)只留图标,免顶栏溢出;宽屏带文字 */}
+            <span className="hidden lg:inline">{repo ? "切换仓库" : "选择仓库"}</span>
           </button>
         </div>
       </Glass>
@@ -667,22 +672,16 @@ function EmptyState({ onPick, lastRepo, onResume }: { onPick: () => void; lastRe
   const lastName = lastRepo?.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? null;
   return (
     <div className="relative flex flex-1 items-center justify-center overflow-hidden px-8">
+      {/* 签名背景:极淡缓行的「活的图谱」,垫在最底,呼应产品本体 */}
+      <LaunchGraph />
       {/* 细噪点叠层:给纯数字渐变一层物理颗粒感 */}
       <div className="grain-overlay" />
 
       <div className="relative z-10 flex w-full max-w-md flex-col items-center text-center">
-        {/* 微缩眉签 */}
-        <span
-          className="hero-rise rounded-full border border-line-strong bg-elevated/60 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.22em] text-fg-muted backdrop-blur-sm"
-          style={{ animationDelay: "0ms" }}
-        >
-          本地优先 · 纯 Rust 内核
-        </span>
-
-        {/* 品牌牌:外层贝塞尔托盘 + 内层液态玻璃芯,折射背后光晕 */}
+        {/* 品牌牌:外层贝塞尔托盘 + 内层液态玻璃芯,折射背后图谱与光晕(首个入场元素) */}
         <div
-          className="hero-rise mt-7 rounded-[28px] border border-line/70 bg-elevated/30 p-2"
-          style={{ animationDelay: "80ms" }}
+          className="hero-rise rounded-[28px] border border-line/70 bg-elevated/30 p-2"
+          style={{ animationDelay: "0ms" }}
         >
           <Glass className="grid h-20 w-20 place-items-center rounded-[20px] text-accent">
             <svg width={34} height={34} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
@@ -694,19 +693,13 @@ function EmptyState({ onPick, lastRepo, onResume }: { onPick: () => void; lastRe
           </Glass>
         </div>
 
-        {/* 大字标题(Geist,紧字距,平衡换行) */}
+        {/* 大字标题(Geist,自信字号,紧字距,平衡换行) */}
         <h1
-          className="hero-rise mt-7 text-[2rem] font-semibold leading-tight tracking-[-0.02em] text-fg text-balance"
+          className="hero-rise mt-7 text-[2.5rem] font-semibold leading-[1.05] tracking-[-0.03em] text-fg text-balance"
           style={{ animationDelay: "150ms" }}
         >
           Git 客户端
         </h1>
-        <p
-          className="hero-rise mt-2.5 max-w-[34ch] text-[15px] leading-relaxed text-fg-muted text-pretty"
-          style={{ animationDelay: "210ms" }}
-        >
-          选择一个本地仓库开始。所有操作都在本机完成 —— 快，且私密。
-        </p>
 
         {/* 磁吸 CTA:全圆角药丸 + 内嵌圆形箭头(button-in-button),按压回弹 */}
         <button
@@ -738,7 +731,7 @@ function EmptyState({ onPick, lastRepo, onResume }: { onPick: () => void; lastRe
 
         {/* 键盘提示 */}
         <p className="hero-rise mt-5 text-xs text-fg-subtle" style={{ animationDelay: "400ms" }}>
-          或按 <kbd className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-fg-muted">⌘K</kbd> 打开命令面板
+          <kbd className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-fg-muted">⌘K</kbd> 打开命令面板
         </p>
       </div>
     </div>

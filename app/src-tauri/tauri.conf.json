@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "app",
-        "width": 800,
-        "height": 600,
+        "title": "Git 客户端",
+        "width": 1240,
+        "height": 820,
+        "minWidth": 920,
+        "minHeight": 600,
         "dragDropEnabled": false
       }
     ],
