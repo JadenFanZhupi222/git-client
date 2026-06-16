@@ -146,7 +146,11 @@ export function CommitGraph({
   // 当前被拖的提交是否已在当前分支(HEAD 可达)→ 投放无效,不把 HEAD 行点亮成投放区。
   const draggedInBranch = dragId !== null && reachableFromHead.has(dragId);
 
+  // 拖放进行中且被拖提交是有效拣选目标 → 图谱顶部显示常驻投放区(不依赖 HEAD 行是否在视口内)。
+  const showDropZone = dragId !== null && !draggedInBranch && !!onCherryPick;
+
   return (
+    <div className="relative h-full">
     <div ref={parentRef} className="fade-in h-full overflow-y-auto" onMouseLeave={() => setHoverColor(null)}>
       {/* 撑出全量高度的占位层;只有可见窗口内的行被真正渲染并绝对定位到各自位置。
           10 万提交也只挂十几个 DOM 节点,滚动恒定开销。 */}
@@ -268,6 +272,20 @@ export function CommitGraph({
         </button>
       ) : (
         rows.length > 0 && <div className="py-2.5 text-center text-[11px] text-fg-subtle">已到历史开端</div>
+      )}
+      </div>
+
+      {/* 常驻投放区:拖拽进行中浮在图谱顶部(玻璃栏下方),HEAD 行滚出视口也能投放。
+          只在被拖提交是有效拣选目标时出现(已在当前分支的不显)。 */}
+      {showDropZone && (
+        <div
+          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
+          onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData("text/plain"); dragIdRef.current = null; setDragId(null); if (!id || reachableFromHead.has(id)) return; const c = rows.find((x) => x.commit.id === id)?.commit; if (c && onCherryPick) onCherryPick(c); }}
+          className="popover absolute inset-x-2 z-20 flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-accent bg-accent/10 py-2 text-xs font-medium text-accent backdrop-blur-sm"
+          style={{ top: topInset + 8 }}
+        >
+          松开 → 拣选到当前分支
+        </div>
       )}
     </div>
   );

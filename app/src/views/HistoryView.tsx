@@ -228,6 +228,13 @@ export function HistoryView({ repo }: { repo: string }) {
 
   return (
     <div className="flex h-full">
+      {/* 本视图写操作(cherry-pick / revert)进行中的非阻塞信号:与 App 顶栏同款进度条。
+          拖放拣选丢下后到 toast 之间不再「静默」。 */}
+      {busy && (
+        <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] h-0.5 overflow-hidden bg-accent/15">
+          <div className="progress-bar h-full w-1/3 bg-accent" />
+        </div>
+      )}
       {/* 提交图谱 */}
       <GraphColumn
         branch={branchQ.data ?? null}
