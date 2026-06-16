@@ -374,29 +374,30 @@ export default function App() {
                   )}
                 </div>
               )}
-              {/* 撤销/重做收成方形图标按钮(顶栏减负):标签移入 title/aria-label,
-                  保留撤销的 accent 着色让它仍醒目。形状对齐右侧「⋯」按钮,观感统一。 */}
-              {canUndo && (
-                <button
-                  onClick={() => doNav("undo")}
-                  disabled={busy}
-                  aria-label={`撤销${canUndo.label}`}
-                  title={`撤销刚才的「${canUndo.label}」(回到 ${canUndo.target_short}；${canUndo.worktree_restored ? "还原工作区，有未提交改动会先拦下" : "改动回暂存区，不丢工作区"})`}
-                  className="grid h-7 w-7 place-items-center rounded-md border border-accent/60 bg-accent/10 text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
-                >
-                  {undoing ? <SpinnerIcon width={14} height={14} /> : <UndoIcon width={14} height={14} />}
-                </button>
-              )}
-              {canRedo && (
-                <button
-                  onClick={() => doNav("redo")}
-                  disabled={busy}
-                  aria-label={`重做${canRedo.label}`}
-                  title={`重做「${canRedo.label}」(前进到 ${canRedo.target_short})`}
-                  className="grid h-7 w-7 place-items-center rounded-md border border-line-strong bg-elevated text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle disabled:opacity-50"
-                >
-                  <RedoIcon width={14} height={14} />
-                </button>
+              {/* 撤销/重做:成对收进中性托盘(↩↪ 一眼是「撤销/重做」而非「返回」;不用 accent
+                  免被当成主导航键)。任一可用即显示,另一侧不可用时变暗;标签在 title/aria-label。
+                  进行中状态由顶部 TopProgress(busy)统一信号,这里不放内联 spinner。 */}
+              {(canUndo || canRedo) && (
+                <div className="flex items-center gap-0.5 rounded-lg border border-line bg-elevated/60 p-0.5">
+                  <button
+                    onClick={() => doNav("undo")}
+                    disabled={busy || !canUndo}
+                    aria-label={canUndo ? `撤销${canUndo.label}` : "撤销"}
+                    title={canUndo ? `撤销刚才的「${canUndo.label}」(回到 ${canUndo.target_short}；${canUndo.worktree_restored ? "还原工作区，有未提交改动会先拦下" : "改动回暂存区，不丢工作区"})` : "暂无可撤销的操作"}
+                    className="grid h-7 w-7 place-items-center rounded-md text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-fg-muted"
+                  >
+                    <UndoIcon width={14} height={14} />
+                  </button>
+                  <button
+                    onClick={() => doNav("redo")}
+                    disabled={busy || !canRedo}
+                    aria-label={canRedo ? `重做${canRedo.label}` : "重做"}
+                    title={canRedo ? `重做「${canRedo.label}」(前进到 ${canRedo.target_short})` : "暂无可重做的操作"}
+                    className="grid h-7 w-7 place-items-center rounded-md text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-fg-muted"
+                  >
+                    <RedoIcon width={14} height={14} />
+                  </button>
+                </div>
               )}
               {/* 同步操作托盘:Fetch · Pull · Push 收成一组,读作一个单元(双层贝塞尔托盘)。
                   各按钮无独立边框,托盘承载边框;可 Pull/Push 时用强调色文字 + ↓N/↑N 角标提示。 */}
