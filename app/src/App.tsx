@@ -531,10 +531,13 @@ export default function App() {
 
           <button
             onClick={pickRepo}
+            title={repo ? "切换仓库" : "选择仓库"}
+            aria-label={repo ? "切换仓库" : "选择仓库"}
             className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle"
           >
             <FolderIcon width={14} height={14} />
-            {repo ? "切换仓库" : "选择仓库"}
+            {/* 窄屏(< lg)只留图标,免顶栏溢出;宽屏带文字 */}
+            <span className="hidden lg:inline">{repo ? "切换仓库" : "选择仓库"}</span>
           </button>
         </div>
       </Glass>
