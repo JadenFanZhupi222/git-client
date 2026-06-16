@@ -251,6 +251,40 @@ body {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
+/* 启动屏「活的图谱」签名背景:极淡青绿提交图谱,缓慢无缝上行,呼应产品本体(提交图谱)。
+   垫在玻璃内容卡之下、噪点之上。只动 transform(GPU 友好);图谱单元高 360,漂移 -360px
+   恰好平铺一格 → 无缝循环(Chromium/WebView2 把 SVG 子元素的 CSS translate px 当 user 单位,
+   与 viewBox 单位对齐)。reduce-motion 下静止。 */
+.launch-graph {
+  opacity: 0.16;
+}
+:root:not([data-theme]):not([data-theme="amber-dark"]) .launch-graph {
+  opacity: 0.1; /* 浅色白底略收,免喧宾夺主 */
+}
+@keyframes launch-graph-drift {
+  from { transform: translateY(0); }
+  to { transform: translateY(-360px); }
+}
+.launch-graph-drift {
+  animation: launch-graph-drift 26s linear infinite;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .launch-graph-drift { animation: none; }
+}
+
+/* 启动屏状态光点:呼吸式柔光(替代旧的大写宽字距眉签,呼应「活」的主题)。 */
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.8); }
+}
+.live-dot {
+  animation: live-pulse 2.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-dot { animation: none; }
+}
+
 /* 电影级入场:柔和上浮 + 去模糊,配合 stagger 延迟逐个登场。 */
 @keyframes hero-rise {
   from { opacity: 0; transform: translateY(16px); filter: blur(8px); }

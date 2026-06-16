@@ -20,6 +20,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import type { Command } from "./lib/commands";
 import { useToast } from "./components/Toast";
 import { Glass } from "./components/ui/Glass";
+import { LaunchGraph } from "./components/LaunchGraph";
 import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, useBranches, useSubmodules, useWorktrees, useSparseCheckout, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
 import { applyTheme, applyGlassMode, getStoredTheme, type Theme } from "./lib/theme";
 import { getStoredGlassPref, setStoredGlassPref } from "./lib/transparency";
@@ -667,17 +668,20 @@ function EmptyState({ onPick, lastRepo, onResume }: { onPick: () => void; lastRe
   const lastName = lastRepo?.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? null;
   return (
     <div className="relative flex flex-1 items-center justify-center overflow-hidden px-8">
+      {/* 签名背景:极淡缓行的「活的图谱」,垫在最底,呼应产品本体 */}
+      <LaunchGraph />
       {/* 细噪点叠层:给纯数字渐变一层物理颗粒感 */}
       <div className="grain-overlay" />
 
       <div className="relative z-10 flex w-full max-w-md flex-col items-center text-center">
-        {/* 微缩眉签 */}
-        <span
-          className="hero-rise rounded-full border border-line-strong bg-elevated/60 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.22em] text-fg-muted backdrop-blur-sm"
+        {/* 状态行:呼吸光点 + 身份语(取代旧的大写宽字距眉签,呼应「活」的主题) */}
+        <div
+          className="hero-rise flex items-center gap-2 text-xs font-medium text-fg-muted"
           style={{ animationDelay: "0ms" }}
         >
+          <span className="live-dot inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
           本地优先 · 纯 Rust 内核
-        </span>
+        </div>
 
         {/* 品牌牌:外层贝塞尔托盘 + 内层液态玻璃芯,折射背后光晕 */}
         <div
@@ -694,15 +698,15 @@ function EmptyState({ onPick, lastRepo, onResume }: { onPick: () => void; lastRe
           </Glass>
         </div>
 
-        {/* 大字标题(Geist,紧字距,平衡换行) */}
+        {/* 大字标题(Geist,自信字号,紧字距,平衡换行) */}
         <h1
-          className="hero-rise mt-7 text-[2rem] font-semibold leading-tight tracking-[-0.02em] text-fg text-balance"
+          className="hero-rise mt-7 text-[2.5rem] font-semibold leading-[1.05] tracking-[-0.03em] text-fg text-balance"
           style={{ animationDelay: "150ms" }}
         >
           Git 客户端
         </h1>
         <p
-          className="hero-rise mt-2.5 max-w-[34ch] text-[15px] leading-relaxed text-fg-muted text-pretty"
+          className="hero-rise mt-3 max-w-[34ch] text-[15px] leading-relaxed text-fg-muted text-pretty"
           style={{ animationDelay: "210ms" }}
         >
           选择一个本地仓库开始。所有操作都在本机完成 —— 快，且私密。
