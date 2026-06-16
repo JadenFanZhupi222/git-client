@@ -388,6 +388,10 @@ function GraphColumn({
   onOpenReflog: () => void;
 }) {
   const col = useResizableWidth("history.graphW", 320, 220, 640);
+  // 拖放拣选的一次性发现性提示(localStorage 记忆,用过即不再出现)。仅图谱模式且有数据时显示。
+  const [dragHintDismissed, setDragHintDismissed] = useState(() => localStorage.getItem("hint.dragCherryPick") === "1");
+  const showDragHint = !searching && rows.length > 0 && !dragHintDismissed;
+  function dismissDragHint() { localStorage.setItem("hint.dragCherryPick", "1"); setDragHintDismissed(true); }
   // 浮动玻璃工具栏的实测高度 → 传给滚动体当顶部留白,让提交从栏底穿过(满汉折射)。
   // 初值给个接近值(栏头+搜索+模式 ≈ 92px),避免首帧首条提交被栏遮一下再跳。
   const barRef = useRef<HTMLDivElement>(null);
@@ -472,6 +476,17 @@ function GraphColumn({
               ))}
             </div>
             {error && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{error}</p>}
+            {showDragHint && (
+              <div className="flex items-center gap-2 border-b border-line px-2.5 py-1.5 text-[11px] text-fg-muted">
+                <span aria-hidden className="shrink-0 font-mono leading-none text-fg-subtle">⠿</span>
+                <span className="min-w-0 flex-1 leading-snug">
+                  拖任意提交到 <span className="text-accent">当前分支(HEAD)</span> 行 → 拣选到此分支
+                </span>
+                <IconButton aria-label="不再提示此功能" title="不再提示" onClick={dismissDragHint} className="shrink-0">
+                  <CloseIcon width={12} height={12} />
+                </IconButton>
+              </div>
+            )}
             </div>
           </Glass>
         </div>

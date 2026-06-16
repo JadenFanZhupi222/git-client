@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { type CommitDto, type GraphRowDto, type RefDto } from "../ipc";
 import { CommitLines } from "./CommitLines";
@@ -97,8 +97,31 @@ export function CommitGraph({
   // hover 高亮:记住鼠标所在提交的泳道色,渲染时把同色泳道/节点点亮、其余淡下。
   // 设同值是 no-op(React 自动 bail),跨行移动只在颜色变化时重渲;离开整列才清空(避免行间闪烁)。
   const [hoverColor, setHoverColor] = useState<number | null>(null);
-  // 正在拖拽的提交 id(拖放 cherry-pick)。
+  // 正在拖拽的提交 id(拖放 cherry-pick)。state 驱动视觉;ref 给 dragover/drop 同步读
+  // (避免 setState 落后于 dragover 那一帧 → 判定取到 null)。
   const [dragId, setDragId] = useState<string | null>(null);
+  const dragIdRef = useRef<string | null>(null);
+
+  // 智能护栏:从 HEAD 沿 parents BFS 遍历已加载行,得到「已在当前分支」的提交集合。
+  // 把这类提交拖到 HEAD → cherry-pick 只会得到空提交,故它们不接受投放(no-drop 光标)。
+  // 未加载到的远祖会漏判(false-negative),那种情况退回后端报错 + toast 兜底,不会误拦正常拣选。
+  const headId = useMemo(
+    () => rows.find((r) => r.refs.some((x) => x.kind === "head"))?.commit.id ?? null,
+    [rows],
+  );
+  const reachableFromHead = useMemo(() => {
+    const set = new Set<string>();
+    if (!headId) return set;
+    const parentsById = new Map(rows.map((r) => [r.commit.id, r.commit.parents] as const));
+    const stack = [headId];
+    while (stack.length) {
+      const id = stack.pop()!;
+      if (set.has(id)) continue;
+      set.add(id);
+      for (const p of parentsById.get(id) ?? []) if (!set.has(p)) stack.push(p);
+    }
+    return set;
+  }, [rows, headId]);
 
   // 首屏加载骨架(无数据时):不进虚拟化路径。
   if (loading && rows.length === 0) {
@@ -120,6 +143,8 @@ export function CommitGraph({
   const gutterW = gutterWidth(rows);
   // 选中行下标 → 滑动高亮条的位置(只在选中变化时过渡,滚动不触发)。
   const selIdx = selectedId ? rows.findIndex((r) => r.commit.id === selectedId) : -1;
+  // 当前被拖的提交是否已在当前分支(HEAD 可达)→ 投放无效,不把 HEAD 行点亮成投放区。
+  const draggedInBranch = dragId !== null && reachableFromHead.has(dragId);
 
   return (
     <div ref={parentRef} className="fade-in h-full overflow-y-auto" onMouseLeave={() => setHoverColor(null)}>
@@ -145,7 +170,7 @@ export function CommitGraph({
           const isHead = r.refs.some((x) => x.kind === "head");
           // 拖放 cherry-pick:被拖的行半透明;HEAD 行(非被拖那条)在拖拽时变投放区。
           const isDragged = dragId === r.commit.id;
-          const isDropTarget = dragId !== null && isHead && !isDragged && !!onCherryPick;
+          const isDropTarget = dragId !== null && isHead && !isDragged && !!onCherryPick && !draggedInBranch;
           // 同步状态:未 push=绿 / 未 pull=蓝(与状态栏 SyncBadge 的 ↑绿↓蓝 一致)。
           const syncColor =
             r.sync === "outgoing" ? "var(--color-success)"
@@ -159,17 +184,17 @@ export function CommitGraph({
             <div
               key={r.commit.id}
               draggable={!!onCherryPick}
-              onDragStart={onCherryPick ? (e) => { setDragId(r.commit.id); e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", r.commit.id); } : undefined}
-              onDragEnd={() => setDragId(null)}
+              onDragStart={onCherryPick ? (e) => { dragIdRef.current = r.commit.id; setDragId(r.commit.id); e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", r.commit.id); } : undefined}
+              onDragEnd={() => { dragIdRef.current = null; setDragId(null); }}
               // 接受投放只看静态的 isHead(不依赖 dragId 状态,避免 setState 赶不上 dragover → 全程禁用光标)。
-              // 被拖提交从 dataTransfer 读,不从 state 读;dropEffect=copy 给出「+」光标。
-              onDragOver={isHead && onCherryPick ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } : undefined}
-              onDrop={isHead && onCherryPick ? (e) => { e.preventDefault(); const id = e.dataTransfer.getData("text/plain"); const c = rows.find((x) => x.commit.id === id)?.commit; setDragId(null); if (c && c.id !== r.commit.id) onCherryPick(c); } : undefined}
+              // 被拖提交从 dragIdRef 同步读;已在当前分支(HEAD 可达)→ dropEffect=none(no-drop 光标),否则 copy(「+」)。
+              onDragOver={isHead && onCherryPick ? (e) => { e.preventDefault(); const id = dragIdRef.current; e.dataTransfer.dropEffect = id && reachableFromHead.has(id) ? "none" : "copy"; } : undefined}
+              onDrop={isHead && onCherryPick ? (e) => { e.preventDefault(); const id = e.dataTransfer.getData("text/plain"); dragIdRef.current = null; setDragId(null); if (!id || reachableFromHead.has(id)) return; const c = rows.find((x) => x.commit.id === id)?.commit; if (c && c.id !== r.commit.id) onCherryPick(c); } : undefined}
               onMouseEnter={() => setHoverColor(r.color)}
               onClick={(e) => onSelect(r.commit, { compare: e.metaKey || e.ctrlKey })}
               onContextMenu={(e) => { if (onContext) { e.preventDefault(); onSelect(r.commit); onContext(r.commit, e.clientX, e.clientY); } }}
               title={syncTip}
-              className={`flex cursor-pointer items-stretch border-l-2 transition-colors ${isNew ? "commit-enter" : ""} ${isDragged ? "opacity-40" : ""} ${
+              className={`flex items-stretch border-l-2 transition-colors ${onCherryPick ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"} ${isNew ? "commit-enter" : ""} ${isDragged ? "opacity-40" : ""} ${
                 isDropTarget ? "bg-accent/10 ring-2 ring-inset ring-accent"
                 : on ? "border-transparent"
                 : cmp ? "border-accent bg-accent/10"
@@ -224,7 +249,7 @@ export function CommitGraph({
 
               {/* 投放区提示:拖到当前分支(HEAD)行时显示「松开 → 拣选」 */}
               {isDropTarget && (
-                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 shrink-0 rounded-full bg-accent px-2 py-0.5 text-[10px] font-medium text-white shadow-lg">
+                <span className="popover pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 shrink-0 rounded-full bg-accent px-2 py-0.5 text-[10px] font-medium text-white">
                   松开 → 拣选到此分支
                 </span>
               )}
