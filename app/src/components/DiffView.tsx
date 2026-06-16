@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { readImage, type DiffLineDto, type FileDiffDto, type ImageRefDto } from "../ipc";
-import { buildDiffRows, maxContentCols, maxSideCols, type DiffRow, type LineRef, type SbsRow } from "../lib/diffRows";
-import { ChevronDownIcon } from "./icons";
+import { buildDiffRows, maxContentCols, type DiffRow, type LineRef, type SbsRow } from "../lib/diffRows";
+import { ChevronDownIcon, FileDiffIcon } from "./icons";
+import { EmptyHint } from "./ui/EmptyHint";
+
+type Side = "old" | "new";
 
 type ViewMode = "unified" | "split";
 /** 每行固定高度(px)。font-mono text-[12px] leading-5 → 20px;hunk 头/折叠条同高。
@@ -48,7 +51,7 @@ export function DiffView({
       return next;
     });
   if (!hasFile) {
-    return <Center>选择一个文件查看 diff</Center>;
+    return <EmptyHint icon={<FileDiffIcon width={24} height={24} />}>选择一个文件，在这里查看它的改动</EmptyHint>;
   }
   if (loading) {
     return (
@@ -108,17 +111,19 @@ function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode
   const btn = (v: ViewMode, label: string) => (
     <button
       onClick={() => onChange(v)}
-      className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
-        view === v ? "bg-accent/15 text-accent" : "text-fg-muted hover:text-fg"
+      className={`rounded px-2.5 py-0.5 text-[11px] transition-colors ${
+        view === v ? "bg-accent/15 text-accent" : "text-fg-muted hover:bg-overlay hover:text-fg"
       }`}
     >
       {label}
     </button>
   );
   return (
-    <div className="flex shrink-0 select-none items-center justify-end gap-1 border-b border-line bg-overlay px-3 py-1">
-      {btn("unified", "统一")}
-      {btn("split", "并排")}
+    <div className="flex shrink-0 select-none items-center justify-end border-b border-line bg-overlay px-3 py-1.5">
+      <div className="flex items-center gap-0.5 rounded-md border border-line bg-elevated/60 p-0.5">
+        {btn("unified", "统一")}
+        {btn("split", "并排")}
+      </div>
     </div>
   );
 }
@@ -153,38 +158,39 @@ function VirtualDiff({
 }: { diff: FileDiffDto; view: ViewMode } & StageProps & FoldProps) {
   const rows = useMemo(() => buildDiffRows(diff, expanded, view), [diff, expanded, view]);
   const hasSel = !!lineStage;
-  // 一维渲染项 → 横向滚动体宽。统一:gutter(选择+旧/新行号+符号+右内边距)+ 最长内容 ch。
-  // 并排:两个半栏 gutter + 左右各自最长内容 ch + 中缝 1px。
-  const sideCols = useMemo(() => maxSideCols(diff), [diff]);
+  const split = view === "split";
+  // 统一视图:横向滚动体宽 = gutter(选择+旧/新行号+符号+右内边距)+ 最长内容 ch,外层容器双向滚动。
+  // 并排视图:体宽 = 100%(铺满视口),左右各 50%,长行在「半栏内部自动换行」→ 不横滚、不超宽。
   const bodyWidth = useMemo<string>(() => {
-    if (view === "unified") {
-      const gutter = (hasSel ? 16 : 0) + 40 + 40 + 16 + 12;
-      return `calc(${gutter}px + ${maxContentCols(diff)}ch)`;
-    }
-    const halfGutter = (hasSel ? 16 : 0) + 40 + 16 + 12;
-    return `calc(${halfGutter * 2 + 1}px + ${sideCols.left + sideCols.right}ch)`;
-  }, [diff, view, hasSel, sideCols]);
+    if (split) return "100%";
+    const gutter = (hasSel ? 16 : 0) + 40 + 40 + 16 + 12;
+    return `calc(${gutter}px + ${maxContentCols(diff)}ch)`;
+  }, [diff, split, hasSel]);
 
   const parentRef = useRef<HTMLDivElement>(null);
+  // 并排换行 → 行高可变,改用动态测量(measureElement + ResizeObserver):统一/折叠等固定行测到 ROW_H,
+  // 并排里换了行的内容测到实际高度。估计值仍给 ROW_H,首帧不抖。
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_H, // 行高固定,估计=实际
-    overscan: 24,
+    estimateSize: () => ROW_H,
+    overscan: 16,
   });
 
   return (
-    <div ref={parentRef} className="flex-1 overflow-auto">
+    // 并排:外层只纵向滚动(横向靠换行,无横滚条)。统一:双向滚动,横向看长行。
+    <div ref={parentRef} className={`flex-1 ${split ? "overflow-y-auto overflow-x-hidden" : "overflow-auto"}`}>
       {/* 撑出全量高/宽的占位层;可视窗口内的行绝对定位到各自 y。minWidth 100%:短 diff 铺满视口。 */}
       <div style={{ height: virtualizer.getTotalSize(), width: bodyWidth, minWidth: "100%", position: "relative" }}>
         {virtualizer.getVirtualItems().map((vi) => (
           <div
             key={vi.key}
-            style={{ position: "absolute", top: 0, left: 0, width: "100%", height: ROW_H, transform: `translateY(${vi.start}px)` }}
+            data-index={vi.index}
+            ref={virtualizer.measureElement}
+            style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}
           >
             <DiffRowView
               r={rows[vi.index]}
-              sideCols={sideCols}
               selected={selected}
               toggle={toggle}
               lineStage={lineStage}
@@ -201,7 +207,6 @@ function VirtualDiff({
 /** 一条渲染项的分派:hunk 头 / 折叠条 / 统一行 / 并排配对行。 */
 function DiffRowView({
   r,
-  sideCols,
   selected,
   toggle,
   lineStage,
@@ -209,7 +214,6 @@ function DiffRowView({
   expand,
 }: {
   r: DiffRow;
-  sideCols: { left: number; right: number };
 } & StageProps & Pick<FoldProps, "expand">) {
   switch (r.kind) {
     case "hunk": {
@@ -221,7 +225,7 @@ function DiffRowView({
     case "uline":
       return <UnifiedLine hi={r.hi} ref_={r.ref} selected={selected} toggle={toggle} lineStage={lineStage} />;
     case "pair":
-      return <PairRow hi={r.hi} row={r.row} cols={sideCols} selected={selected} toggle={toggle} lineStage={lineStage} />;
+      return <PairRow hi={r.hi} row={r.row} selected={selected} toggle={toggle} lineStage={lineStage} />;
   }
 }
 
@@ -239,8 +243,8 @@ function UnifiedLine({ hi, ref_, selected, toggle, lineStage }: { hi: number; re
   return (
     <div
       onClick={selectable ? () => toggle(key) : undefined}
-      // min-w-full:行宽 = 外层占位层体宽(= 最长行 ch),所有行齐平铺满;h-full 填满固定行高。
-      className={`flex h-full min-w-full ${rowBg} ${selectable ? "cursor-pointer" : ""} ${on ? "ring-1 ring-inset ring-accent/60" : ""}`}
+      // min-w-full:行宽 = 外层占位层体宽(= 最长行 ch),所有行齐平铺满;min-h-5 = 固定行高 ROW_H。
+      className={`flex min-h-5 min-w-full items-center ${rowBg} ${selectable ? "cursor-pointer" : ""} ${on ? "ring-1 ring-inset ring-accent/60" : ""}`}
     >
       {lineStage && (
         <span className="w-4 shrink-0 select-none text-center text-[10px] text-accent">
@@ -262,7 +266,7 @@ function FoldBar({ count, onExpand }: { count: number; onExpand: () => void }) {
   return (
     <div
       onClick={onExpand}
-      className="flex h-full min-w-full cursor-pointer select-none items-center gap-1 border-y border-line/60 bg-overlay/40 pl-3 text-[11px] text-fg-subtle transition-colors hover:bg-overlay hover:text-accent"
+      className="flex min-h-5 min-w-full cursor-pointer select-none items-center gap-1 border-y border-line/60 bg-overlay/40 pl-3 text-[11px] text-fg-subtle transition-colors hover:bg-overlay hover:text-accent"
     >
       <ChevronDownIcon className="h-3 w-3" />
       展开 {count} 行
@@ -270,24 +274,23 @@ function FoldBar({ count, onExpand }: { count: number; onExpand: () => void }) {
   );
 }
 
-/** 并排配对行:左旧 | 右新 一行内并置。两侧宽度由各自最长内容(ch)定,共用一个纵向滚动容器
- *  → 纵横联动。左半固定宽,右半 flex-1 吸收余量(短 diff 铺满)。 */
-function PairRow({ hi, row, cols, selected, toggle, lineStage }: { hi: number; row: SbsRow; cols: { left: number; right: number } } & Pick<StageProps, "selected" | "toggle" | "lineStage">) {
-  const halfGutter = (lineStage ? 16 : 0) + 40 + 16 + 12;
+/** 并排配对行:左旧 | 右新 一行内并置,各占一半宽度(50/50)。长行在半栏内「自动换行」,不横滚、不超宽。
+ *  items-stretch 让左右两半等高(取较高者),换行后两侧仍逐行对齐;竖向由外层虚拟化容器统一驱动。 */
+function PairRow({ hi, row, selected, toggle, lineStage }: { hi: number; row: SbsRow } & Pick<StageProps, "selected" | "toggle" | "lineStage">) {
   return (
-    <div className="flex h-full min-w-full">
-      <HalfCell side="old" cell={row.left} hi={hi} width={`calc(${halfGutter}px + ${cols.left}ch)`} selected={selected} toggle={toggle} lineStage={lineStage} />
-      <HalfCell side="new" cell={row.right} hi={hi} width={`calc(${halfGutter}px + ${cols.right}ch)`} grow selected={selected} toggle={toggle} lineStage={lineStage} border />
+    <div className="flex w-full items-stretch">
+      <HalfCell side="old" cell={row.left} hi={hi} selected={selected} toggle={toggle} lineStage={lineStage} />
+      <HalfCell side="new" cell={row.right} hi={hi} selected={selected} toggle={toggle} lineStage={lineStage} border />
     </div>
   );
 }
 
-/** 并排某一侧的一格(取 row 的 left 或 right);对侧有内容本侧无则占位空行。 */
-function HalfCell({ hi, side, cell, width, grow, border, selected, toggle, lineStage }: { hi: number; side: "old" | "new"; cell: SbsRow["left"]; width: string; grow?: boolean } & Pick<StageProps, "selected" | "toggle" | "lineStage"> & { border?: boolean }) {
-  const sizing = grow ? { flex: "1 0 auto", minWidth: width } : { width, flexShrink: 0 };
+/** 并排某一侧的一格(取 row 的 left 或 right);对侧有内容本侧无则占位空行。
+ *  行号/符号顶对齐(items-start),内容列自动换行(whitespace-pre-wrap + 任意处断词),GitHub 式。 */
+function HalfCell({ hi, side, cell, border, selected, toggle, lineStage }: { hi: number; side: Side; cell: SbsRow["left"] } & Pick<StageProps, "selected" | "toggle" | "lineStage"> & { border?: boolean }) {
   const borderCls = border ? "border-l border-line" : "";
   if (!cell) {
-    return <div className={`flex h-full bg-overlay/40 ${borderCls}`} style={sizing}>&nbsp;</div>;
+    return <div className={`min-h-5 w-1/2 min-w-0 bg-overlay/40 ${borderCls}`}>&nbsp;</div>;
   }
   const l = cell.line;
   const add = l.kind === "add";
@@ -302,8 +305,7 @@ function HalfCell({ hi, side, cell, width, grow, border, selected, toggle, lineS
   return (
     <div
       onClick={selectable ? () => toggle(key) : undefined}
-      style={sizing}
-      className={`flex h-full ${borderCls} ${rowBg} ${selectable ? "cursor-pointer" : ""} ${on ? "ring-1 ring-inset ring-accent/60" : ""}`}
+      className={`flex min-h-5 w-1/2 min-w-0 items-start ${borderCls} ${rowBg} ${selectable ? "cursor-pointer" : ""} ${on ? "ring-1 ring-inset ring-accent/60" : ""}`}
     >
       {lineStage && (
         <span className="w-4 shrink-0 select-none text-center text-[10px] text-accent">
@@ -312,7 +314,7 @@ function HalfCell({ hi, side, cell, width, grow, border, selected, toggle, lineS
       )}
       <Gutter n={lineno} border />
       <span className={`w-4 shrink-0 select-none text-center ${signCls}`}>{sign}</span>
-      <span className="flex-1 whitespace-pre pr-3 text-fg">
+      <span className="min-w-0 flex-1 whitespace-pre-wrap pr-3 text-fg [overflow-wrap:anywhere]">
         <LineContent line={l} add={add} del={del} />
       </span>
     </div>
@@ -333,7 +335,7 @@ function StageHeader({
   selCount: number;
 } & Pick<StageProps, "selected" | "lineStage" | "hunkAction">) {
   return (
-    <div className="group flex h-full min-w-full select-none items-center gap-2 bg-overlay px-3 text-[11px] text-accent/80">
+    <div className="group flex min-h-5 min-w-full select-none items-center gap-2 bg-overlay px-3 text-[11px] text-accent/80">
       <span className="shrink-0">{h.header}</span>
       {((lineStage && selCount > 0) || hunkAction) && (
         <div className="flex shrink-0 items-center gap-2">
@@ -560,7 +562,8 @@ function ImagePane({ img, label, tone }: { img: LoadedImage; label: string; tone
 function Gutter({ n, border }: { n: number | null; border?: boolean }) {
   return (
     <span
-      className={`w-10 shrink-0 select-none px-1.5 text-right text-fg-subtle ${
+      // self-stretch:并排换行时行号列(及其右分隔线)随整格拉满高度,数字仍在顶部(行号对齐首行)。
+      className={`w-10 shrink-0 select-none self-stretch px-1.5 text-right text-fg-subtle ${
         border ? "border-r border-line" : ""
       }`}
     >

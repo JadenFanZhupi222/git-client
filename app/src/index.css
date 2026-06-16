@@ -6,46 +6,53 @@
    想换主题/调对比度,只改这里一处,所有组件跟着变。
    ──────────────────────────────────────────────────────────── */
 @theme {
-  /* 表面层级(浅色):基底白 → hover 浅灰 → 选中更深灰。
-     浅色主题靠「渐深 + 细边框」表达层次,而非暗色那种填充深浅。 */
-  --color-canvas: #ffffff; /* 应用背景 / 列表 / 输入 */
-  --color-elevated: #f3f5f8; /* 面板 / chip / footer / hover 表面 */
-  --color-overlay: #e7ecf2; /* 选中行 / 更高一层(微冷灰) */
+  /* 浅色:白底 + 青绿身份。靠渐深 + 细边框表达层次。 */
+  --color-canvas: #ffffff;
+  --color-elevated: #f3f6f9;
+  --color-overlay: #e7eef2;
 
-  /* 描边 */
-  --color-line: #e6e9ee; /* 常规分隔线(发丝级) */
-  --color-line-strong: #d0d7de; /* 强调描边 / 提交轨 / 滚动条 */
+  --color-line: #e3e8ee;
+  --color-line-strong: #ccd5dd;
 
-  /* 文字(近黑而非纯黑,更柔和;对比度满足 AA) */
-  --color-fg: #1f2328; /* 主文字 */
-  --color-fg-muted: #59636e; /* 次要文字 */
-  --color-fg-subtle: #818b98; /* 占位 / 禁用 */
+  --color-fg: #16202c;
+  --color-fg-muted: #51606e;
+  --color-fg-subtle: #7b8794;
 
-  /* 语义色(加深以适配白底) */
-  --color-accent: #0969da; /* 链接 / 焦点 / 当前提交 */
-  --color-accent-emphasis: #0550ae; /* 选中高亮边(更深一档) */
-  --color-success: #1a7f37; /* 新增 / 成功 */
-  --color-danger: #cf222e; /* 删除 / 错误 */
-  --color-warning: #9a6700; /* 重命名 / 警告 */
-  --color-done: #1f883d; /* 提交按钮(实心绿),配白字 */
+  --color-accent: #0d9488;          /* 青绿(白底加深保 AA) */
+  --color-accent-emphasis: #0f766e;
+  --color-success: #0f9d6b;
+  --color-danger: #d64545;
+  --color-warning: #c2691c;
+  --color-done: #0d9488;            /* 提交按钮:青绿实心 + 白字 */
 
-  /* 字体 */
-  --font-sans: ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
-  --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  /* Geist 领衔拉丁/数字(开发者工具气质);CJK 无字形,逐字回退 YaHei/system。 */
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+
+  /* 圆角阶梯 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  /* 高级感缓动:重质感弹性曲线(替换 linear/ease-in-out 的生硬过渡)。
+     Tailwind v4 自动生成 ease-spring / ease-out-quint 工具类。 */
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* 提交图谱泳道调色板(数据可视化色,与语义 UI token 分开)。
    为白底重新调校:比暗色版更深、更饱和,保证线条在浅背景上清晰可辨。 */
 :root {
   color-scheme: light;
-  --lane-0: #0969da; /* 蓝 */
-  --lane-1: #1a7f37; /* 绿 */
-  --lane-2: #bc4c00; /* 橙 */
+  --lane-0: #0d9488; /* 青绿 */
+  --lane-1: #2563eb; /* 蓝 */
+  --lane-2: #c2691c; /* 橙 */
   --lane-3: #bf3989; /* 品红 */
-  --lane-4: #8250df; /* 紫 */
-  --lane-5: #cf222e; /* 红 */
-  --lane-6: #1b7c83; /* 青 */
-  --lane-7: #9a6700; /* 赭 */
+  --lane-4: #7c4dd6; /* 紫(仅 8 色之一) */
+  --lane-5: #d64545; /* 红 */
+  --lane-6: #15803d; /* 绿 */
+  --lane-7: #b08400; /* 琥珀 */
 }
 
 /* ────────────────────────────────────────────────────────────
@@ -56,33 +63,65 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --color-canvas: #0d1117;
-  --color-elevated: #161b22;
-  --color-overlay: #1c2128;
+  --color-canvas: #0a0f18;
+  --color-elevated: #121a28;
+  --color-overlay: #1a2333;
 
-  --color-line: #21262d;
-  --color-line-strong: #30363d;
+  --color-line: rgba(120, 140, 170, 0.14);
+  --color-line-strong: rgba(120, 140, 170, 0.28);
 
-  --color-fg: #e6edf3;
-  --color-fg-muted: #8b949e;
-  --color-fg-subtle: #6e7681;
+  --color-fg: #e6edf6;
+  --color-fg-muted: #8b9bb0;
+  --color-fg-subtle: #5f6e85;
 
-  --color-accent: #58a6ff;
-  --color-accent-emphasis: #1f6feb;
-  --color-success: #3fb950;
-  --color-danger: #f85149;
-  --color-warning: #d29922;
-  --color-done: #238636;
+  --color-accent: #2dd4bf;
+  --color-accent-emphasis: #14b8a6;
+  --color-success: #34c78c;
+  --color-danger: #f46e6e;
+  --color-warning: #f0883e;
+  --color-done: #16b3a3;
 
-  /* 泳道:暗底用更亮的一组(原暗色版配色) */
-  --lane-0: #58a6ff;
-  --lane-1: #3fb950;
-  --lane-2: #d29922;
-  --lane-3: #db61a2;
+  /* 泳道:暗底用鲜亮一组,给图谱活力(紫仅作 8 色之一) */
+  --lane-0: #2dd4bf;
+  --lane-1: #5aa9ff;
+  --lane-2: #f0883e;
+  --lane-3: #bf3989;
   --lane-4: #a371f7;
-  --lane-5: #f85149;
-  --lane-6: #2dd4bf;
+  --lane-5: #f46e6e;
+  --lane-6: #4ade80;
   --lane-7: #e3b341;
+}
+
+/* 备用主题:暖石墨 + 琥珀。由 <html data-theme="amber-dark"> 激活。先实现,暂不进切换器。 */
+:root[data-theme="amber-dark"] {
+  color-scheme: dark;
+
+  --color-canvas: #15130f;
+  --color-elevated: #221e18;
+  --color-overlay: #2c271f;
+
+  --color-line: rgba(170, 150, 120, 0.16);
+  --color-line-strong: rgba(170, 150, 120, 0.30);
+
+  --color-fg: #f0e9df;
+  --color-fg-muted: #9a8e7c;
+  --color-fg-subtle: #6f6556;
+
+  --color-accent: #f5b54b;
+  --color-accent-emphasis: #e0a235;
+  --color-success: #46be82;
+  --color-danger: #e86e64;
+  --color-warning: #e0734a;
+  --color-done: #d89a2e;
+
+  --lane-0: #f5b54b;
+  --lane-1: #5fa8d3;
+  --lane-2: #e0734a;
+  --lane-3: #d06ba0;
+  --lane-4: #a78bdb;
+  --lane-5: #e86e64;
+  --lane-6: #46be82;
+  --lane-7: #c9a23a;
 }
 
 /* 全局基线 */
@@ -98,6 +137,9 @@ body {
   color: var(--color-fg);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* 数据密集型客户端:等宽数字,让计数/行号/SHA/领先落后角标对齐不抖动 */
+  font-variant-numeric: tabular-nums;
 }
 
 /* 细滚动条,跟随主题 token */
@@ -126,6 +168,46 @@ body {
   outline-offset: 1px;
 }
 
+/* 文本选区:青绿微染,呼应主色(替换浏览器默认的生硬蓝) */
+::selection {
+  background: color-mix(in oklab, var(--color-accent) 28%, transparent);
+}
+
+/* 浮层标高:柔和、带主题色调的双层投影(替换生硬的 shadow-lg 黑投影)。
+   用于下拉菜单/弹出层,给浮层真实的「漂浮」纵深。 */
+.popover {
+  box-shadow:
+    0 2px 6px -1px rgba(8, 15, 26, 0.08),
+    0 16px 40px -10px rgba(8, 15, 26, 0.20);
+}
+:root[data-theme="dark"] .popover {
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.40),
+    0 18px 48px -12px rgba(0, 0, 0, 0.62);
+}
+
+/* 输入软聚焦环:柔和强调环替代生硬换边,精致且不刺眼。
+   给关键输入(提交框/搜索框)加 .field 启用。 */
+.field:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 15%, transparent);
+}
+
+/* 物理按压反馈(audit #3「无 active/pressed 态」):未禁用按钮按下时轻微下沉,
+   模拟真实点击,让界面「活」起来。一处全局命中按钮原语 + 所有内联 <button>。
+   尊重 prefers-reduced-motion;`:root` 前缀抬高特异性,把 transform 叠加进
+   组件原有的 Tailwind transition-colors(否则同名 transition-property 被工具类盖掉)。 */
+@media (prefers-reduced-motion: no-preference) {
+  :root button:not(:disabled) {
+    transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+    transition-duration: 150ms;
+  }
+  :root button:not(:disabled):active {
+    transform: scale(0.98);
+  }
+}
+
 /* 骨架屏:加载占位的微光流动效果 */
 @keyframes shimmer {
   0% {
@@ -147,6 +229,92 @@ body {
   border-radius: 4px;
 }
 
+/* ──────────────────────────────────────────────────────────────
+   启动屏氛围层:深岩板上的青绿光晕 + 细噪点,营造「打开即高级」的空间纵深。
+   玻璃浮层叠在它之上才显出真正的液态折射(解决「玻璃贴纯色 = 看不见」)。
+   仅启动屏(未选仓库)使用,工作区仍是干净的 bg-canvas,零性能负担。
+   ────────────────────────────────────────────────────────────── */
+.launch-ambient {
+  background-color: var(--color-canvas);
+  background-image:
+    radial-gradient(58% 52% at 15% 8%, color-mix(in oklab, var(--color-accent) 24%, transparent), transparent 68%),
+    radial-gradient(54% 48% at 88% 94%, color-mix(in oklab, var(--color-accent-emphasis) 18%, transparent), transparent 70%),
+    radial-gradient(42% 40% at 64% 36%, color-mix(in oklab, var(--color-accent) 9%, transparent), transparent 80%);
+}
+/* 细噪点叠层:绝对定位、不吃指针(性能护栏:只贴静止层,不随内容滚动)。 */
+.grain-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.045;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* 电影级入场:柔和上浮 + 去模糊,配合 stagger 延迟逐个登场。 */
+@keyframes hero-rise {
+  from { opacity: 0; transform: translateY(16px); filter: blur(8px); }
+  to { opacity: 1; transform: none; filter: blur(0); }
+}
+.hero-rise {
+  animation: hero-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-rise { animation: none; }
+}
+
+/* 浮层入场:遮罩淡入 + 面板上浮回弹(命令面板/模态用),spring 收尾显高级。 */
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+.overlay-in { animation: overlay-in 0.18s ease-out; }
+.panel-in { animation: panel-in 0.22s cubic-bezier(0.32, 0.72, 0, 1); }
+
+/* 下拉菜单入场:轻微上浮回弹(比模态更快更小)。与 .popover 并存(popover 只管阴影)。 */
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.menu-in {
+  animation: menu-in 0.13s cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: top;
+}
+@media (prefers-reduced-motion: reduce) {
+  .overlay-in, .panel-in, .menu-in { animation: none; }
+}
+
+/* 活的图谱 · 新提交入场:行淡入 + 青绿微光退场(背景从 accent 微染渐隐到透明),
+   节点圆点弹入。只作用于「真正新出现」的提交(见 CommitGraph 的 seenIds 判定)。
+   不碰 transform —— 行的 translateY 由虚拟化掌管,这里只动 opacity/background。 */
+@keyframes commit-enter {
+  0% { opacity: 0; background-color: color-mix(in oklab, var(--color-accent) 22%, transparent); }
+  70% { background-color: color-mix(in oklab, var(--color-accent) 13%, transparent); }
+  100% { opacity: 1; background-color: transparent; }
+}
+.commit-enter { animation: commit-enter 0.55s cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes node-pop {
+  0% { transform: scale(0.2); }
+  60% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+.node-pop {
+  animation: node-pop 0.5s cubic-bezier(0.32, 0.72, 0, 1);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+/* hover 高亮:泳道线/节点的明暗随 hover 平滑过渡(图谱「对鼠标有反应」)。 */
+.lane-path {
+  transition: stroke-opacity 0.16s ease, stroke-width 0.16s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .commit-enter, .node-pop { animation: none; }
+}
+
 /* 内容淡入:首屏/切换时柔和出现 */
 @keyframes fade-in {
   from {
@@ -160,6 +328,14 @@ body {
 }
 .fade-in {
   animation: fade-in 0.18s ease-out;
+}
+
+/* 隐藏滚动条但保留滚动能力(并排 diff 每半栏横向滚动用,避免每行都冒出一根丑滚动条)。 */
+.hide-scrollbar {
+  scrollbar-width: none;
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 /* 棋盘格:图片 diff 衬透明区域。用主题分隔线色,深浅自动跟随。 */
@@ -212,4 +388,55 @@ body {
 }
 .progress-bar {
   animation: progress-slide 1.1s ease-in-out infinite;
+}
+
+/* 液态玻璃:三档由 <html data-glass="..."> 控制(refract/blur/solid)。
+   材质 = 强模糊/提亮/饱和(吃背后内容)+ 镜面亮边(::before 描边渐变,玻璃感的关键)。
+   贴边外壳与浮层共用;镜面边是柔亮发丝,不会造成生硬暗边。 */
+.glass {
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.02) 50%, rgba(255, 255, 255, 0.06));
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: 0 1px 2px rgba(15, 30, 50, 0.05), 0 10px 30px rgba(15, 30, 50, 0.07);
+}
+/* 镜面亮边:左上受光最亮 → 渐隐 → 右下淡回光。这道亮边是「玻璃」的招牌。 */
+.glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0) 38%, rgba(255, 255, 255, 0) 64%, rgba(255, 255, 255, 0.22));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+:root[data-theme="dark"] .glass {
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+}
+/* refract(Chromium,含 WebView2):轻模糊 + SVG 位移折射 + 提亮饱和,吃背后内容产生「液态」感。
+   注意:SVG url() 折射只在 Chromium 生效;Safari/WebKit 不支持(WebKit bug #245510),那条路由走 blur。
+   ⚠️ 只有玻璃**背后有内容**时折射才看得见;贴边外壳(顶栏/侧栏)背后是纯色,看不出效果是预期。 */
+:root[data-glass="refract"] .glass {
+  -webkit-backdrop-filter: url(#lgWarp) blur(6px) saturate(180%) brightness(1.08);
+  backdrop-filter: url(#lgWarp) blur(6px) saturate(180%) brightness(1.08);
+}
+/* blur 回退(非 Chromium / 折射不支持):强磨砂玻璃 */
+:root[data-glass="blur"] .glass {
+  backdrop-filter: blur(18px) saturate(180%) brightness(1.06);
+  -webkit-backdrop-filter: blur(18px) saturate(180%) brightness(1.06);
+}
+:root[data-glass="solid"] .glass {
+  background: var(--color-elevated);
+  border-color: var(--color-line);
+  backdrop-filter: none;
+  box-shadow: none;
+}
+:root[data-glass="solid"] .glass::before { display: none; }
+/* 浅色下玻璃较弱:略提白底透明度 + 保留镜面边 */
+:root:not([data-theme]):not([data-glass="solid"]) .glass {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.38));
+  border-color: rgba(255, 255, 255, 0.5);
 }

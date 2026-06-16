@@ -134,6 +134,22 @@ export const ChevronDownIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+// 更多/溢出:三点(水平省略号),收纳次要动作。
+export const MoreIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p} strokeWidth={0} fill="currentColor">
+    <circle cx="3.5" cy="8" r="1.3" />
+    <circle cx="8" cy="8" r="1.3" />
+    <circle cx="12.5" cy="8" r="1.3" />
+  </svg>
+);
+
+// 玻璃/透明度:水滴轮廓,表示液态玻璃材质开关。
+export const DropletIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M8 2.5C8 2.5 3.5 7 3.5 10a4.5 4.5 0 0 0 9 0C12.5 7 8 2.5 8 2.5Z" />
+  </svg>
+);
+
 export const AlertIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
     <path d="M8 2.5 1.5 13.5h13L8 2.5Z" />

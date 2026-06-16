@@ -1,3 +1,6 @@
+import { resolveGlassMode, getStoredGlassPref, systemReducesTransparency } from "./transparency";
+import { supportsRefraction } from "./platform";
+
 /**
  * 主题切换:浅色(默认)/ 暗色。
  *
@@ -21,4 +24,14 @@ export function applyTheme(theme: Theme): void {
   if (theme === "dark") root.setAttribute("data-theme", "dark");
   else root.removeAttribute("data-theme");
   localStorage.setItem(KEY, theme);
+}
+
+/** 计算当前玻璃档位并写到 <html data-glass>。在首屏与偏好变更时调用。 */
+export function applyGlassMode(): void {
+  const mode = resolveGlassMode({
+    pref: getStoredGlassPref(),
+    systemReduce: systemReducesTransparency(),
+    chromium: supportsRefraction(),
+  });
+  document.documentElement.setAttribute("data-glass", mode);
 }

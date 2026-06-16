@@ -84,14 +84,14 @@ export function TagManager({
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") doCreate(); if (e.key === "Escape") setAdding(false); }}
             placeholder="标签名"
-            className="w-24 rounded border border-line-strong bg-canvas px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg focus:border-accent focus:outline-none"
+            className="w-24 rounded border border-line-strong bg-canvas px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg field"
           />
           <input
             value={msg}
             onChange={(e) => setMsg(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") doCreate(); if (e.key === "Escape") setAdding(false); }}
             placeholder="附注(可选)"
-            className="w-28 rounded border border-line-strong bg-canvas px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg focus:border-accent focus:outline-none"
+            className="w-28 rounded border border-line-strong bg-canvas px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg field"
           />
           <button onClick={doCreate} disabled={busy || !name.trim()} className="text-[11px] text-accent hover:underline disabled:opacity-40">创建</button>
           <button onClick={() => setAdding(false)} className="text-[11px] text-fg-muted hover:underline">取消</button>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { rankCommands, rankBy, type Command, type JumpMode } from "../lib/commands";
 import { cx } from "./ui/Button";
 import { SearchIcon } from "./icons";
+import { Glass } from "./ui/Glass";
 
 /**
  * 命令面板(⌘K):所有动作可搜索、可键盘触发——M3「Fluid」的入口。
@@ -100,8 +101,8 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
 
   return (
     <div className="fixed inset-0 z-[80] flex items-start justify-center" role="dialog" aria-modal="true" aria-label="命令面板">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative mt-[12vh] w-[34rem] max-w-[92vw] overflow-hidden rounded-lg border border-line-strong bg-elevated shadow-2xl">
+      <div className="overlay-in absolute inset-0 bg-black/40" onClick={onClose} />
+      <Glass className="panel-in relative mt-[12vh] w-[34rem] max-w-[92vw] overflow-hidden rounded-lg">
         {/* 搜索框 */}
         <div className="flex items-center gap-2 border-b border-line px-3">
           <SearchIcon width={15} height={15} className="shrink-0 text-fg-subtle" />
@@ -141,7 +142,7 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
             ))
           )}
         </ul>
-      </div>
+      </Glass>
     </div>
   );
 }

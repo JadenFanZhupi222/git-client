@@ -3,7 +3,7 @@ import { useRefs, useCurrentBranch, useCompareFiles } from "../lib/queries";
 import { ComparePanel } from "../components/ComparePanel";
 import { BranchIcon } from "../components/icons";
 
-const PICK = "rounded border border-line-strong bg-canvas px-2 py-1 text-xs text-fg focus:border-accent focus:outline-none";
+const PICK = "field rounded border border-line-strong bg-canvas px-2 py-1 text-xs text-fg";
 
 /** revision 选择器。必须定义在模块顶层 —— 若嵌套在 CompareView 内,每次渲染都是
  *  新组件类型,React 会卸载重挂里面的原生 <select>,WebKit 下会丢掉首次 change

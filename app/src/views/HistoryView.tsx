@@ -14,7 +14,9 @@ import { ComparePanel } from "../components/ComparePanel";
 import { CommitContextMenu } from "../components/CommitContextMenu";
 import { Button } from "../components/ui/Button";
 import { IconButton } from "../components/ui/IconButton";
+import { Glass } from "../components/ui/Glass";
 import { CommitFileList } from "../components/CommitFileList";
+import { EmptyHint } from "../components/ui/EmptyHint";
 import { CommitDetail } from "../components/CommitDetail";
 import { DiffView } from "../components/DiffView";
 import { Resizer, useResizableWidth } from "../components/Resizer";
@@ -226,6 +228,13 @@ export function HistoryView({ repo }: { repo: string }) {
 
   return (
     <div className="flex h-full">
+      {/* 本视图写操作(cherry-pick / revert)进行中的非阻塞信号:与 App 顶栏同款进度条。
+          拖放拣选丢下后到 toast 之间不再「静默」。 */}
+      {busy && (
+        <div className="pointer-events-none fixed inset-x-0 top-0 z-[70] h-0.5 overflow-hidden bg-accent/15">
+          <div className="progress-bar h-full w-1/3 bg-accent" />
+        </div>
+      )}
       {/* 提交图谱 */}
       <GraphColumn
         branch={branchQ.data ?? null}
@@ -235,6 +244,7 @@ export function HistoryView({ repo }: { repo: string }) {
         focused={focusedPane === "commits" && kbMode}
         onSelect={selectCommit}
         onContext={(c, x, y) => setMenu({ commit: c, x, y })}
+        onCherryPick={doCherryPick}
         onLoadMore={() => setLimit((l) => l + PAGE)}
         loading={graphQ.isFetching}
         firstLoad={graphQ.isLoading}
@@ -359,7 +369,7 @@ const SEARCH_MODE_LABEL: Record<SearchMode, string> = { message: "信息", conte
 
 /** 图谱列(含可拖拽宽度 + 提交搜索)。搜索时切扁平匹配列表,清空回到图谱。 */
 function GraphColumn({
-  branch, rows, selectedId, compareId, focused, onSelect, onContext, onLoadMore, loading, firstLoad, hasMore, error,
+  branch, rows, selectedId, compareId, focused, onSelect, onContext, onCherryPick, onLoadMore, loading, firstLoad, hasMore, error,
   searchInput, onSearchChange, searchMode, onSearchModeChange, searching, searchResults, searchLoading, onOpenReflog,
 }: {
   branch: string | null;
@@ -369,6 +379,7 @@ function GraphColumn({
   focused: boolean;
   onSelect: (c: CommitDto, opts?: { compare?: boolean }) => void;
   onContext: (c: CommitDto, x: number, y: number) => void;
+  onCherryPick: (c: CommitDto) => void;
   onLoadMore: () => void;
   loading: boolean;
   firstLoad: boolean;
@@ -384,67 +395,108 @@ function GraphColumn({
   onOpenReflog: () => void;
 }) {
   const col = useResizableWidth("history.graphW", 320, 220, 640);
+  // 拖放拣选的一次性发现性提示(localStorage 记忆,用过即不再出现)。仅图谱模式且有数据时显示。
+  const [dragHintDismissed, setDragHintDismissed] = useState(() => localStorage.getItem("hint.dragCherryPick") === "1");
+  const showDragHint = !searching && rows.length > 0 && !dragHintDismissed;
+  function dismissDragHint() { localStorage.setItem("hint.dragCherryPick", "1"); setDragHintDismissed(true); }
+  // 浮动玻璃工具栏的实测高度 → 传给滚动体当顶部留白,让提交从栏底穿过(满汉折射)。
+  // 初值给个接近值(栏头+搜索+模式 ≈ 92px),避免首帧首条提交被栏遮一下再跳。
+  const barRef = useRef<HTMLDivElement>(null);
+  const [barH, setBarH] = useState(92);
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setBarH(el.offsetHeight));
+    ro.observe(el);
+    setBarH(el.offsetHeight);
+    return () => ro.disconnect();
+  }, []);
   return (
     <>
-      <div className={`flex shrink-0 flex-col overflow-hidden ${focused ? "ring-1 ring-inset ring-accent/50" : ""}`} style={{ width: col.w }}>
-        <ColumnHead icon={<BranchIcon width={13} height={13} />}>
-          {branch ? <span className="font-mono normal-case tracking-normal text-fg">{branch}</span> : "提交历史"}
-          <Button
-            variant="secondary"
-            size="chip"
-            onClick={onOpenReflog}
-            title="查看 reflog(HEAD 移动历史 / 找回丢失提交)"
-            className="ml-auto normal-case tracking-normal"
-          >
-            Reflog
-          </Button>
-        </ColumnHead>
-        {/* 搜索框:信息(git2)/ 内容 -S / 正则 -G(pickaxe) */}
-        <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-2.5 pt-1.5">
-          <SearchIcon width={13} height={13} className="shrink-0 text-fg-subtle" />
-          <input
-            value={searchInput}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder={SEARCH_PLACEHOLDER[searchMode]}
-            className="min-w-0 flex-1 bg-transparent text-xs text-fg placeholder:text-fg-subtle focus:outline-none"
-          />
-          {searchInput && (
-            <IconButton aria-label="清除搜索" onClick={() => onSearchChange("")} title="清除" className="shrink-0">
-              <CloseIcon width={12} height={12} />
-            </IconButton>
+      <div className={`relative flex shrink-0 flex-col overflow-hidden ${focused ? "ring-1 ring-inset ring-accent/50" : ""}`} style={{ width: col.w }}>
+        {/* 滚动体铺满整列;提交从下方的浮动玻璃工具栏底下穿过 */}
+        <div className="min-h-0 flex-1">
+          {searching ? (
+            <SearchList results={searchResults} loading={searchLoading} selectedId={selectedId} onSelect={onSelect} onContext={onContext} topInset={barH} />
+          ) : (
+            <CommitGraph
+              rows={rows}
+              selectedId={selectedId}
+              compareId={compareId}
+              scrollToId={selectedId}
+              onSelect={onSelect}
+              onContext={onContext}
+              onCherryPick={onCherryPick}
+              onLoadMore={onLoadMore}
+              loading={firstLoad || loading}
+              hasMore={hasMore}
+              topInset={barH}
+            />
           )}
         </div>
-        {/* 模式切换:信息按提交信息搜;内容/正则用 pickaxe 搜 diff 内容 */}
-        <div className="flex shrink-0 items-center gap-1 border-b border-line px-2.5 pb-1.5 pt-1">
-          {(["message", "content", "regex"] as const).map((m) => (
-            <button
-              key={m}
-              onClick={() => onSearchModeChange(m)}
-              title={SEARCH_PLACEHOLDER[m]}
-              className={`rounded px-1.5 py-0.5 text-[11px] transition-colors ${
-                searchMode === m ? "bg-accent/15 text-accent" : "text-fg-muted hover:text-fg"
-              }`}
-            >
-              {SEARCH_MODE_LABEL[m]}
-            </button>
-          ))}
+        {/* 浮动液态玻璃工具栏:栏头 + 搜索 + 模式,悬于滚动体之上,提交从其下穿过显折射。
+            注意:定位放在外层普通 div —— `.glass` 自带 position:relative(unlayered)会压过
+            Tailwind 的 absolute 工具类,直接给 Glass 加 absolute 不生效(会沉到底部)。 */}
+        <div className="absolute inset-x-0 top-0 z-10">
+          <Glass>
+            <div ref={barRef}>
+            <ColumnHead icon={<BranchIcon width={13} height={13} />}>
+              {branch ? <span className="font-mono normal-case tracking-normal text-fg">{branch}</span> : "提交历史"}
+              <Button
+                variant="secondary"
+                size="chip"
+                onClick={onOpenReflog}
+                title="查看 reflog(HEAD 移动历史 / 找回丢失提交)"
+                className="ml-auto normal-case tracking-normal"
+              >
+                Reflog
+              </Button>
+            </ColumnHead>
+            {/* 搜索框:信息(git2)/ 内容 -S / 正则 -G(pickaxe) */}
+            <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-2.5 pt-1.5">
+              <SearchIcon width={13} height={13} className="shrink-0 text-fg-subtle" />
+              <input
+                value={searchInput}
+                onChange={(e) => onSearchChange(e.target.value)}
+                placeholder={SEARCH_PLACEHOLDER[searchMode]}
+                className="min-w-0 flex-1 bg-transparent text-xs text-fg placeholder:text-fg-subtle focus:outline-none"
+              />
+              {searchInput && (
+                <IconButton aria-label="清除搜索" onClick={() => onSearchChange("")} title="清除" className="shrink-0">
+                  <CloseIcon width={12} height={12} />
+                </IconButton>
+              )}
+            </div>
+            {/* 模式切换:信息按提交信息搜;内容/正则用 pickaxe 搜 diff 内容 */}
+            <div className="flex shrink-0 items-center gap-1 border-b border-line px-2.5 pb-1.5 pt-1">
+              {(["message", "content", "regex"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => onSearchModeChange(m)}
+                  title={SEARCH_PLACEHOLDER[m]}
+                  className={`rounded px-1.5 py-0.5 text-[11px] transition-colors ${
+                    searchMode === m ? "bg-accent/15 text-accent" : "text-fg-muted hover:text-fg"
+                  }`}
+                >
+                  {SEARCH_MODE_LABEL[m]}
+                </button>
+              ))}
+            </div>
+            {error && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{error}</p>}
+            {showDragHint && (
+              <div className="flex items-center gap-2 border-b border-line px-2.5 py-1.5 text-[11px] text-fg-muted">
+                <span aria-hidden className="shrink-0 font-mono leading-none text-fg-subtle">⠿</span>
+                <span className="min-w-0 flex-1 leading-snug">
+                  拖任意提交到 <span className="text-accent">当前分支(HEAD)</span> 行 → 拣选到此分支
+                </span>
+                <IconButton aria-label="不再提示此功能" title="不再提示" onClick={dismissDragHint} className="shrink-0">
+                  <CloseIcon width={12} height={12} />
+                </IconButton>
+              </div>
+            )}
+            </div>
+          </Glass>
         </div>
-        {error && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{error}</p>}
-        {searching ? (
-          <SearchList results={searchResults} loading={searchLoading} selectedId={selectedId} onSelect={onSelect} onContext={onContext} />
-        ) : (
-          <CommitGraph
-            rows={rows}
-            selectedId={selectedId}
-            compareId={compareId}
-            scrollToId={selectedId}
-            onSelect={onSelect}
-            onContext={onContext}
-            onLoadMore={onLoadMore}
-            loading={firstLoad || loading}
-            hasMore={hasMore}
-          />
-        )}
       </div>
       <Resizer onDown={col.onDown} />
     </>
@@ -453,13 +505,15 @@ function GraphColumn({
 
 /** 搜索结果:扁平提交列表(无泳道)。 */
 function SearchList({
-  results, loading, selectedId, onSelect, onContext,
+  results, loading, selectedId, onSelect, onContext, topInset = 0,
 }: {
   results: CommitDto[];
   loading: boolean;
   selectedId: string | null;
   onSelect: (c: CommitDto) => void;
   onContext: (c: CommitDto, x: number, y: number) => void;
+  /** 顶部留白(px):同 CommitGraph,给浮动玻璃工具栏让位。 */
+  topInset?: number;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   // 键盘选中变化 → 把该行滚进可视区(block nearest:已可见则不动)。
@@ -469,13 +523,13 @@ function SearchList({
   }, [selectedId]);
 
   if (loading && results.length === 0) {
-    return <div className="p-3 text-xs text-fg-subtle">搜索中…</div>;
+    return <div className="p-3 text-xs text-fg-subtle" style={{ paddingTop: topInset + 12 }}>搜索中…</div>;
   }
   if (results.length === 0) {
-    return <div className="p-3 text-xs text-fg-subtle">没有匹配的提交</div>;
+    return <div className="p-3 text-xs text-fg-subtle" style={{ paddingTop: topInset + 12 }}>没有匹配的提交</div>;
   }
   return (
-    <div ref={boxRef} className="fade-in overflow-y-auto">
+    <div ref={boxRef} className="fade-in h-full overflow-y-auto" style={{ paddingTop: topInset }}>
       <div className="px-3 py-1.5 text-[11px] text-fg-subtle">{results.length} 条匹配{results.length >= SEARCH_LIMIT ? "(已截断)" : ""}</div>
       {results.map((c) => {
         const on = selectedId === c.id;
@@ -581,7 +635,7 @@ function MidColumn({
         <div className="min-h-0 flex-1 overflow-hidden">
           {commit
             ? <CommitFileList files={list} selected={selectedFile} onSelect={onSelectFile} onFileHistory={onFileHistory} />
-            : <div className="p-3 text-xs text-fg-subtle">选择一个提交</div>}
+            : <EmptyHint icon={<CommitIcon width={24} height={24} />}>从左侧图谱选择一个提交，查看详情与改动文件</EmptyHint>}
         </div>
       </div>
       <Resizer onDown={col.onDown} />

@@ -98,7 +98,7 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
         borderColor: `color-mix(in srgb, ${c} 40%, var(--color-line-strong))`,
         borderLeftColor: c,
       }}
-      className={`pointer-events-auto flex w-80 items-start gap-2.5 rounded-lg border border-l-4 p-3 shadow-lg ${
+      className={`pointer-events-auto flex w-80 items-start gap-2.5 rounded-lg border border-l-4 p-3 popover ${
         item.leaving ? "toast-out" : "toast-in"
       }`}
     >

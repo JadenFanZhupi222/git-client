@@ -63,7 +63,7 @@ export function StashMenu({ repo }: { repo: string }) {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-50 mt-1 w-72 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs shadow-lg">
+          <div className="absolute right-0 top-full z-50 mt-1 w-72 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs menu-in popover">
             {/* 贮藏当前改动 */}
             <form
               onSubmit={(e) => { e.preventDefault(); save(); }}
@@ -73,7 +73,7 @@ export function StashMenu({ repo }: { repo: string }) {
                 value={msg}
                 onChange={(e) => setMsg(e.target.value)}
                 placeholder="贮藏信息(可选)…"
-                className="min-w-0 flex-1 rounded bg-canvas px-2 py-1 text-fg placeholder:text-fg-subtle focus:outline-none"
+                className="min-w-0 flex-1 rounded bg-canvas px-2 py-1 text-fg placeholder:text-fg-subtle field"
               />
               <Button type="submit" variant="commit" size="sm" disabled={busy} className="shrink-0">
                 贮藏改动

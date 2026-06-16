@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useBlame } from "../lib/queries";
 import { formatRelative } from "../lib/time";
 import { FileDiffIcon, HistoryIcon, CloseIcon } from "../components/icons";
 import { Button } from "../components/ui/Button";
 import { IconButton } from "../components/ui/IconButton";
+import { Glass } from "../components/ui/Glass";
+import { EmptyHint } from "../components/ui/EmptyHint";
 import { LineHistoryPanel } from "../components/LineHistoryPanel";
 import type { IpcError } from "../ipc";
 
@@ -48,37 +50,59 @@ export function BlameView({ repo }: { repo: string }) {
   const lines = q.data ?? [];
   const queryErr = (q.error as IpcError | null)?.message ?? null;
 
+  // 浮动玻璃工具栏高度 → 内容顶部留白,blame 行从栏底穿过(满汉折射)。
+  const barRef = useRef<HTMLDivElement>(null);
+  const [barH, setBarH] = useState(38);
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setBarH(el.offsetHeight));
+    ro.observe(el);
+    setBarH(el.offsetHeight);
+    return () => ro.disconnect();
+  }, []);
   return (
-    <div className="flex h-full flex-col">
-      {/* 工具栏 */}
-      <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-1.5">
-        <Button variant="ghost" size="sm" onClick={pick}>
-          <FileDiffIcon width={13} height={13} /> 选择文件
-        </Button>
-        {file && <span className="truncate font-mono text-xs text-fg" title={file}>{file}</span>}
-        {selRange && (
-          <div className="ml-auto flex shrink-0 items-center gap-1.5">
-            <Button
-              variant="secondary"
-              size="chip"
-              onClick={() => setHistoryRange(selRange)}
-              title="查看选中行的演变史(git log -L)"
-            >
-              <HistoryIcon width={12} height={12} />
-              {selRange.start === selRange.end ? `第 ${selRange.start} 行历史` : `第 ${selRange.start}–${selRange.end} 行历史`}
-            </Button>
-            <IconButton aria-label="清除选择" title="清除选择" onClick={() => setSel(null)}>
-              <CloseIcon width={13} height={13} />
-            </IconButton>
+    <div className="relative flex h-full flex-col">
+      {/* 浮动液态玻璃工具栏:选择文件 + 文件名 + 选区操作;blame 行从其下穿过显折射。
+          定位放外层普通 div(.glass 自带 position:relative 会压过 absolute 工具类)。 */}
+      <div className="absolute inset-x-0 top-0 z-10">
+        <Glass>
+          <div ref={barRef}>
+            <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-1.5">
+              <Button variant="ghost" size="sm" onClick={pick}>
+                <FileDiffIcon width={13} height={13} /> 选择文件
+              </Button>
+              {file && <span className="truncate font-mono text-xs text-fg" title={file}>{file}</span>}
+              {selRange && (
+                <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                  <Button
+                    variant="secondary"
+                    size="chip"
+                    onClick={() => setHistoryRange(selRange)}
+                    title="查看选中行的演变史(git log -L)"
+                  >
+                    <HistoryIcon width={12} height={12} />
+                    {selRange.start === selRange.end ? `第 ${selRange.start} 行历史` : `第 ${selRange.start}–${selRange.end} 行历史`}
+                  </Button>
+                  <IconButton aria-label="清除选择" title="清除选择" onClick={() => setSel(null)}>
+                    <CloseIcon width={13} height={13} />
+                  </IconButton>
+                </div>
+              )}
+            </div>
+            {pickError && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{pickError}</p>}
           </div>
-        )}
+        </Glass>
       </div>
-
-      {pickError && <p className="border-b border-line px-3 py-1.5 text-xs text-danger">{pickError}</p>}
 
       {/* 内容 */}
       {!file ? (
-        <Center>选择一个文件查看逐行追溯(blame)</Center>
+        <EmptyHint
+          icon={<HistoryIcon width={24} height={24} />}
+          action={<Button variant="secondary" size="sm" onClick={pick}><FileDiffIcon width={13} height={13} /> 选择文件</Button>}
+        >
+          选择一个文件，逐行追溯它的提交来源
+        </EmptyHint>
       ) : q.isLoading ? (
         <Center>加载中…</Center>
       ) : queryErr ? (
@@ -87,7 +111,7 @@ export function BlameView({ repo }: { repo: string }) {
       ) : lines.length === 0 ? (
         <Center>空文件或无追溯信息</Center>
       ) : (
-        <div className="fade-in flex-1 overflow-auto font-mono text-[12px] leading-5">
+        <div className="fade-in flex-1 overflow-auto font-mono text-[12px] leading-5" style={{ paddingTop: barH }}>
           {lines.map((l, i) => {
             const prev = lines[i - 1];
             const newGroup = !prev || prev.commit_id !== l.commit_id;
