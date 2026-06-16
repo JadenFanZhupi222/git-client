@@ -43,7 +43,7 @@ function RefBadges({ refs }: { refs: RefDto[] }) {
 }
 
 export function CommitGraph({
-  rows, selectedId, compareId, onSelect, onContext, onLoadMore, loading, hasMore, scrollToId, topInset = 0,
+  rows, selectedId, compareId, onSelect, onContext, onCherryPick, onLoadMore, loading, hasMore, scrollToId, topInset = 0,
 }: {
   rows: GraphRowDto[];
   selectedId: string | null;
@@ -54,6 +54,8 @@ export function CommitGraph({
   /** opts.compare=true 表示按下了 Cmd/Ctrl(请求与已选提交比较)。 */
   onSelect: (c: CommitDto, opts?: { compare?: boolean }) => void;
   onContext?: (c: CommitDto, x: number, y: number) => void;
+  /** 拖一个提交丢到 HEAD 行 → 把它 cherry-pick 到当前分支(直接操作)。提供时行变可拖。 */
+  onCherryPick?: (c: CommitDto) => void;
   onLoadMore: () => void;
   loading: boolean;
   hasMore: boolean;
@@ -95,6 +97,8 @@ export function CommitGraph({
   // hover 高亮:记住鼠标所在提交的泳道色,渲染时把同色泳道/节点点亮、其余淡下。
   // 设同值是 no-op(React 自动 bail),跨行移动只在颜色变化时重渲;离开整列才清空(避免行间闪烁)。
   const [hoverColor, setHoverColor] = useState<number | null>(null);
+  // 正在拖拽的提交 id(拖放 cherry-pick)。
+  const [dragId, setDragId] = useState<string | null>(null);
 
   // 首屏加载骨架(无数据时):不进虚拟化路径。
   if (loading && rows.length === 0) {
@@ -139,6 +143,9 @@ export function CommitGraph({
           const on = selectedId === r.commit.id;
           const cmp = !on && compareId === r.commit.id;
           const isHead = r.refs.some((x) => x.kind === "head");
+          // 拖放 cherry-pick:被拖的行半透明;HEAD 行(非被拖那条)在拖拽时变投放区。
+          const isDragged = dragId === r.commit.id;
+          const isDropTarget = dragId !== null && isHead && !isDragged && !!onCherryPick;
           // 同步状态:未 push=绿 / 未 pull=蓝(与状态栏 SyncBadge 的 ↑绿↓蓝 一致)。
           const syncColor =
             r.sync === "outgoing" ? "var(--color-success)"
@@ -151,12 +158,20 @@ export function CommitGraph({
           return (
             <div
               key={r.commit.id}
+              draggable={!!onCherryPick}
+              onDragStart={onCherryPick ? (e) => { setDragId(r.commit.id); e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", r.commit.id); } : undefined}
+              onDragEnd={() => setDragId(null)}
+              // 接受投放只看静态的 isHead(不依赖 dragId 状态,避免 setState 赶不上 dragover → 全程禁用光标)。
+              // 被拖提交从 dataTransfer 读,不从 state 读;dropEffect=copy 给出「+」光标。
+              onDragOver={isHead && onCherryPick ? (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } : undefined}
+              onDrop={isHead && onCherryPick ? (e) => { e.preventDefault(); const id = e.dataTransfer.getData("text/plain"); const c = rows.find((x) => x.commit.id === id)?.commit; setDragId(null); if (c && c.id !== r.commit.id) onCherryPick(c); } : undefined}
               onMouseEnter={() => setHoverColor(r.color)}
               onClick={(e) => onSelect(r.commit, { compare: e.metaKey || e.ctrlKey })}
               onContextMenu={(e) => { if (onContext) { e.preventDefault(); onSelect(r.commit); onContext(r.commit, e.clientX, e.clientY); } }}
               title={syncTip}
-              className={`flex cursor-pointer items-stretch border-l-2 transition-colors ${isNew ? "commit-enter" : ""} ${
-                on ? "border-transparent"
+              className={`flex cursor-pointer items-stretch border-l-2 transition-colors ${isNew ? "commit-enter" : ""} ${isDragged ? "opacity-40" : ""} ${
+                isDropTarget ? "bg-accent/10 ring-2 ring-inset ring-accent"
+                : on ? "border-transparent"
                 : cmp ? "border-accent bg-accent/10"
                 : "border-transparent hover:bg-elevated"
               }`}
@@ -206,6 +221,13 @@ export function CommitGraph({
               <div className="flex min-w-0 flex-1 flex-col justify-center pr-3">
                 <CommitLines commit={r.commit} badges={<RefBadges refs={r.refs} />} />
               </div>
+
+              {/* 投放区提示:拖到当前分支(HEAD)行时显示「松开 → 拣选」 */}
+              {isDropTarget && (
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 shrink-0 rounded-full bg-accent px-2 py-0.5 text-[10px] font-medium text-white shadow-lg">
+                  松开 → 拣选到此分支
+                </span>
+              )}
             </div>
           );
         })}

@@ -237,6 +237,7 @@ export function HistoryView({ repo }: { repo: string }) {
         focused={focusedPane === "commits" && kbMode}
         onSelect={selectCommit}
         onContext={(c, x, y) => setMenu({ commit: c, x, y })}
+        onCherryPick={doCherryPick}
         onLoadMore={() => setLimit((l) => l + PAGE)}
         loading={graphQ.isFetching}
         firstLoad={graphQ.isLoading}
@@ -361,7 +362,7 @@ const SEARCH_MODE_LABEL: Record<SearchMode, string> = { message: "信息", conte
 
 /** 图谱列(含可拖拽宽度 + 提交搜索)。搜索时切扁平匹配列表,清空回到图谱。 */
 function GraphColumn({
-  branch, rows, selectedId, compareId, focused, onSelect, onContext, onLoadMore, loading, firstLoad, hasMore, error,
+  branch, rows, selectedId, compareId, focused, onSelect, onContext, onCherryPick, onLoadMore, loading, firstLoad, hasMore, error,
   searchInput, onSearchChange, searchMode, onSearchModeChange, searching, searchResults, searchLoading, onOpenReflog,
 }: {
   branch: string | null;
@@ -371,6 +372,7 @@ function GraphColumn({
   focused: boolean;
   onSelect: (c: CommitDto, opts?: { compare?: boolean }) => void;
   onContext: (c: CommitDto, x: number, y: number) => void;
+  onCherryPick: (c: CommitDto) => void;
   onLoadMore: () => void;
   loading: boolean;
   firstLoad: boolean;
@@ -413,6 +415,7 @@ function GraphColumn({
               scrollToId={selectedId}
               onSelect={onSelect}
               onContext={onContext}
+              onCherryPick={onCherryPick}
               onLoadMore={onLoadMore}
               loading={firstLoad || loading}
               hasMore={hasMore}
