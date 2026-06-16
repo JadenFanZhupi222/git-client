@@ -373,26 +373,28 @@ export default function App() {
                   )}
                 </div>
               )}
+              {/* 撤销/重做收成方形图标按钮(顶栏减负):标签移入 title/aria-label,
+                  保留撤销的 accent 着色让它仍醒目。形状对齐右侧「⋯」按钮,观感统一。 */}
               {canUndo && (
                 <button
                   onClick={() => doNav("undo")}
                   disabled={busy}
+                  aria-label={`撤销${canUndo.label}`}
                   title={`撤销刚才的「${canUndo.label}」(回到 ${canUndo.target_short}；${canUndo.worktree_restored ? "还原工作区，有未提交改动会先拦下" : "改动回暂存区，不丢工作区"})`}
-                  className="flex items-center gap-1.5 rounded-md border border-accent/60 bg-accent/10 px-2.5 py-1 text-xs text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
+                  className="grid h-7 w-7 place-items-center rounded-md border border-accent/60 bg-accent/10 text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
                 >
-                  {undoing ? <SpinnerIcon width={13} height={13} /> : <UndoIcon width={13} height={13} />}
-                  {`撤销${canUndo.label}`}
+                  {undoing ? <SpinnerIcon width={14} height={14} /> : <UndoIcon width={14} height={14} />}
                 </button>
               )}
               {canRedo && (
                 <button
                   onClick={() => doNav("redo")}
                   disabled={busy}
+                  aria-label={`重做${canRedo.label}`}
                   title={`重做「${canRedo.label}」(前进到 ${canRedo.target_short})`}
-                  className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle disabled:opacity-50"
+                  className="grid h-7 w-7 place-items-center rounded-md border border-line-strong bg-elevated text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle disabled:opacity-50"
                 >
-                  <RedoIcon width={13} height={13} />
-                  {`重做${canRedo.label}`}
+                  <RedoIcon width={14} height={14} />
                 </button>
               )}
               {/* 同步操作托盘:Fetch · Pull · Push 收成一组,读作一个单元(双层贝塞尔托盘)。
