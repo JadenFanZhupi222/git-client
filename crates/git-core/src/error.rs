@@ -64,6 +64,12 @@ pub enum GitError {
     #[error("远程名无效")]
     InvalidRemoteName,
 
+    #[error("目标目录非空: {0}")]
+    DestinationNotEmpty(String),
+
+    #[error("仓库地址无效")]
+    InvalidUrl,
+
     #[error("当前分支没有设置上游分支(upstream),无法 pull")]
     NoUpstream,
 

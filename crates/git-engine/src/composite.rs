@@ -21,6 +21,14 @@ impl GitBackend for CompositeBackend {
     fn open(&self, repo: &Path) -> Result<(), GitError> {
         self.git2.open(repo)
     }
+    fn init(&self, path: &Path) -> Result<(), GitError> {
+        // 走 CLI:`git init` 尊重 init.defaultBranch / 模板,行为与本机 git 一致。
+        self.cli.init(path)
+    }
+    fn clone_repo(&self, url: &str, dst: &Path) -> Result<(), GitError> {
+        // 网络操作走 CLI(凭据助手 / 进度)。
+        self.cli.clone_repo(url, dst)
+    }
     fn head_commit(&self, repo: &Path) -> Result<Commit, GitError> {
         self.git2.head_commit(repo)
     }

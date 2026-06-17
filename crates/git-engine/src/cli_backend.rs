@@ -412,6 +412,70 @@ fn classify_push_error(combined: &str, stderr: &str) -> GitError {
 pub struct CliBackend;
 
 impl CliBackend {
+    /// `git init <path>`:新建空仓库(尊重 init.defaultBranch)。
+    /// 父目录不存在则先创建。已是仓库时 git init 幂等。
+    pub fn init(&self, path: &Path) -> Result<(), GitError> {
+        if let Err(e) = std::fs::create_dir_all(path) {
+            return Err(GitError::Backend(format!("创建目录失败: {e}")));
+        }
+        let output = Command::new("git")
+            .arg("init")
+            .arg(path)
+            .output()
+            .map_err(spawn_err)?;
+        if output.status.success() {
+            return Ok(());
+        }
+        Err(GitError::Backend(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ))
+    }
+
+    /// `git clone <url> <dst>`:克隆远程仓库到 dst。dst 须不存在或为空目录。
+    /// 认证/网络/无效地址映射成精确错误;凭据交给系统凭据助手。
+    pub fn clone_repo(&self, url: &str, dst: &Path) -> Result<(), GitError> {
+        let url = url.trim();
+        if url.is_empty() {
+            return Err(GitError::InvalidUrl);
+        }
+        // dst 已存在且非空 → 拒绝(git clone 也会拒,这里给精确错误)。
+        if dst.exists() {
+            let non_empty = std::fs::read_dir(dst)
+                .map(|mut it| it.next().is_some())
+                .unwrap_or(false);
+            if non_empty {
+                return Err(GitError::DestinationNotEmpty(dst.display().to_string()));
+            }
+        }
+        let output = Command::new("git")
+            .arg("clone")
+            .arg(url)
+            .arg(dst)
+            .output()
+            .map_err(spawn_err)?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let lower = stderr.to_lowercase();
+        let has = |s: &str| lower.contains(s);
+        let err = if has("authentication failed")
+            || has("could not read username")
+            || has("permission denied")
+        {
+            GitError::AuthFailed
+        } else if has("could not resolve host") || has("unable to access") || has("timed out") {
+            GitError::NetworkError
+        } else if (has("repository") && has("not found")) || has("does not appear to be a git") {
+            GitError::InvalidUrl
+        } else if has("already exists and is not an empty") {
+            GitError::DestinationNotEmpty(dst.display().to_string())
+        } else {
+            GitError::Backend(stderr.trim().to_string())
+        };
+        Err(err)
+    }
+
     /// 执行 `git -C <repo> fetch --prune [remote]`。
     pub fn fetch(&self, repo: &Path, remote: Option<&str>) -> Result<FetchOutcome, GitError> {
         // 先确认仓库配了远程 —— 否则 `git fetch` 可能静默 no-op(exit 0、无输出),
@@ -1345,6 +1409,57 @@ mod tests {
         git(repo.path(), &["config", "user.name", "t"]);
         git(repo.path(), &["config", "commit.gpgsign", "false"]);
         repo
+    }
+
+    #[test]
+    fn init_creates_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("fresh");
+        CliBackend.init(&target).unwrap();
+        assert!(target.join(".git").exists(), "init 应建出 .git");
+    }
+
+    #[test]
+    fn clone_from_local_source_succeeds() {
+        // 源仓库(有一次提交)
+        let src = init_repo_for_commit();
+        std::fs::write(src.path().join("a.txt"), "x").unwrap();
+        git(src.path(), &["add", "."]);
+        git(src.path(), &["commit", "-m", "c1"]);
+
+        let work = tempfile::tempdir().unwrap();
+        let dst = work.path().join("cloned");
+        // 本地路径当 URL,免网络。
+        CliBackend
+            .clone_repo(&src.path().to_string_lossy(), &dst)
+            .unwrap();
+        assert!(dst.join(".git").exists(), "clone 应建出工作区");
+        assert!(dst.join("a.txt").exists(), "clone 应检出文件");
+    }
+
+    #[test]
+    fn clone_into_non_empty_dst_rejected() {
+        let work = tempfile::tempdir().unwrap();
+        let dst = work.path().join("occupied");
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(dst.join("keep.txt"), "x").unwrap();
+
+        let err = CliBackend
+            .clone_repo("https://example.com/x.git", &dst)
+            .unwrap_err();
+        assert!(
+            matches!(err, GitError::DestinationNotEmpty(_)),
+            "实际:{err:?}"
+        );
+    }
+
+    #[test]
+    fn clone_empty_url_is_invalid() {
+        let work = tempfile::tempdir().unwrap();
+        let err = CliBackend
+            .clone_repo("  ", &work.path().join("x"))
+            .unwrap_err();
+        assert!(matches!(err, GitError::InvalidUrl), "实际:{err:?}");
     }
 
     #[test]

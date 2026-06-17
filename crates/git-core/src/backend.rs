@@ -15,6 +15,19 @@ pub trait GitBackend: Send + Sync {
     /// 打开仓库,顺手验证它是不是个有效仓库。
     fn open(&self, path: &Path) -> Result<(), GitError>;
 
+    /// 在 `path` 处新建一个空仓库(`git init`,尊重 init.defaultBranch)。
+    /// 路径不存在则创建;已是仓库 → 幂等(git init 不破坏已有仓库)。默认 Unsupported。
+    fn init(&self, _path: &Path) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+
+    /// 克隆 `url` 到 `dst`(`git clone <url> <dst>`,凭据交给系统凭据助手)。
+    /// dst 须不存在或为空目录。认证/网络失败映射成 AuthFailed/NetworkError。默认 Unsupported。
+    /// 命名为 `clone_repo`(而非 `clone`)以免与 `Clone::clone` 在 `Arc<dyn>` 上撞名。
+    fn clone_repo(&self, _url: &str, _dst: &Path) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+
     /// 读 HEAD 指向的提交。阶段 0 的验证目标。
     fn head_commit(&self, path: &Path) -> Result<Commit, GitError>;
 

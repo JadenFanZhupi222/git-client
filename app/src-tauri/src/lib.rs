@@ -47,6 +47,8 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         RemoteAlreadyExists(_) => ("REMOTE_EXISTS", false),
         RemoteNotFound(_) => ("REMOTE_NOT_FOUND", false),
         InvalidRemoteName => ("INVALID_REMOTE_NAME", false),
+        DestinationNotEmpty(_) => ("DESTINATION_NOT_EMPTY", false),
+        InvalidUrl => ("INVALID_URL", false),
         NoUpstream => ("NO_UPSTREAM", false),
         PushRejected => ("PUSH_REJECTED", true),
         MergeConflict { .. } => ("MERGE_CONFLICT", true),
@@ -91,6 +93,36 @@ async fn get_head_commit(
         .await
         .map_err(join_panic)?
         .map_err(to_ipc)
+}
+
+/// onboarding:在 path 处新建空仓库(不经 context —— 仓库刚诞生)。
+#[tauri::command]
+async fn init_repo(registry: tauri::State<'_, RepoRegistry>, path: String) -> Result<(), IpcError> {
+    let backend = registry.backend_arc();
+    tokio::task::spawn_blocking(move || {
+        app_service::RepoService::new(backend).init_repo(&PathBuf::from(path))
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
+}
+
+/// onboarding:把 url 克隆进 parent_dir,返回克隆出的仓库根路径(前端拿去打开)。
+#[tauri::command]
+async fn clone_repo(
+    registry: tauri::State<'_, RepoRegistry>,
+    url: String,
+    parent_dir: String,
+) -> Result<String, IpcError> {
+    let backend = registry.backend_arc();
+    tokio::task::spawn_blocking(move || {
+        app_service::RepoService::new(backend)
+            .clone_repo(&url, &PathBuf::from(parent_dir))
+            .map(|p| p.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(join_panic)?
+    .map_err(to_ipc)
 }
 
 #[tauri::command]
@@ -1130,6 +1162,8 @@ pub fn run() {
         .manage(WatcherState::default())
         .manage(SearchGen::default())
         .invoke_handler(tauri::generate_handler![
+            init_repo,
+            clone_repo,
             get_head_commit,
             get_status,
             stage_file,

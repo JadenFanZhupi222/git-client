@@ -37,6 +37,8 @@ pub struct FakeBackend {
     // 合并:记录被合并进当前分支的名字 + 可预置结果。
     merge_ops: Mutex<Vec<String>>,
     canned_merge: Mutex<Option<MergeOutcome>>,
+    // onboarding:记录 init/clone 调用(如 ["init /a", "clone url→/b"])。
+    onboard_ops: Mutex<Vec<String>>,
     checked_out: Mutex<Vec<String>>,
     created: Mutex<Vec<String>>,
     deleted: Mutex<Vec<String>>,
@@ -166,6 +168,10 @@ impl FakeBackend {
     pub fn merge_ops(&self) -> Vec<String> {
         self.merge_ops.lock().unwrap().clone()
     }
+    /// 测试断言:已记录的 init/clone 调用。
+    pub fn onboard_ops(&self) -> Vec<String> {
+        self.onboard_ops.lock().unwrap().clone()
+    }
     pub fn with_reflog(self, entries: Vec<ReflogEntry>) -> Self {
         *self.canned_reflog.lock().unwrap() = entries;
         self
@@ -285,6 +291,25 @@ impl FakeBackend {
 
 impl GitBackend for FakeBackend {
     fn open(&self, _path: &Path) -> Result<(), GitError> {
+        Ok(())
+    }
+
+    fn init(&self, path: &Path) -> Result<(), GitError> {
+        self.onboard_ops
+            .lock()
+            .unwrap()
+            .push(format!("init {}", path.display()));
+        Ok(())
+    }
+
+    fn clone_repo(&self, url: &str, dst: &Path) -> Result<(), GitError> {
+        if url.trim().is_empty() {
+            return Err(GitError::InvalidUrl);
+        }
+        self.onboard_ops
+            .lock()
+            .unwrap()
+            .push(format!("clone {}→{}", url, dst.display()));
         Ok(())
     }
 
