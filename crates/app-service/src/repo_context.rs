@@ -20,8 +20,9 @@ use git_core::{GitBackend, GitError, UndoKind};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
     FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, LineHistoryEntryDto, OpLogDto,
-    OpLogEntryDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto,
-    StashDto, StatusDto, SubmoduleInfoDto, UndoStateDto, UndoStepDto, WorktreeInfoDto,
+    OpLogEntryDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto, RemoteInfoDto,
+    SignatureInfoDto, StashDto, StatusDto, SubmoduleInfoDto, UndoStateDto, UndoStepDto,
+    WorktreeInfoDto,
 };
 use lru::LruCache;
 use std::collections::HashMap;
@@ -440,6 +441,26 @@ impl RepoContext {
     }
     pub fn remotes(&self) -> Result<Vec<String>, GitError> {
         self.service.remotes(&self.path)
+    }
+    pub fn remote_list(&self) -> Result<Vec<RemoteInfoDto>, GitError> {
+        self.service.remote_list(&self.path)
+    }
+    pub fn add_remote(&self, name: &str, url: &str) -> Result<(), GitError> {
+        self.service.add_remote(&self.path, name, url)?;
+        // 新增远程不立即改引用,但失效 refs/同步状态以便 UI 一致;保守多失效一点。
+        self.after_write(false, true);
+        Ok(())
+    }
+    pub fn remove_remote(&self, name: &str) -> Result<(), GitError> {
+        self.service.remove_remote(&self.path, name)?;
+        // 删除远程会一并删其远程跟踪引用 → 失效 refs/图谱/同步状态。
+        self.after_write(false, true);
+        Ok(())
+    }
+    pub fn rename_remote(&self, old: &str, new: &str) -> Result<(), GitError> {
+        self.service.rename_remote(&self.path, old, new)?;
+        self.after_write(false, true);
+        Ok(())
     }
     pub fn refs(&self) -> Result<Vec<RefDto>, GitError> {
         if let Some(hit) = self.cache.refs.lock().unwrap().clone() {

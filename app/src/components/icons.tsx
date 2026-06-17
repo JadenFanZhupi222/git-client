@@ -206,6 +206,13 @@ export const WorktreeIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+// 云:远程仓库(remote)。
+export const CloudIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M4.5 12.5a3 3 0 0 1-.3-5.98A4 4 0 0 1 12 6.2a2.8 2.8 0 0 1-.3 5.6z" />
+  </svg>
+);
+
 // 拖拽手柄:两列六点(drag-handle / grip),提示「可拖动」。
 export const GripIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p} strokeWidth={0} fill="currentColor">

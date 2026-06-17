@@ -6,8 +6,8 @@ use git_core::{GitBackend, GitError};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
     FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, LineHistoryEntryDto, PullResultDto,
-    PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto, StashDto, StatusDto, SubmoduleInfoDto,
-    WorktreeInfoDto,
+    PushResultDto, RefDto, ReflogEntryDto, RemoteInfoDto, SignatureInfoDto, StashDto, StatusDto,
+    SubmoduleInfoDto, WorktreeInfoDto,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -351,6 +351,41 @@ impl RepoService {
     /// 用例:列出远程名。
     pub fn remotes(&self, repo_path: &Path) -> Result<Vec<String>, GitError> {
         self.backend.remotes(repo_path)
+    }
+
+    /// 用例:列出远程及其 URL(供「管理远程」面板)。
+    pub fn remote_list(&self, repo_path: &Path) -> Result<Vec<RemoteInfoDto>, GitError> {
+        Ok(self
+            .backend
+            .remote_list(repo_path)?
+            .into_iter()
+            .map(RemoteInfoDto::from)
+            .collect())
+    }
+
+    /// 用例:新增远程。名/URL 在本层去空校验(后端再次校验)。
+    pub fn add_remote(&self, repo_path: &Path, name: &str, url: &str) -> Result<(), GitError> {
+        if name.trim().is_empty() || url.trim().is_empty() {
+            return Err(GitError::InvalidRemoteName);
+        }
+        self.backend.add_remote(repo_path, name.trim(), url.trim())
+    }
+
+    /// 用例:删除远程。
+    pub fn remove_remote(&self, repo_path: &Path, name: &str) -> Result<(), GitError> {
+        if name.trim().is_empty() {
+            return Err(GitError::InvalidRemoteName);
+        }
+        self.backend.remove_remote(repo_path, name.trim())
+    }
+
+    /// 用例:重命名远程。
+    pub fn rename_remote(&self, repo_path: &Path, old: &str, new: &str) -> Result<(), GitError> {
+        if old.trim().is_empty() || new.trim().is_empty() {
+            return Err(GitError::InvalidRemoteName);
+        }
+        self.backend
+            .rename_remote(repo_path, old.trim(), new.trim())
     }
 
     /// 用例:列出所有引用(本地分支/远程跟踪/标签/HEAD),供「比较」选择器等使用。
@@ -1052,6 +1087,47 @@ mod tests {
             svc.remotes(Path::new("/r")).unwrap(),
             vec!["origin", "upstream"]
         );
+    }
+
+    #[test]
+    fn remote_management_forwards_and_validates() {
+        let fb = Arc::new(FakeBackend::default().with_remotes(vec!["origin".into()]));
+        let svc = RepoService::new(fb.clone());
+        let r = Path::new("/r");
+
+        // 新增
+        svc.add_remote(r, "upstream", "https://e.com/u.git")
+            .unwrap();
+        // 空 URL 被本层拦下
+        assert!(matches!(
+            svc.add_remote(r, "x", "  ").unwrap_err(),
+            GitError::InvalidRemoteName
+        ));
+        // 同名已存在
+        assert!(matches!(
+            svc.add_remote(r, "origin", "https://e.com/o.git")
+                .unwrap_err(),
+            GitError::RemoteAlreadyExists(_)
+        ));
+        // 重命名
+        svc.rename_remote(r, "upstream", "up2").unwrap();
+        // 删不存在
+        assert!(matches!(
+            svc.remove_remote(r, "nope").unwrap_err(),
+            GitError::RemoteNotFound(_)
+        ));
+        // 删存在
+        svc.remove_remote(r, "origin").unwrap();
+
+        assert_eq!(svc.remotes(r).unwrap(), vec!["up2"]);
+        assert_eq!(
+            fb.remote_ops(),
+            vec!["add upstream", "rename upstream up2", "remove origin"]
+        );
+        // remote_list 返回名 + 占位 URL
+        let list = svc.remote_list(r).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "up2");
     }
 
     #[test]

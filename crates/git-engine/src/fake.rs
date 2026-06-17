@@ -1,8 +1,8 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     FetchOutcome, FileChange, FileDiff, FileEntry, LineHistoryEntry, PullOutcome, PushOutcome,
-    RebaseAction, RebaseStep, ReflogEntry, RepoState, ResetMode, Signature, SignatureInfo,
-    StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus, WorktreeInfo,
+    RebaseAction, RebaseStep, ReflogEntry, RemoteInfo, RepoState, ResetMode, Signature,
+    SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus, WorktreeInfo,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -31,6 +31,8 @@ pub struct FakeBackend {
     canned_ahead_behind: Mutex<Option<AheadBehind>>,
     canned_sync_commits: Mutex<SyncCommits>,
     canned_remotes: Mutex<Vec<String>>,
+    // 记录远程管理写操作(add/remove/rename),供测试断言转发。
+    remote_ops: Mutex<Vec<String>>,
     checked_out: Mutex<Vec<String>>,
     created: Mutex<Vec<String>>,
     deleted: Mutex<Vec<String>>,
@@ -147,6 +149,10 @@ impl FakeBackend {
     pub fn with_remotes(self, remotes: Vec<String>) -> Self {
         *self.canned_remotes.lock().unwrap() = remotes;
         self
+    }
+    /// 测试断言:已记录的远程管理写操作(如 ["add upstream", "remove origin"])。
+    pub fn remote_ops(&self) -> Vec<String> {
+        self.remote_ops.lock().unwrap().clone()
     }
     pub fn with_reflog(self, entries: Vec<ReflogEntry>) -> Self {
         *self.canned_reflog.lock().unwrap() = entries;
@@ -635,6 +641,73 @@ impl GitBackend for FakeBackend {
     }
     fn remotes(&self, _path: &Path) -> Result<Vec<String>, GitError> {
         Ok(self.canned_remotes.lock().unwrap().clone())
+    }
+    fn remote_list(&self, _path: &Path) -> Result<Vec<RemoteInfo>, GitError> {
+        Ok(self
+            .canned_remotes
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|name| RemoteInfo {
+                name: name.clone(),
+                url: format!("https://example.com/{name}.git"),
+            })
+            .collect())
+    }
+    fn add_remote(&self, _path: &Path, name: &str, url: &str) -> Result<(), GitError> {
+        let name = name.trim();
+        if name.is_empty() || url.trim().is_empty() {
+            return Err(GitError::InvalidRemoteName);
+        }
+        if self
+            .canned_remotes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|r| r == name)
+        {
+            return Err(GitError::RemoteAlreadyExists(name.to_string()));
+        }
+        self.canned_remotes.lock().unwrap().push(name.to_string());
+        self.remote_ops.lock().unwrap().push(format!("add {name}"));
+        Ok(())
+    }
+    fn remove_remote(&self, _path: &Path, name: &str) -> Result<(), GitError> {
+        let mut remotes = self.canned_remotes.lock().unwrap();
+        if !remotes.iter().any(|r| r == name) {
+            return Err(GitError::RemoteNotFound(name.to_string()));
+        }
+        remotes.retain(|r| r != name);
+        drop(remotes);
+        self.remote_ops
+            .lock()
+            .unwrap()
+            .push(format!("remove {name}"));
+        Ok(())
+    }
+    fn rename_remote(&self, _path: &Path, old: &str, new: &str) -> Result<(), GitError> {
+        let new = new.trim();
+        if new.is_empty() {
+            return Err(GitError::InvalidRemoteName);
+        }
+        let mut remotes = self.canned_remotes.lock().unwrap();
+        if !remotes.iter().any(|r| r == old) {
+            return Err(GitError::RemoteNotFound(old.to_string()));
+        }
+        if old != new && remotes.iter().any(|r| r == new) {
+            return Err(GitError::RemoteAlreadyExists(new.to_string()));
+        }
+        for r in remotes.iter_mut() {
+            if r == old {
+                *r = new.to_string();
+            }
+        }
+        drop(remotes);
+        self.remote_ops
+            .lock()
+            .unwrap()
+            .push(format!("rename {old} {new}"));
+        Ok(())
     }
     fn sync_commits(&self, _path: &Path) -> Result<SyncCommits, GitError> {
         Ok(self.canned_sync_commits.lock().unwrap().clone())

@@ -1,7 +1,7 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     DiffLine, DiffLineKind, FileChange, FileDiff, FileEntry, FileState, Hunk, ImageRef, RefKind,
-    ReflogEntry, RepoState, ResetMode, Signature, SyncCommits, WorkingTreeStatus,
+    ReflogEntry, RemoteInfo, RepoState, ResetMode, Signature, SyncCommits, WorkingTreeStatus,
 };
 use git_core::{GitBackend, GitError};
 use std::collections::HashSet;
@@ -992,6 +992,90 @@ impl GitBackend for Git2Backend {
         Ok(arr.iter().flatten().map(|s| s.to_string()).collect())
     }
 
+    fn remote_list(&self, path: &Path) -> Result<Vec<RemoteInfo>, GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        let arr = repo
+            .remotes()
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        let mut out: Vec<RemoteInfo> = arr
+            .iter()
+            .flatten()
+            .map(|name| {
+                // url() 返回 fetch URL;未配 URL(罕见)→ 空串。
+                let url = repo
+                    .find_remote(name)
+                    .ok()
+                    .and_then(|r| r.url().map(|u| u.to_string()))
+                    .unwrap_or_default();
+                RemoteInfo {
+                    name: name.to_string(),
+                    url,
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
+    }
+
+    fn add_remote(&self, path: &Path, name: &str, url: &str) -> Result<(), GitError> {
+        let name = name.trim();
+        let url = url.trim();
+        if name.is_empty() || url.is_empty() {
+            return Err(GitError::InvalidRemoteName);
+        }
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        // 已存在同名 → 精确错误(否则 git2 报通用 Exists)。
+        if repo.find_remote(name).is_ok() {
+            return Err(GitError::RemoteAlreadyExists(name.to_string()));
+        }
+        repo.remote(name, url).map_err(|e| {
+            // 名字非法(含空格/特殊字符)git2 会报错。
+            if e.class() == git2::ErrorClass::Config || e.code() == git2::ErrorCode::InvalidSpec {
+                GitError::InvalidRemoteName
+            } else {
+                GitError::Backend(e.to_string())
+            }
+        })?;
+        Ok(())
+    }
+
+    fn remove_remote(&self, path: &Path, name: &str) -> Result<(), GitError> {
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        if repo.find_remote(name).is_err() {
+            return Err(GitError::RemoteNotFound(name.to_string()));
+        }
+        repo.remote_delete(name)
+            .map_err(|e| GitError::Backend(e.to_string()))?;
+        Ok(())
+    }
+
+    fn rename_remote(&self, path: &Path, old: &str, new: &str) -> Result<(), GitError> {
+        let new = new.trim();
+        if new.is_empty() {
+            return Err(GitError::InvalidRemoteName);
+        }
+        let repo =
+            git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        if repo.find_remote(old).is_err() {
+            return Err(GitError::RemoteNotFound(old.to_string()));
+        }
+        if old != new && repo.find_remote(new).is_ok() {
+            return Err(GitError::RemoteAlreadyExists(new.to_string()));
+        }
+        // remote_rename 返回「无法自动改写的 refspec 列表」(非致命);忽略即可。
+        repo.remote_rename(old, new).map_err(|e| {
+            if e.code() == git2::ErrorCode::InvalidSpec {
+                GitError::InvalidRemoteName
+            } else {
+                GitError::Backend(e.to_string())
+            }
+        })?;
+        Ok(())
+    }
+
     fn sync_commits(&self, path: &Path) -> Result<SyncCommits, GitError> {
         let repo =
             git2::Repository::open(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
@@ -1466,6 +1550,61 @@ mod tests {
 
     fn write(dir: &Path, name: &str, contents: &str) {
         std::fs::write(dir.join(name), contents).unwrap();
+    }
+
+    #[test]
+    fn remote_management_add_rename_remove() {
+        let (_tmp, repo) = init_repo();
+        let backend = Git2Backend;
+
+        // 新增
+        backend
+            .add_remote(&repo, "origin", "https://example.com/o.git")
+            .unwrap();
+        backend
+            .add_remote(&repo, "upstream", "https://example.com/u.git")
+            .unwrap();
+        let list = backend.remote_list(&repo).unwrap();
+        assert_eq!(list.len(), 2);
+        // 按名升序
+        assert_eq!(list[0].name, "origin");
+        assert_eq!(list[0].url, "https://example.com/o.git");
+        assert_eq!(list[1].name, "upstream");
+
+        // 同名再加 → RemoteAlreadyExists
+        assert!(matches!(
+            backend
+                .add_remote(&repo, "origin", "https://example.com/x.git")
+                .unwrap_err(),
+            GitError::RemoteAlreadyExists(_)
+        ));
+        // 空名/URL → InvalidRemoteName
+        assert!(matches!(
+            backend.add_remote(&repo, "  ", "u").unwrap_err(),
+            GitError::InvalidRemoteName
+        ));
+
+        // 重命名
+        backend.rename_remote(&repo, "upstream", "up2").unwrap();
+        assert!(backend.remotes(&repo).unwrap().contains(&"up2".to_string()));
+        // 旧名不存在 → RemoteNotFound
+        assert!(matches!(
+            backend.rename_remote(&repo, "nope", "x").unwrap_err(),
+            GitError::RemoteNotFound(_)
+        ));
+        // 新名占用 → RemoteAlreadyExists
+        assert!(matches!(
+            backend.rename_remote(&repo, "origin", "up2").unwrap_err(),
+            GitError::RemoteAlreadyExists(_)
+        ));
+
+        // 删除
+        backend.remove_remote(&repo, "origin").unwrap();
+        assert!(matches!(
+            backend.remove_remote(&repo, "origin").unwrap_err(),
+            GitError::RemoteNotFound(_)
+        ));
+        assert_eq!(backend.remotes(&repo).unwrap(), vec!["up2"]);
     }
 
     #[test]

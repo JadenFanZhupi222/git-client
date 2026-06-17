@@ -4,8 +4,9 @@ use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组�
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
     FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError, LineHistoryEntryDto,
-    OpLogDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto, SignatureInfoDto, StashDto,
-    StatusDto, SubmoduleInfoDto, UndoStateDto, UndoStepDto, WorktreeInfoDto,
+    OpLogDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto, RemoteInfoDto,
+    SignatureInfoDto, StashDto, StatusDto, SubmoduleInfoDto, UndoStateDto, UndoStepDto,
+    WorktreeInfoDto,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -43,6 +44,9 @@ fn to_ipc(e: git_core::GitError) -> IpcError {
         AuthFailed => ("AUTH_FAILED", true),
         NetworkError => ("NETWORK_ERROR", true),
         NoRemote => ("NO_REMOTE", false),
+        RemoteAlreadyExists(_) => ("REMOTE_EXISTS", false),
+        RemoteNotFound(_) => ("REMOTE_NOT_FOUND", false),
+        InvalidRemoteName => ("INVALID_REMOTE_NAME", false),
         NoUpstream => ("NO_UPSTREAM", false),
         PushRejected => ("PUSH_REJECTED", true),
         MergeConflict { .. } => ("MERGE_CONFLICT", true),
@@ -505,6 +509,59 @@ async fn set_upstream(
 ) -> Result<(), IpcError> {
     let ctx = registry.context(&PathBuf::from(repo_path));
     tokio::task::spawn_blocking(move || ctx.set_upstream(&upstream))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn remote_list(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<Vec<RemoteInfoDto>, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.remote_list())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn add_remote(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    name: String,
+    url: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.add_remote(&name, &url))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn remove_remote(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    name: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.remove_remote(&name))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+#[tauri::command]
+async fn rename_remote(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    old: String,
+    new: String,
+) -> Result<(), IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.rename_remote(&old, &new))
         .await
         .map_err(join_panic)?
         .map_err(to_ipc)
@@ -1092,6 +1149,10 @@ pub fn run() {
             get_remotes,
             list_refs,
             set_upstream,
+            remote_list,
+            add_remote,
+            remove_remote,
+            rename_remote,
             checkout_branch,
             create_branch,
             delete_branch,

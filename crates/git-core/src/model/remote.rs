@@ -1,5 +1,13 @@
 use serde::{Deserialize, Serialize};
 
+/// 一个远程的展示信息:名字 + fetch URL。供「管理远程」面板展示。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteInfo {
+    pub name: String,
+    /// fetch URL;未配置 URL(罕见)时为空串。
+    pub url: String,
+}
+
 /// 一次 fetch 的结果(MVP:不解析结构化更新明细)。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FetchOutcome {

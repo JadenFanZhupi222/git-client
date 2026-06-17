@@ -7,7 +7,7 @@ import { useEffect } from "react";
 import {
   getStatus, getWorkingDiff, getCommitGraph, searchCommits, getReflog, getCommitFiles, getCommitFileDiff,
   getCommitSignature, listSubmodules, listWorktrees, sparseCheckoutPatterns, compareFiles, compareFileDiff,
-  getFileHistory, getLineHistory, pickaxe, getCurrentBranch, getAheadBehind, getRemotes, listBranches, listRefs, stashList,
+  getFileHistory, getLineHistory, pickaxe, getCurrentBranch, getAheadBehind, getRemotes, remoteList, listBranches, listRefs, stashList,
   getRepoState, readWorkingFile, blame, conflictSides, undoState, opLog,
   watchRepo, onRepoChanged,
 } from "../ipc";
@@ -26,6 +26,7 @@ export const qk = {
   currentBranch: (repo: string) => ["currentBranch", repo] as const,
   aheadBehind: (repo: string) => ["aheadBehind", repo] as const,
   remotes: (repo: string) => ["remotes", repo] as const,
+  remoteList: (repo: string) => ["remoteList", repo] as const,
   branches: (repo: string) => ["branches", repo] as const,
   stashes: (repo: string) => ["stashes", repo] as const,
   repoState: (repo: string) => ["repoState", repo] as const,
@@ -191,6 +192,11 @@ export function useAheadBehind(repo: string) {
 
 export function useRemotes(repo: string) {
   return useQuery({ queryKey: qk.remotes(repo), queryFn: () => getRemotes(repo), enabled: !!repo });
+}
+
+/** 远程及其 URL(供「管理远程」面板)。enabled 控制按需拉(面板打开才拉)。 */
+export function useRemoteList(repo: string, enabled: boolean) {
+  return useQuery({ queryKey: qk.remoteList(repo), queryFn: () => remoteList(repo), enabled: enabled && !!repo });
 }
 
 export function useBranches(repo: string, enabled: boolean) {

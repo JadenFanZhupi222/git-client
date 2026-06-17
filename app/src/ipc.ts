@@ -31,6 +31,7 @@ export type {
   PushResultDto,
   RefDto,
   ReflogEntryDto,
+  RemoteInfoDto,
   SegDto,
   SignatureInfoDto,
   StashDto,
@@ -62,6 +63,7 @@ import type {
   GraphRowDto,
   RefDto,
   ReflogEntryDto,
+  RemoteInfoDto,
   UndoStateDto,
   UndoStepDto,
   OpLogDto,
@@ -182,6 +184,26 @@ export async function getRemotes(repoPath: string): Promise<string[]> {
 /** 列出所有引用(本地分支/远程跟踪/标签/HEAD)。 */
 export async function listRefs(repoPath: string): Promise<RefDto[]> {
   return await invoke<RefDto[]>("list_refs", { repoPath });
+}
+
+/** 列出远程及其 fetch URL(供「管理远程」面板)。 */
+export async function remoteList(repoPath: string): Promise<RemoteInfoDto[]> {
+  return await invoke<RemoteInfoDto[]>("remote_list", { repoPath });
+}
+
+/** 新增远程。同名抛 REMOTE_EXISTS;名/URL 空抛 INVALID_REMOTE_NAME。 */
+export async function addRemote(repoPath: string, name: string, url: string): Promise<void> {
+  await invoke("add_remote", { repoPath, name, url });
+}
+
+/** 删除远程(连同其远程跟踪引用)。不存在抛 REMOTE_NOT_FOUND。 */
+export async function removeRemote(repoPath: string, name: string): Promise<void> {
+  await invoke("remove_remote", { repoPath, name });
+}
+
+/** 重命名远程。旧名不存在抛 REMOTE_NOT_FOUND;新名占用抛 REMOTE_EXISTS。 */
+export async function renameRemote(repoPath: string, oldName: string, newName: string): Promise<void> {
+  await invoke("rename_remote", { repoPath, old: oldName, new: newName });
 }
 
 /** 把当前分支上游设为 upstream(形如 "origin/main")。 */
