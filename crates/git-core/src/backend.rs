@@ -2,8 +2,8 @@ use crate::error::GitError;
 use crate::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     FetchOutcome, FileChange, FileDiff, LineHistoryEntry, PullOutcome, PushOutcome, RebaseStep,
-    ReflogEntry, RepoState, ResetMode, SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits,
-    WorkingTreeStatus, WorktreeInfo,
+    ReflogEntry, RemoteInfo, RepoState, ResetMode, SignatureInfo, StashEntry, SubmoduleInfo,
+    SyncCommits, WorkingTreeStatus, WorktreeInfo,
 };
 use std::path::Path;
 
@@ -286,6 +286,28 @@ pub trait GitBackend: Send + Sync {
 
     /// 列出远程名(如 ["origin", "upstream"]),按 git 返回顺序。
     fn remotes(&self, repo: &Path) -> Result<Vec<String>, GitError>;
+
+    /// 列出远程及其 fetch URL(供「管理远程」面板)。按名字升序。默认 Unsupported。
+    fn remote_list(&self, _repo: &Path) -> Result<Vec<RemoteInfo>, GitError> {
+        Err(GitError::Unsupported)
+    }
+
+    /// 新增远程。同名已存在 → RemoteAlreadyExists;名/URL 空 → InvalidRemoteName。
+    /// 默认 Unsupported。
+    fn add_remote(&self, _repo: &Path, _name: &str, _url: &str) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+
+    /// 删除远程(连同其远程跟踪引用)。不存在 → RemoteNotFound。默认 Unsupported。
+    fn remove_remote(&self, _repo: &Path, _name: &str) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
+
+    /// 重命名远程(连同其远程跟踪引用)。旧名不存在 → RemoteNotFound;
+    /// 新名已存在 → RemoteAlreadyExists。默认 Unsupported。
+    fn rename_remote(&self, _repo: &Path, _old: &str, _new: &str) -> Result<(), GitError> {
+        Err(GitError::Unsupported)
+    }
 
     /// 把当前分支的上游设为 `upstream`(形如 "origin/main");该远程跟踪分支须已存在。
     fn set_upstream(&self, repo: &Path, upstream: &str) -> Result<(), GitError>;

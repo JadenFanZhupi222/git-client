@@ -24,6 +24,7 @@ export type { PullResultDto } from "./PullResultDto";
 export type { PushResultDto } from "./PushResultDto";
 export type { RefDto } from "./RefDto";
 export type { ReflogEntryDto } from "./ReflogEntryDto";
+export type { RemoteInfoDto } from "./RemoteInfoDto";
 export type { SegDto } from "./SegDto";
 export type { SignatureInfoDto } from "./SignatureInfoDto";
 export type { StashDto } from "./StashDto";

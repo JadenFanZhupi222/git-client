@@ -2,8 +2,8 @@ use crate::cli_backend::CliBackend;
 use crate::git2_backend::Git2Backend;
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, LineHistoryEntry, PullOutcome, PushOutcome, RebaseStep, ReflogEntry, RepoState,
-    ResetMode, SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus,
+    FileDiff, LineHistoryEntry, PullOutcome, PushOutcome, RebaseStep, ReflogEntry, RemoteInfo,
+    RepoState, ResetMode, SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus,
     WorktreeInfo,
 };
 use git_core::{GitBackend, GitError};
@@ -208,6 +208,18 @@ impl GitBackend for CompositeBackend {
     }
     fn remotes(&self, repo: &Path) -> Result<Vec<String>, GitError> {
         self.git2.remotes(repo)
+    }
+    fn remote_list(&self, repo: &Path) -> Result<Vec<RemoteInfo>, GitError> {
+        self.git2.remote_list(repo)
+    }
+    fn add_remote(&self, repo: &Path, name: &str, url: &str) -> Result<(), GitError> {
+        self.git2.add_remote(repo, name, url)
+    }
+    fn remove_remote(&self, repo: &Path, name: &str) -> Result<(), GitError> {
+        self.git2.remove_remote(repo, name)
+    }
+    fn rename_remote(&self, repo: &Path, old: &str, new: &str) -> Result<(), GitError> {
+        self.git2.rename_remote(repo, old, new)
     }
     fn sync_commits(&self, repo: &Path) -> Result<SyncCommits, GitError> {
         self.git2.sync_commits(repo)

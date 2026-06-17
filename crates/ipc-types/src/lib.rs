@@ -5,8 +5,9 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk,
-    ImageRef, LineHistoryEntry, PullOutcome, PushOutcome, RefKind, ReflogEntry, Seg, SignatureInfo,
-    SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus, WorktreeInfo,
+    ImageRef, LineHistoryEntry, PullOutcome, PushOutcome, RefKind, ReflogEntry, RemoteInfo, Seg,
+    SignatureInfo, SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus,
+    WorktreeInfo,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -391,6 +392,23 @@ impl From<BranchDeleteImpact> for BranchDeleteImpactDto {
         BranchDeleteImpactDto {
             unmerged_commits: i.unmerged_commits,
             sample_summaries: i.sample_summaries,
+        }
+    }
+}
+
+/// 一个远程的展示信息 DTO(名字 + fetch URL)。供「管理远程」面板。
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct RemoteInfoDto {
+    pub name: String,
+    pub url: String,
+}
+
+impl From<RemoteInfo> for RemoteInfoDto {
+    fn from(r: RemoteInfo) -> Self {
+        RemoteInfoDto {
+            name: r.name,
+            url: r.url,
         }
     }
 }

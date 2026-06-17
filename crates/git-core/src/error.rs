@@ -55,6 +55,15 @@ pub enum GitError {
     #[error("没有配置远程仓库")]
     NoRemote,
 
+    #[error("远程已存在: {0}")]
+    RemoteAlreadyExists(String),
+
+    #[error("远程不存在: {0}")]
+    RemoteNotFound(String),
+
+    #[error("远程名无效")]
+    InvalidRemoteName,
+
     #[error("当前分支没有设置上游分支(upstream),无法 pull")]
     NoUpstream,
 

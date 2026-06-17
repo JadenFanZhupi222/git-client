@@ -11,7 +11,8 @@ import { WorktreesView } from "./views/WorktreesView";
 import { SparseCheckoutView } from "./views/SparseCheckoutView";
 import { useQueryClient } from "@tanstack/react-query";
 import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, checkoutBranch, type IpcError } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon, MoreIcon, DropletIcon } from "./components/icons";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon, MoreIcon, DropletIcon, CloudIcon } from "./components/icons";
+import { RemoteManager } from "./components/RemoteManager";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
 import { StashMenu } from "./components/StashMenu";
@@ -53,6 +54,7 @@ export default function App() {
   const [opLogOpen, setOpLogOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [moreMenu, setMoreMenu] = useState(false);
+  const [remoteMgrOpen, setRemoteMgrOpen] = useState(false);
   const toast = useToast();
   const qc = useQueryClient();
 
@@ -300,6 +302,7 @@ export default function App() {
     { id: "remote:pull-merge", title: "Pull · 合并", group: "远程", keywords: "拉取 合并 merge pull", disabled: !repo || busy, run: () => doPull(false) },
     { id: "remote:pull-rebase", title: "Pull · 变基", group: "远程", keywords: "拉取 变基 rebase pull", disabled: !repo || busy, run: () => doPull(true) },
     { id: "remote:push", title: "Push", subtitle: "推送当前分支", group: "远程", keywords: "推送 push", disabled: !repo || busy, run: doPush },
+    { id: "remote:manage", title: "管理远程", subtitle: "添加 / 重命名 / 删除远程", group: "远程", keywords: "远程 remote 管理 添加 删除 重命名 add remove rename", disabled: !repo, run: () => setRemoteMgrOpen(true) },
   );
   commands.push(
     { id: "undo", title: canUndo ? `撤销：${canUndo.label}` : "撤销", group: "撤销", keywords: "undo 撤销 回退", disabled: !repo || busy || !canUndo, run: () => doNav("undo") },
@@ -507,6 +510,11 @@ export default function App() {
                       操作日志
                     </MoreItem>
                   )}
+                  {repo && (
+                    <MoreItem icon={<CloudIcon width={14} height={14} />} onClick={() => { setMoreMenu(false); setRemoteMgrOpen(true); }}>
+                      管理远程
+                    </MoreItem>
+                  )}
                   <MoreItem
                     icon={theme === "dark" ? <SunIcon width={14} height={14} /> : <MoonIcon width={14} height={14} />}
                     onClick={() => { toggleTheme(); setMoreMenu(false); }}
@@ -610,6 +618,10 @@ export default function App() {
             invalidateWorktree(qc, repo);
           }}
         />
+      )}
+
+      {repo && remoteMgrOpen && (
+        <RemoteManager repo={repo} onClose={() => setRemoteMgrOpen(false)} />
       )}
     </div>
   );

@@ -23,7 +23,7 @@ pub use diff::{
     DiffLine, DiffLineKind, FileChange, FileDiff, Hunk, ImageRef, LineHistoryEntry, Seg,
 };
 pub use reflog::ReflogEntry;
-pub use remote::{FetchOutcome, PullOutcome, PushOutcome};
+pub use remote::{FetchOutcome, PullOutcome, PushOutcome, RemoteInfo};
 pub use repo_state::RepoState;
 pub use signature::{SignatureInfo, SignatureStatus};
 pub use stash::StashEntry;
