@@ -2,7 +2,8 @@
 
 > 这份文件在 git 仓库里,会随 push/pull 跟到新机器。记录当前进度、铁律、下一步。
 > 配套必读:`CLAUDE.md`(铁律)、`ARCHITECTURE.md`(架构)、`README.md`(启动)。
-> 最近更新:2026-06-13(M6 · Polish & Harden 全部完成:M6.1 并排虚拟化/M6.2 图片去 base64+对比/M6.3 CLI 读缓存/M6.4 ts-rs 自动类型/M6.6 面板 a11y)。
+> 最近更新:2026-06-17(**Tier 0 硬门槛补全**:远程管理 add/remove/rename + 独立 merge + clone/init 启动屏正门;均已合 main 待 push)。
+> 前次:2026-06-13(M6 · Polish & Harden 全部完成:M6.1 并排虚拟化/M6.2 图片去 base64+对比/M6.3 CLI 读缓存/M6.4 ts-rs 自动类型/M6.6 面板 a11y)。
 
 ## 当前状态
 - 阶段 0/1/2/3 全部完成,**阶段 4 核心(交互式 rebase)已落地**。
@@ -125,11 +126,29 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
     WorkingTree 不动(工作区改动不改提交历史)。FakeBackend 补这三方法 + 调用计数,
     app-service 加 3 个命中/失效测试。**零行为变化**;cargo test/clippy/fmt 全绿。
     取消(子进程可杀)按 plan「按需」顺延——前端已 keepPreviousData,缓存命中即跳过重跑。
+- ✅ **Tier 0 硬门槛补全(2026-06-17,均已合 main 待 push,见 `2026-06-17-path-to-number-one.md`)**:
+  三刀竖切补齐「任何排得上号的客户端都默认有」的洞:
+  - **远程管理 add/remove/rename**:git2 实现(remote/remote_delete/remote_rename)+ `RemoteInfo{name,url}`
+    模型 / DTO;错误 `RemoteAlreadyExists`/`RemoteNotFound`/`InvalidRemoteName`。入口 = 「更多」菜单
+    + 命令面板「管理远程」→ `RemoteManager` 模态(列表/改名/删除二次确认/新增)。`useRemoteList` 按需拉。
+  - **独立 merge**:`merge_branch` 走 **CliBackend**(`git merge --no-edit`,跑 hooks+签名);`MergeOutcome{summary,fast_forward}`;
+    冲突 → MergeConflict 落 merging 态复用冲突 UI。入口 = BranchSwitcher 每个非当前分支悬浮「合并到当前分支」(MergeIcon);
+    记入撤销时间线(Restore)。
+  - **clone + init**(最大的洞,onboarding 正门):**不走 RepoContext**(仓库刚诞生)——命令从
+    `RepoRegistry.backend_arc()` 取后端、spawn_blocking 里建临时 RepoService。`git init`(尊重 init.defaultBranch)
+    / `git clone` 均走 CLI;纯函数 `derive_repo_name`(app-service)推导目录名,克隆进 parent/<名>、返回仓库根路径。
+    错误 `DestinationNotEmpty`/`InvalidUrl`。入口 = 启动屏 EmptyState「克隆仓库/新建仓库」+ `CloneDialog` 模态
+    + 命令面板;成功后自动打开新仓库。⚠️ **trait 方法命名 `clone_repo` 而非 `clone`** —— 否则与
+    `Clone::clone` 在 `Arc<dyn GitBackend>` 上撞名,所有 `.clone(url,dst)` 调用点会误解析成 Arc 的 0 参 clone。
+  - ⚠️ 真机视觉验收待做:远程管理面板、merge 冲突跳转、clone 进度/认证失败提示、init 后空仓库视图。
+  - **Tier 0 仍剩**:diff 语法高亮(CodeMirror lang-*)、跨平台 CI/签名(属 infra)。下一刀候选见
+    `2026-06-17-path-to-number-one.md` 的「5 件事」:② 语法高亮 ③ i18n 骨架 ④ AI 提交信息(BYOK+Haiku,
+    用户已认可方向但本轮暂不做)⑤ M7 GitHub PR。
 - **下一里程碑:M7 · 协作/PR**(原 roadmap M6,见 `2026-06-08-world-class-roadmap.md`)。
 - ⚠️ **真机视觉/交互验收欠账**(自动门 test/clippy/fmt/tsc/build 全过):M5 各刀、图片 diff、
   **M6.1**(大 diff 虚拟化滚动/并排联动/折叠)、**M6.2**(图片字节流加载/滑块/洋葱皮)、
   **M6.6**(面板键盘)都需真机过一遍。M6.3/M6.4 是后端/类型纯逻辑,无需真机视觉验收。
-  push 节奏:M5+M6.1 已 push;**M6.2/M6.3/M6.4/M6.6 已合 main 待 push**(等用户发话)。
+  push 节奏:M5+M6.1 已 push;**M6.2/M6.3/M6.4/M6.6 + Tier 0 三刀已合 main 待 push**(等用户发话)。
 - 零散续做:worktree 切换/新建(M4.5 只做展示);log 里 ctrl-多选两提交→比较。
 - 工程收尾:真机验收交互式 rebase(尤其中途冲突的继续/中止、大仓库 cp/exec 路径);CI 加 `fmt --check` + `clippy -D warnings` 卡口(属 infra,之前没动 .github);push 到 origin。
 - 已知小项:composite 40+ 透传样板(Rust 固有税,可选 delegate crate)。
