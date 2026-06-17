@@ -1,8 +1,8 @@
 use git_core::GitError;
 use git_core::model::{
-    Commit, DiffLine, DiffLineKind, FetchOutcome, FileDiff, Hunk, LineHistoryEntry, PullOutcome,
-    PushOutcome, RebaseAction, RebaseStep, RepoState, Signature, SignatureInfo, SignatureStatus,
-    StashEntry, SubmoduleInfo, SubmoduleStatus, WorktreeInfo,
+    Commit, DiffLine, DiffLineKind, FetchOutcome, FileDiff, Hunk, LineHistoryEntry, MergeOutcome,
+    PullOutcome, PushOutcome, RebaseAction, RebaseStep, RepoState, Signature, SignatureInfo,
+    SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorktreeInfo,
 };
 use std::collections::HashMap;
 use std::io::Write;
@@ -775,6 +775,48 @@ impl CliBackend {
         self.run_op(repo, &["revert", "--no-edit", commit_id])
     }
 
+    /// 把某分支合并进当前分支(`git merge --no-edit <name>`)。
+    /// 走 CLI 才能跑 hooks + 按配置签名合并提交。冲突 → MergeConflict(进入 merging 中)。
+    pub fn merge_branch(&self, repo: &Path, name: &str) -> Result<MergeOutcome, GitError> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["merge", "--no-edit", name])
+            // 冲突场景 git 可能打开编辑器写合并信息;兜底关掉。
+            .env("GIT_EDITOR", "true")
+            .output()
+            .map_err(spawn_err)?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        if output.status.success() {
+            let summary = stdout.trim();
+            let lower = summary.to_lowercase();
+            return Ok(MergeOutcome {
+                fast_forward: lower.contains("fast-forward"),
+                summary: if summary.is_empty() {
+                    stderr.trim().to_string()
+                } else {
+                    summary.to_string()
+                },
+            });
+        }
+
+        let combined = format!("{stdout}\n{stderr}").to_lowercase();
+        let has = |s: &str| combined.contains(s);
+        let err = if has("conflict") || has("automatic merge failed") {
+            GitError::MergeConflict {
+                files: count_conflicts(&stdout),
+            }
+        } else if has("not something we can merge") || has("- not something") {
+            // 给的名字不是有效分支/commit-ish。
+            GitError::BranchNotFound(name.to_string())
+        } else {
+            GitError::Backend(stderr.trim().to_string())
+        };
+        Err(err)
+    }
+
     /// 提交。走 `git commit -m`,**原生跑 pre-commit/commit-msg hooks、并按 commit.gpgsign 签名**
     /// ——这正是相比 git2 直接写提交所修正的正确性硬伤。失败按输出归类。
     pub fn commit(&self, repo: &Path, message: &str) -> Result<String, GitError> {
@@ -1303,6 +1345,59 @@ mod tests {
         git(repo.path(), &["config", "user.name", "t"]);
         git(repo.path(), &["config", "commit.gpgsign", "false"]);
         repo
+    }
+
+    #[test]
+    fn merge_fast_forward_succeeds() {
+        let repo = init_repo_for_commit();
+        let p = repo.path();
+        std::fs::write(p.join("a.txt"), "1\n").unwrap();
+        git(p, &["add", "."]);
+        git(p, &["commit", "-m", "c1"]);
+        // feature 领先 main 一个提交;main 不动 → 合并应快进。
+        git(p, &["checkout", "-b", "feature"]);
+        std::fs::write(p.join("a.txt"), "1\n2\n").unwrap();
+        git(p, &["commit", "-am", "c2"]);
+        git(p, &["checkout", "main"]);
+
+        let out = CliBackend.merge_branch(p, "feature").unwrap();
+        assert!(out.fast_forward, "应为快进:{}", out.summary);
+        // main 现已含 feature 的提交
+        assert_eq!(rev_parse(p, "main"), rev_parse(p, "feature"));
+    }
+
+    #[test]
+    fn merge_conflict_returns_merge_conflict() {
+        let repo = init_repo_for_commit();
+        let p = repo.path();
+        std::fs::write(p.join("a.txt"), "base\n").unwrap();
+        git(p, &["add", "."]);
+        git(p, &["commit", "-m", "c1"]);
+        // 两分支改同一行 → 必冲突。
+        git(p, &["checkout", "-b", "feature"]);
+        std::fs::write(p.join("a.txt"), "feature\n").unwrap();
+        git(p, &["commit", "-am", "f"]);
+        git(p, &["checkout", "main"]);
+        std::fs::write(p.join("a.txt"), "main\n").unwrap();
+        git(p, &["commit", "-am", "m"]);
+
+        let err = CliBackend.merge_branch(p, "feature").unwrap_err();
+        assert!(
+            matches!(err, GitError::MergeConflict { files } if files >= 1),
+            "应为冲突,实际:{err:?}"
+        );
+    }
+
+    #[test]
+    fn merge_unknown_branch_errors() {
+        let repo = init_repo_for_commit();
+        let p = repo.path();
+        std::fs::write(p.join("a.txt"), "x\n").unwrap();
+        git(p, &["add", "."]);
+        git(p, &["commit", "-m", "c1"]);
+
+        let err = CliBackend.merge_branch(p, "nope").unwrap_err();
+        assert!(matches!(err, GitError::BranchNotFound(_)), "实际:{err:?}");
     }
 
     #[test]

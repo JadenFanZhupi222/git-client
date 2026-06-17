@@ -5,14 +5,16 @@ import {
   createBranch,
   deleteBranch,
   branchDeleteImpact,
+  mergeBranch,
   type BranchDeleteImpactDto,
   type IpcError,
 } from "../ipc";
-import { useBranches, invalidateHistory } from "../lib/queries";
+import { useBranches, invalidateHistory, invalidateWorktree } from "../lib/queries";
 import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { BranchIcon, CheckIcon, PlusIcon, TrashIcon } from "./icons";
+import { useToast } from "./Toast";
+import { BranchIcon, CheckIcon, PlusIcon, TrashIcon, MergeIcon } from "./icons";
 
 /**
  * 底栏分支切换器(VSCode 状态栏式):点当前分支名 → 向上弹出本地分支列表。
@@ -31,6 +33,7 @@ export function BranchSwitcher({
   direction?: "up" | "down";
 }) {
   const qc = useQueryClient();
+  const toast = useToast();
   const [open, setOpen] = useState(false);
   const branchesQ = useBranches(repo, open);
   const branches = branchesQ.data ?? [];
@@ -142,6 +145,38 @@ export function BranchSwitcher({
     }
   }
 
+  // 把某分支合并进当前分支:成功 toast 摘要;冲突时失效并提示去「更改」页解决;
+  // 其它错误内联显示。合并改工作区 + 历史,两域都失效。
+  async function doMerge(name: string) {
+    setBusy(name);
+    setError(null);
+    try {
+      const res = await mergeBranch(repo, name);
+      invalidate();
+      invalidateWorktree(qc, repo);
+      toast({
+        kind: "success",
+        title: `已合并 ${name} 到当前分支`,
+        detail: res.fast_forward ? "快进合并" : res.summary?.split("\n")[0],
+      });
+      close();
+    } catch (e) {
+      const err = e as IpcError;
+      if (err.code === "MERGE_CONFLICT") {
+        // 进入 merging 状态:失效让冲突横幅/状态显形,引导去「更改」页解决。
+        invalidate();
+        invalidateWorktree(qc, repo);
+        qc.invalidateQueries({ queryKey: ["repoState", repo] });
+        toast({ kind: "error", title: "合并有冲突", detail: "请到「更改」页解决冲突后提交" });
+        close();
+      } else {
+        setError(err.message ?? String(e));
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const shown = branches.filter((b) => b.name.toLowerCase().includes(filter.toLowerCase()));
 
   return (
@@ -199,7 +234,18 @@ export function BranchSwitcher({
                         <span className="truncate font-mono">{b.name}</span>
                       </button>
 
-                      {/* 当前分支不可删;点删除 → 查影响 → 统一确认弹窗 */}
+                      {/* 非当前分支:合并进当前分支 + 删除(查影响→确认),悬浮显现 */}
+                      {!current && (
+                        <IconButton
+                          aria-label={`合并 ${b.name} 到当前分支`}
+                          onClick={() => doMerge(b.name)}
+                          disabled={busy !== null || checkingDelete !== null}
+                          title={`合并 ${b.name} 到当前分支${branch ? `(${branch})` : ""}`}
+                          className="shrink-0 p-1 opacity-0 transition-opacity group-hover:opacity-100"
+                        >
+                          <MergeIcon width={12} height={12} />
+                        </IconButton>
+                      )}
                       {!current && (
                         <IconButton
                           aria-label={`删除分支 ${b.name}`}

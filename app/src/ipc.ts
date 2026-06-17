@@ -25,6 +25,7 @@ export type {
   ImageRefDto,
   IpcError,
   LineHistoryEntryDto,
+  MergeResultDto,
   OpLogDto,
   OpLogEntryDto,
   PullResultDto,
@@ -54,6 +55,7 @@ import type {
   AheadBehindDto,
   BranchDeleteImpactDto,
   FetchResultDto,
+  MergeResultDto,
   PullResultDto,
   PushResultDto,
   BlameLineDto,
@@ -229,6 +231,11 @@ export async function deleteBranch(repoPath: string, name: string): Promise<void
 /** 删某分支前的影响预览(会丢多少提交)。供二次确认。 */
 export async function branchDeleteImpact(repoPath: string, name: string): Promise<BranchDeleteImpactDto> {
   return await invoke<BranchDeleteImpactDto>("branch_delete_impact", { repoPath, name });
+}
+
+/** 把某分支合并进当前分支。冲突抛 MERGE_CONFLICT(进入 merging 中,去更改页解决)。 */
+export async function mergeBranch(repoPath: string, name: string): Promise<MergeResultDto> {
+  return await invoke<MergeResultDto>("merge_branch", { repoPath, name });
 }
 
 // ── 远程(阶段 2d-1) ──

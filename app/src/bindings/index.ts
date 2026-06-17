@@ -18,6 +18,7 @@ export type { HunkDto } from "./HunkDto";
 export type { ImageRefDto } from "./ImageRefDto";
 export type { IpcError } from "./IpcError";
 export type { LineHistoryEntryDto } from "./LineHistoryEntryDto";
+export type { MergeResultDto } from "./MergeResultDto";
 export type { OpLogDto } from "./OpLogDto";
 export type { OpLogEntryDto } from "./OpLogEntryDto";
 export type { PullResultDto } from "./PullResultDto";

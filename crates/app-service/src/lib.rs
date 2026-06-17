@@ -5,9 +5,9 @@
 use git_core::{GitBackend, GitError};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
-    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, LineHistoryEntryDto, PullResultDto,
-    PushResultDto, RefDto, ReflogEntryDto, RemoteInfoDto, SignatureInfoDto, StashDto, StatusDto,
-    SubmoduleInfoDto, WorktreeInfoDto,
+    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, LineHistoryEntryDto, MergeResultDto,
+    PullResultDto, PushResultDto, RefDto, ReflogEntryDto, RemoteInfoDto, SignatureInfoDto,
+    StashDto, StatusDto, SubmoduleInfoDto, WorktreeInfoDto,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -595,6 +595,16 @@ impl RepoService {
         self.backend.delete_branch(repo_path, name)
     }
 
+    /// 用例:把某分支合并进当前分支。空名在本层拦下。
+    pub fn merge_branch(&self, repo_path: &Path, name: &str) -> Result<MergeResultDto, GitError> {
+        if name.trim().is_empty() {
+            return Err(GitError::InvalidBranchName);
+        }
+        Ok(MergeResultDto::from(
+            self.backend.merge_branch(repo_path, name.trim())?,
+        ))
+    }
+
     /// 用例:删某分支的影响预览(会丢多少提交)。供删除前二次确认。
     pub fn branch_delete_impact(
         &self,
@@ -1128,6 +1138,28 @@ mod tests {
         let list = svc.remote_list(r).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].name, "up2");
+    }
+
+    #[test]
+    fn merge_branch_forwards_and_rejects_empty() {
+        use git_core::model::MergeOutcome;
+        let fb = Arc::new(FakeBackend::default().with_merge(MergeOutcome {
+            summary: "Fast-forward".into(),
+            fast_forward: true,
+        }));
+        let svc = RepoService::new(fb.clone());
+        let r = Path::new("/r");
+
+        let dto = svc.merge_branch(r, "feature").unwrap();
+        assert!(dto.fast_forward);
+        assert_eq!(dto.summary, "Fast-forward");
+        assert_eq!(fb.merge_ops(), vec!["feature"]);
+
+        // 空名被本层拦下
+        assert!(matches!(
+            svc.merge_branch(r, "  ").unwrap_err(),
+            GitError::InvalidBranchName
+        ));
     }
 
     #[test]

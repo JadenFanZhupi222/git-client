@@ -206,6 +206,16 @@ export const WorktreeIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+// 合并:一条支线汇入主线(merge into)。
+export const MergeIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <circle cx="4" cy="3" r="1.6" />
+    <circle cx="4" cy="13" r="1.6" />
+    <circle cx="12" cy="8" r="1.6" />
+    <path d="M4 4.6v6.8M4.2 6.2A5 5 0 0 0 10.4 8" />
+  </svg>
+);
+
 // 云:远程仓库(remote)。
 export const CloudIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>

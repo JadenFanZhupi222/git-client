@@ -24,6 +24,15 @@ pub struct PullOutcome {
     pub summary: String,
 }
 
+/// 一次「把某分支合并进当前分支」的成功结果。冲突以 GitError::MergeConflict 返回。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MergeOutcome {
+    /// git merge 的人类输出(Already up to date. / Fast-forward / Merge made…)。
+    pub summary: String,
+    /// 本次是否为快进(fast-forward,未产生合并提交)。
+    pub fast_forward: bool,
+}
+
 /// 一次 push 的成功结果。被拒(non-fast-forward)等以 GitError 返回。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PushOutcome {
