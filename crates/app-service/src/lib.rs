@@ -20,6 +20,21 @@ pub mod watcher;
 
 pub use repo_context::{RepoContext, RepoRegistry};
 
+/// 从克隆 URL 推导本地目录名(纯函数,便于测试)。
+/// 支持 https / ssh(scp 语法)/ 带不带 `.git` / 末尾斜杠。无法推导 → "repo"。
+/// 例:`https://github.com/u/foo.git` → `foo`;`git@host:u/bar` → `bar`。
+pub fn derive_repo_name(url: &str) -> String {
+    let trimmed = url.trim().trim_end_matches('/');
+    // 取最后一个 '/' 或 ':' 之后的片段(scp 语法 host:path 用 ':')。
+    let last = trimmed.rsplit(['/', ':']).next().unwrap_or("");
+    let name = last.strip_suffix(".git").unwrap_or(last).trim();
+    if name.is_empty() {
+        "repo".to_string()
+    } else {
+        name.to_string()
+    }
+}
+
 /// 仓库服务。生产版本里它会演化成第 4 部分讲的 RepoActor(独占状态 + 消息驱动)。
 /// 阶段 0 先用最简单的形式跑通分层。
 pub struct RepoService {
@@ -30,6 +45,23 @@ impl RepoService {
     /// 依赖注入:谁创建 service,谁决定用哪个后端。
     pub fn new(backend: Arc<dyn GitBackend>) -> Self {
         Self { backend }
+    }
+
+    /// 用例:在 path 处新建空仓库。
+    pub fn init_repo(&self, path: &Path) -> Result<(), GitError> {
+        self.backend.init(path)
+    }
+
+    /// 用例:把 url 克隆进 parent_dir 下(子目录名从 url 推导),返回克隆出的仓库根路径。
+    /// 供 onboarding「克隆」正门:前端拿返回路径直接打开。
+    pub fn clone_repo(&self, url: &str, parent_dir: &Path) -> Result<std::path::PathBuf, GitError> {
+        let url = url.trim();
+        if url.is_empty() {
+            return Err(GitError::InvalidUrl);
+        }
+        let dst = parent_dir.join(derive_repo_name(url));
+        self.backend.clone_repo(url, &dst)?;
+        Ok(dst)
     }
 
     /// 用例:读取 HEAD 提交并转成给前端的 DTO。
@@ -1138,6 +1170,40 @@ mod tests {
         let list = svc.remote_list(r).unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].name, "up2");
+    }
+
+    #[test]
+    fn derive_repo_name_handles_url_forms() {
+        assert_eq!(derive_repo_name("https://github.com/u/foo.git"), "foo");
+        assert_eq!(derive_repo_name("https://github.com/u/foo"), "foo");
+        assert_eq!(derive_repo_name("https://github.com/u/foo/"), "foo");
+        assert_eq!(derive_repo_name("git@github.com:u/bar.git"), "bar");
+        assert_eq!(derive_repo_name("git@github.com:u/bar"), "bar");
+        assert_eq!(derive_repo_name("  ssh://h/x/baz.git  "), "baz");
+        assert_eq!(derive_repo_name(""), "repo");
+    }
+
+    #[test]
+    fn clone_and_init_forward() {
+        let fb = Arc::new(FakeBackend::default());
+        let svc = RepoService::new(fb.clone());
+
+        svc.init_repo(Path::new("/work/new")).unwrap();
+        let dst = svc
+            .clone_repo("https://github.com/u/foo.git", Path::new("/work"))
+            .unwrap();
+        // 目标路径 = parent/<推导名>
+        assert_eq!(dst, Path::new("/work/foo"));
+        // 空 url 拦下
+        assert!(matches!(
+            svc.clone_repo("  ", Path::new("/work")).unwrap_err(),
+            GitError::InvalidUrl
+        ));
+
+        let ops = fb.onboard_ops();
+        assert_eq!(ops.len(), 2);
+        assert!(ops[0].starts_with("init "));
+        assert!(ops[1].contains("foo"));
     }
 
     #[test]

@@ -10,9 +10,10 @@ import { SubmodulesView } from "./views/SubmodulesView";
 import { WorktreesView } from "./views/WorktreesView";
 import { SparseCheckoutView } from "./views/SparseCheckoutView";
 import { useQueryClient } from "@tanstack/react-query";
-import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, checkoutBranch, type IpcError } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon, MoreIcon, DropletIcon, CloudIcon } from "./components/icons";
+import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, checkoutBranch, initRepo, type IpcError } from "./ipc";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon, MoreIcon, DropletIcon, CloudIcon, PlusIcon } from "./components/icons";
 import { RemoteManager } from "./components/RemoteManager";
+import { CloneDialog } from "./components/CloneDialog";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
 import { StashMenu } from "./components/StashMenu";
@@ -55,6 +56,7 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [moreMenu, setMoreMenu] = useState(false);
   const [remoteMgrOpen, setRemoteMgrOpen] = useState(false);
+  const [cloneOpen, setCloneOpen] = useState(false);
   const toast = useToast();
   const qc = useQueryClient();
 
@@ -204,6 +206,19 @@ export default function App() {
     if (typeof dir === "string") setRepo(dir);
   }
 
+  // 新建:选一个文件夹 → git init → 打开它。
+  async function doInit() {
+    const dir = await open({ directory: true, title: "选择新仓库的文件夹" });
+    if (typeof dir !== "string") return;
+    try {
+      await initRepo(dir);
+      toast({ kind: "success", title: "已初始化仓库", detail: dir });
+      setRepo(dir);
+    } catch (e) {
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+    }
+  }
+
   // 切仓库时重置远程选择(回到默认)
   useEffect(() => { setSelectedRemote(null); }, [repo]);
 
@@ -278,6 +293,22 @@ export default function App() {
     group: "仓库",
     keywords: "open repo folder 打开 仓库 切换",
     run: pickRepo,
+  });
+  commands.push({
+    id: "repo:clone",
+    title: "克隆仓库",
+    subtitle: "从 URL 克隆远程仓库",
+    group: "仓库",
+    keywords: "clone 克隆 远程 url git",
+    run: () => setCloneOpen(true),
+  });
+  commands.push({
+    id: "repo:init",
+    title: "新建仓库",
+    subtitle: "在某文件夹初始化空仓库",
+    group: "仓库",
+    keywords: "init 新建 初始化 仓库 create",
+    run: doInit,
   });
   commands.push({
     id: "theme:toggle",
@@ -567,7 +598,7 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <EmptyState onPick={pickRepo} lastRepo={lastRepo} onResume={setRepo} />
+        <EmptyState onPick={pickRepo} onClone={() => setCloneOpen(true)} onInit={doInit} lastRepo={lastRepo} onResume={setRepo} />
       )}
 
       {/* 底部状态栏:分支 + 仓库路径,IDE 风格 */}
@@ -622,6 +653,13 @@ export default function App() {
 
       {repo && remoteMgrOpen && (
         <RemoteManager repo={repo} onClose={() => setRemoteMgrOpen(false)} />
+      )}
+
+      {cloneOpen && (
+        <CloneDialog
+          onClose={() => setCloneOpen(false)}
+          onCloned={(path) => { setCloneOpen(false); setRepo(path); }}
+        />
       )}
     </div>
   );
@@ -680,7 +718,7 @@ function BranchMark() {
 
 /** 没选仓库时的启动屏 —— 每次开 app 的第一印象。
  *  双层贝塞尔玻璃品牌牌折射背后的氛围光晕,大字标题 + 磁吸 CTA,逐元素电影级入场。 */
-function EmptyState({ onPick, lastRepo, onResume }: { onPick: () => void; lastRepo: string | null; onResume: (r: string) => void }) {
+function EmptyState({ onPick, onClone, onInit, lastRepo, onResume }: { onPick: () => void; onClone: () => void; onInit: () => void; lastRepo: string | null; onResume: (r: string) => void }) {
   const lastName = lastRepo?.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? null;
   return (
     <div className="relative flex flex-1 items-center justify-center overflow-hidden px-8">
@@ -726,6 +764,24 @@ function EmptyState({ onPick, lastRepo, onResume }: { onPick: () => void; lastRe
             </svg>
           </span>
         </button>
+
+        {/* 次要入口:克隆远程 / 新建本地仓库(onboarding 正门的另两扇门) */}
+        <div className="hero-rise mt-4 flex items-center gap-2" style={{ animationDelay: "320ms" }}>
+          <button
+            onClick={onClone}
+            className="group flex items-center gap-1.5 rounded-full border border-line bg-elevated/50 py-1.5 pl-3 pr-3.5 text-xs text-fg-muted backdrop-blur-sm transition-[transform,color,background-color] duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-elevated hover:text-fg active:scale-[0.98]"
+          >
+            <CloudIcon width={13} height={13} className="shrink-0 text-fg-subtle transition-colors group-hover:text-accent" />
+            克隆仓库
+          </button>
+          <button
+            onClick={onInit}
+            className="group flex items-center gap-1.5 rounded-full border border-line bg-elevated/50 py-1.5 pl-3 pr-3.5 text-xs text-fg-muted backdrop-blur-sm transition-[transform,color,background-color] duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-elevated hover:text-fg active:scale-[0.98]"
+          >
+            <PlusIcon width={13} height={13} className="shrink-0 text-fg-subtle transition-colors group-hover:text-accent" />
+            新建仓库
+          </button>
+        </div>
 
         {/* 继续上次:跳回上次打开的仓库(Linear/Things 式) */}
         {lastRepo && lastName && (

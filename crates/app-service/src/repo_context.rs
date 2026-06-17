@@ -920,6 +920,12 @@ impl RepoRegistry {
         map.insert(repo_path.to_path_buf(), ctx.clone());
         ctx
     }
+
+    /// 共享后端的 `Arc` 克隆(便宜)。供 onboarding 命令(clone/init)在阻塞线程里
+    /// 构造临时 `RepoService` —— 这些操作不绑定任何已打开的仓库,不走 context。
+    pub fn backend_arc(&self) -> Arc<dyn GitBackend> {
+        self.backend.clone()
+    }
 }
 
 #[cfg(test)]

@@ -71,6 +71,17 @@ import type {
   OpLogDto,
 } from "./bindings";
 
+/** onboarding:在 path 处新建空仓库(git init,尊重 init.defaultBranch)。 */
+export async function initRepo(path: string): Promise<void> {
+  await invoke("init_repo", { path });
+}
+
+/** onboarding:把 url 克隆进 parentDir(子目录名从 url 推导),返回克隆出的仓库根路径。
+ *  认证失败抛 AUTH_FAILED、网络抛 NETWORK_ERROR、地址无效抛 INVALID_URL、目标非空抛 DESTINATION_NOT_EMPTY。 */
+export async function cloneRepo(url: string, parentDir: string): Promise<string> {
+  return await invoke<string>("clone_repo", { url, parentDir });
+}
+
 export async function getHeadCommit(repoPath: string): Promise<CommitDto> {
   // invoke 的参数名要和 Rust 命令的参数名一致(repo_path → repoPath,Tauri 自动转驼峰)
   return await invoke<CommitDto>("get_head_commit", { repoPath });
