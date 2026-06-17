@@ -5,9 +5,9 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
     DiffLine, DiffLineKind, FetchOutcome, FileChange, FileDiff, FileEntry, FileState, Hunk,
-    ImageRef, LineHistoryEntry, PullOutcome, PushOutcome, RefKind, ReflogEntry, RemoteInfo, Seg,
-    SignatureInfo, SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus, WorkingTreeStatus,
-    WorktreeInfo,
+    ImageRef, LineHistoryEntry, MergeOutcome, PullOutcome, PushOutcome, RefKind, ReflogEntry,
+    RemoteInfo, Seg, SignatureInfo, SignatureStatus, StashEntry, SubmoduleInfo, SubmoduleStatus,
+    WorkingTreeStatus, WorktreeInfo,
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -440,6 +440,24 @@ pub struct PullResultDto {
 impl From<PullOutcome> for PullResultDto {
     fn from(o: PullOutcome) -> Self {
         PullResultDto { summary: o.summary }
+    }
+}
+
+/// 一次「合并某分支进当前分支」的成功结果 DTO。
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct MergeResultDto {
+    pub summary: String,
+    /// 本次是否为快进合并(未产生合并提交)。
+    pub fast_forward: bool,
+}
+
+impl From<MergeOutcome> for MergeResultDto {
+    fn from(o: MergeOutcome) -> Self {
+        MergeResultDto {
+            summary: o.summary,
+            fast_forward: o.fast_forward,
+        }
     }
 }
 

@@ -1,9 +1,9 @@
 use crate::error::GitError;
 use crate::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
-    FetchOutcome, FileChange, FileDiff, LineHistoryEntry, PullOutcome, PushOutcome, RebaseStep,
-    ReflogEntry, RemoteInfo, RepoState, ResetMode, SignatureInfo, StashEntry, SubmoduleInfo,
-    SyncCommits, WorkingTreeStatus, WorktreeInfo,
+    FetchOutcome, FileChange, FileDiff, LineHistoryEntry, MergeOutcome, PullOutcome, PushOutcome,
+    RebaseStep, ReflogEntry, RemoteInfo, RepoState, ResetMode, SignatureInfo, StashEntry,
+    SubmoduleInfo, SyncCommits, WorkingTreeStatus, WorktreeInfo,
 };
 use std::path::Path;
 
@@ -344,6 +344,13 @@ pub trait GitBackend: Send + Sync {
 
     /// 删除本地分支。不能删除当前所在分支。
     fn delete_branch(&self, repo: &Path, name: &str) -> Result<(), GitError>;
+
+    /// 把指定分支(或任意 commit-ish)合并进当前分支。
+    /// 已是最新 / 快进 / 生成合并提交 → MergeOutcome;冲突 → MergeConflict
+    /// (进入 merging 中,可用 continue_op/abort_op)。默认 Unsupported。
+    fn merge_branch(&self, _repo: &Path, _name: &str) -> Result<MergeOutcome, GitError> {
+        Err(GitError::Unsupported)
+    }
 
     /// 删除某分支前的影响预览:有多少提交只在它上面、删后会丢。供二次确认。
     /// 默认返回空(0 影响),不实现图计算的后端不阻塞删除流程。

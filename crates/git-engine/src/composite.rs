@@ -2,9 +2,9 @@ use crate::cli_backend::CliBackend;
 use crate::git2_backend::Git2Backend;
 use git_core::model::{
     AheadBehind, BlameLine, BranchInfo, Commit, CommitRef, ConflictSides, FetchOutcome, FileChange,
-    FileDiff, LineHistoryEntry, PullOutcome, PushOutcome, RebaseStep, ReflogEntry, RemoteInfo,
-    RepoState, ResetMode, SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus,
-    WorktreeInfo,
+    FileDiff, LineHistoryEntry, MergeOutcome, PullOutcome, PushOutcome, RebaseStep, ReflogEntry,
+    RemoteInfo, RepoState, ResetMode, SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits,
+    WorkingTreeStatus, WorktreeInfo,
 };
 use git_core::{GitBackend, GitError};
 use std::path::Path;
@@ -235,6 +235,10 @@ impl GitBackend for CompositeBackend {
     }
     fn delete_branch(&self, repo: &Path, name: &str) -> Result<(), GitError> {
         self.git2.delete_branch(repo, name)
+    }
+    fn merge_branch(&self, repo: &Path, name: &str) -> Result<MergeOutcome, GitError> {
+        // 走 CLI:跑 hooks + 按配置签名合并提交,冲突落 merging 状态复用现有冲突 UI。
+        self.cli.merge_branch(repo, name)
     }
     fn branch_delete_impact(
         &self,

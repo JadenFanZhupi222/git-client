@@ -19,8 +19,8 @@ use git_core::model::{RebaseStep, ResetMode};
 use git_core::{GitBackend, GitError, UndoKind};
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
-    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, LineHistoryEntryDto, OpLogDto,
-    OpLogEntryDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto, RemoteInfoDto,
+    FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, LineHistoryEntryDto, MergeResultDto,
+    OpLogDto, OpLogEntryDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto, RemoteInfoDto,
     SignatureInfoDto, StashDto, StatusDto, SubmoduleInfoDto, UndoStateDto, UndoStepDto,
     WorktreeInfoDto,
 };
@@ -572,6 +572,14 @@ impl RepoContext {
     /// 删分支影响预览(只读,删除前调)。不缓存:仅在用户点删除时按需算一次。
     pub fn branch_delete_impact(&self, name: &str) -> Result<BranchDeleteImpactDto, GitError> {
         self.service.branch_delete_impact(&self.path, name)
+    }
+    pub fn merge_branch(&self, name: &str) -> Result<MergeResultDto, GitError> {
+        let before = self.head_oid_opt();
+        let out = self.service.merge_branch(&self.path, name)?;
+        // 合并改 HEAD + 工作区 + 索引 → 两域都失效;记进撤销时间线(可还原到合并前)。
+        self.after_write(true, true);
+        self.record_nav(before, "合并(merge)", UndoKind::Restore);
+        Ok(out)
     }
     pub fn fetch(&self, remote: Option<&str>) -> Result<FetchResultDto, GitError> {
         let out = self.service.fetch(&self.path, remote)?;

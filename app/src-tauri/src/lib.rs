@@ -4,7 +4,7 @@ use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组�
 use ipc_types::{
     AheadBehindDto, BlameLineDto, BranchDeleteImpactDto, BranchDto, CommitDto, ConflictSidesDto,
     FetchResultDto, FileChangeDto, FileDiffDto, GraphRowDto, IpcError, LineHistoryEntryDto,
-    OpLogDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto, RemoteInfoDto,
+    MergeResultDto, OpLogDto, PullResultDto, PushResultDto, RefDto, ReflogEntryDto, RemoteInfoDto,
     SignatureInfoDto, StashDto, StatusDto, SubmoduleInfoDto, UndoStateDto, UndoStepDto,
     WorktreeInfoDto,
 };
@@ -607,6 +607,19 @@ async fn delete_branch(
         .map_err(to_ipc)
 }
 
+#[tauri::command]
+async fn merge_branch(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+    name: String,
+) -> Result<MergeResultDto, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.merge_branch(&name))
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
 /// 删某分支前的影响预览(只读):会丢多少提交 + 摘要样本。供二次确认。
 #[tauri::command]
 async fn branch_delete_impact(
@@ -1156,6 +1169,7 @@ pub fn run() {
             checkout_branch,
             create_branch,
             delete_branch,
+            merge_branch,
             branch_delete_impact,
             fetch,
             pull,

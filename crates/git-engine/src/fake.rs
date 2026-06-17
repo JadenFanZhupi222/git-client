@@ -1,8 +1,9 @@
 use git_core::model::{
     AheadBehind, BlameLine, BranchDeleteImpact, BranchInfo, Commit, CommitRef, ConflictSides,
-    FetchOutcome, FileChange, FileDiff, FileEntry, LineHistoryEntry, PullOutcome, PushOutcome,
-    RebaseAction, RebaseStep, ReflogEntry, RemoteInfo, RepoState, ResetMode, Signature,
-    SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus, WorktreeInfo,
+    FetchOutcome, FileChange, FileDiff, FileEntry, LineHistoryEntry, MergeOutcome, PullOutcome,
+    PushOutcome, RebaseAction, RebaseStep, ReflogEntry, RemoteInfo, RepoState, ResetMode,
+    Signature, SignatureInfo, StashEntry, SubmoduleInfo, SyncCommits, WorkingTreeStatus,
+    WorktreeInfo,
 };
 use git_core::{GitBackend, GitError};
 use std::path::{Path, PathBuf};
@@ -33,6 +34,9 @@ pub struct FakeBackend {
     canned_remotes: Mutex<Vec<String>>,
     // 记录远程管理写操作(add/remove/rename),供测试断言转发。
     remote_ops: Mutex<Vec<String>>,
+    // 合并:记录被合并进当前分支的名字 + 可预置结果。
+    merge_ops: Mutex<Vec<String>>,
+    canned_merge: Mutex<Option<MergeOutcome>>,
     checked_out: Mutex<Vec<String>>,
     created: Mutex<Vec<String>>,
     deleted: Mutex<Vec<String>>,
@@ -153,6 +157,14 @@ impl FakeBackend {
     /// 测试断言:已记录的远程管理写操作(如 ["add upstream", "remove origin"])。
     pub fn remote_ops(&self) -> Vec<String> {
         self.remote_ops.lock().unwrap().clone()
+    }
+    pub fn with_merge(self, outcome: MergeOutcome) -> Self {
+        *self.canned_merge.lock().unwrap() = Some(outcome);
+        self
+    }
+    /// 测试断言:已合并进当前分支的分支名列表。
+    pub fn merge_ops(&self) -> Vec<String> {
+        self.merge_ops.lock().unwrap().clone()
     }
     pub fn with_reflog(self, entries: Vec<ReflogEntry>) -> Self {
         *self.canned_reflog.lock().unwrap() = entries;
@@ -755,6 +767,18 @@ impl GitBackend for FakeBackend {
     fn delete_branch(&self, _path: &Path, name: &str) -> Result<(), GitError> {
         self.deleted.lock().unwrap().push(name.to_string());
         Ok(())
+    }
+    fn merge_branch(&self, _path: &Path, name: &str) -> Result<MergeOutcome, GitError> {
+        self.merge_ops.lock().unwrap().push(name.to_string());
+        Ok(self
+            .canned_merge
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or(MergeOutcome {
+                summary: "Already up to date.".into(),
+                fast_forward: false,
+            }))
     }
     fn branch_delete_impact(
         &self,
