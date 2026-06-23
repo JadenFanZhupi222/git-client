@@ -35,6 +35,7 @@ export const zh = {
   "action.setUpstreamTitle": "为当前分支设置上游分支",
   "action.setAsUpstream": "设为上游",
   "header.appName": "Git 客户端",
+  "header.home": "回到起始页",
   "header.selectRemote": "选择远程仓库",
   "pull.merge": "合并(merge)",
   "pull.rebase": "变基(rebase)",

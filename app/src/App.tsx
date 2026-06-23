@@ -369,7 +369,7 @@ export default function App() {
       {/* 顶栏:轻、紧凑、左标题右仓库 */}
       <Glass as="header" className="relative z-20 flex h-11 shrink-0 items-center gap-3 border-b border-line px-3">
         <div className="flex min-w-0 items-center gap-2">
-          <BranchMark />
+          <BranchMark onHome={repo ? () => setRepo(null) : undefined} title={t("header.home")} />
           {repo ? (
             <span className="max-w-[12rem] truncate font-mono text-sm font-medium text-fg" title={repo}>{repoName}</span>
           ) : (
@@ -724,16 +724,28 @@ function TopProgress() {
 }
 
 /** 顶栏左侧的小标记,纯装饰 */
-function BranchMark() {
+/** 主页标:朱红 git-graph 小标。给了 onHome(有仓库时)即可点击回启动屏;否则纯装饰。 */
+function BranchMark({ onHome, title }: { onHome?: () => void; title?: string }) {
+  const mark = (
+    <svg width={13} height={13} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
+      <circle cx="4" cy="3.5" r="1.5" />
+      <circle cx="4" cy="12.5" r="1.5" />
+      <circle cx="12" cy="3.5" r="1.5" />
+      <path d="M4 5v6M12 5v1a3 3 0 0 1-3 3H4" />
+    </svg>
+  );
+  if (!onHome) {
+    return <span className="grid h-5 w-5 place-items-center rounded bg-accent/15 text-accent">{mark}</span>;
+  }
   return (
-    <span className="grid h-5 w-5 place-items-center rounded bg-accent/15 text-accent">
-      <svg width={13} height={13} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">
-        <circle cx="4" cy="3.5" r="1.5" />
-        <circle cx="4" cy="12.5" r="1.5" />
-        <circle cx="12" cy="3.5" r="1.5" />
-        <path d="M4 5v6M12 5v1a3 3 0 0 1-3 3H4" />
-      </svg>
-    </span>
+    <button
+      onClick={onHome}
+      title={title}
+      aria-label={title}
+      className="grid h-5 w-5 place-items-center rounded bg-accent/15 text-accent transition-colors hover:bg-accent/25"
+    >
+      {mark}
+    </button>
   );
 }
 

@@ -31,9 +31,13 @@ beforeEach(() => {
 describe("CompareView 默认两端", () => {
   it("当前分支解析后,from 与 to 选择器都显示当前分支", async () => {
     render(wrap(<CompareView repo="/repo" />));
+    // ref 药丸内核是原生 <select>(role=combobox);第一个=from,第二个=to。
+    // 用 role 而非 aria-label 查询,避免依赖当前语言(label 已 i18n 化)。
     await waitFor(() => {
-      expect(screen.getByLabelText("基准(from)")).toHaveValue("main");
-      expect(screen.getByLabelText("对比(to)")).toHaveValue("main");
+      const combos = screen.getAllByRole("combobox");
+      expect(combos).toHaveLength(2);
+      expect(combos[0]).toHaveValue("main");
+      expect(combos[1]).toHaveValue("main");
     });
   });
 
