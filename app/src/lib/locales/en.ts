@@ -102,6 +102,16 @@ export const en: Record<MessageKey, string> = {
   "count.items": "items",
   "common.loading": "Loading…",
 
+  // Secondary view table columns
+  "col.path": "Path",
+  "col.url": "URL",
+  "col.status": "Status",
+  "col.commit": "Commit",
+  "col.branch": "Branch",
+  "col.head": "HEAD",
+  "col.pattern": "Pattern",
+  "col.type": "Type",
+
   // Submodules
   "submodules.empty": "No submodules in this repository",
   "submodules.init": "Initialize",
@@ -120,6 +130,8 @@ export const en: Record<MessageKey, string> = {
   "worktrees.detached": "Detached HEAD",
 
   // Sparse checkout
+  "sparse.include": "Include",
+  "sparse.exclude": "Exclude",
   "sparse.empty": "Sparse checkout is off",
   "sparse.desc": "Sparse checkout is on — the working tree only contains files within the patterns below; other paths aren't on disk (it's normal not to see their working-tree changes in Changes/History).",
 

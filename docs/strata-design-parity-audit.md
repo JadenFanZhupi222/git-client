@@ -111,13 +111,16 @@
 - [x] 左列宽默认 340(有 toolbar 时)
 - [ ] ~~说明句补"领先 N 个提交"~~ —— **跳过**:需 from/to 的 ahead 计数(额外查询),现有 API 无;保留"{to} vs {from} · N 文件改动"
 
-### 步骤 5 — 7.7 子模块/工作树/稀疏 居中表格版式重写
+### 步骤 5 — 7.7 子模块/工作树/稀疏 居中表格版式重写 ✅ 完成
 
-- [ ] 三视图改"居中卡片表格"(max 860):表头 mono 小号大写、多列 `flex 2 / flex 1` 行结构
-- [ ] 34×34 accent 图标瓦片
-- [ ] 标题 `<h2>` line-height 1.1;副标题"N 项"移到标题下方 `<p>`(当前同行并排)
-- [ ] Worktrees 首列路径用 mono
-- [ ] Sparse 恢复"类型/匹配"两列(当前降级为单列 `<ul>`)
+- [x] 新建 `components/ui/CardTable.tsx`(`SecondaryHeader` + `CardTable` + `CardRow` + `Cell`)
+- [x] 三视图改"居中卡片表格"(max 860):列头 mono 小号大写、`flex 2 / flex 1` 单元
+- [x] 34×34 accent 图标瓦片(SecondaryHeader)
+- [x] 标题 `<h2>` line-height 1.1;"N 项"移到标题下方 `<p>`(mono)
+- [x] Worktrees 首列路径用 mono(Cell first);当前工作树行加极淡 accent 底
+- [x] Sparse 恢复"类型"列(由 `!` 前缀派生 include/exclude)
+- [ ] ~~Sparse "匹配"列(文件数)~~ —— **跳过**:后端只回 pattern 字符串,无每模式匹配计数
+- 子模块保留 init/update 动作(CardRow `trailing` 槽,不破表格对齐)
 
 ### 步骤 6 — 命令面板小修(`CommandPalette.tsx`)
 

@@ -1,6 +1,7 @@
 import { useSparseCheckout } from "../lib/queries";
 import { FolderIcon } from "../components/icons";
 import { EmptyHint } from "../components/ui/EmptyHint";
+import { SecondaryHeader, CardTable, CardRow, Cell } from "../components/ui/CardTable";
 import type { IpcError } from "../ipc";
 import { useT } from "../lib/i18n";
 
@@ -10,36 +11,44 @@ export function SparseCheckoutView({ repo }: { repo: string }) {
   const patterns = q.data ?? [];
   const queryErr = (q.error as IpcError | null)?.message ?? null;
 
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-baseline gap-3 border-b border-line px-4 py-3">
-        <h1 className="serif text-[27px] font-normal leading-none text-fg">{t("title.sparse")}</h1>
-        {patterns.length > 0 && <span className="font-mono text-xs text-fg-subtle">{patterns.length} {t("count.items")}</span>}
-      </div>
+  if (q.isLoading) return <Center>{t("common.loading")}</Center>;
+  if (queryErr) return <Center>{queryErr}</Center>;
 
-      {q.isLoading ? (
-        <Center>{t("common.loading")}</Center>
-      ) : queryErr ? (
-        <Center>{queryErr}</Center>
-      ) : patterns.length === 0 ? (
-        <EmptyHint icon={<FolderIcon width={24} height={24} />}>{t("sparse.empty")}</EmptyHint>
-      ) : (
-        <div className="fade-in flex-1 overflow-auto px-6 py-5">
-          <div className="mx-auto max-w-[860px]">
-            <p className="mb-3 max-w-[70ch] text-xs leading-relaxed text-fg-muted">{t("sparse.desc")}</p>
-            <ul className="flex flex-col gap-1">
-              {patterns.map((p, i) => (
-                <li
-                  key={i}
-                  className="rounded border border-line bg-elevated px-2.5 py-1.5 font-mono text-[12px] text-fg"
-                >
-                  {p}
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      )}
+  return (
+    <div className="fade-in h-full overflow-auto px-7 py-8">
+      {/* 居中卡片表格(max 860) */}
+      <div className="mx-auto max-w-[860px]">
+        <SecondaryHeader
+          icon={<FolderIcon width={17} height={17} />}
+          title={t("title.sparse")}
+          count={patterns.length > 0 ? `${patterns.length} ${t("count.items")}` : undefined}
+        />
+        {patterns.length === 0 ? (
+          <EmptyHint icon={<FolderIcon width={24} height={24} />}>{t("sparse.empty")}</EmptyHint>
+        ) : (
+          <>
+            <p className="mb-4 max-w-[70ch] text-xs leading-relaxed text-fg-muted">{t("sparse.desc")}</p>
+            <CardTable cols={[t("col.pattern"), t("col.type")]}>
+              {patterns.map((p, i) => {
+                // git sparse-checkout 模式:以 ! 开头为排除,其余为包含。
+                const exclude = p.startsWith("!");
+                return (
+                  <CardRow key={i}>
+                    <Cell first>
+                      <span className="truncate" title={p}>{p}</span>
+                    </Cell>
+                    <Cell className="!font-sans">
+                      <span className={exclude ? "text-danger" : "text-success"}>
+                        {exclude ? t("sparse.exclude") : t("sparse.include")}
+                      </span>
+                    </Cell>
+                  </CardRow>
+                );
+              })}
+            </CardTable>
+          </>
+        )}
+      </div>
     </div>
   );
 }

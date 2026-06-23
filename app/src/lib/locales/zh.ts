@@ -102,6 +102,16 @@ export const zh = {
   "count.items": "项",
   "common.loading": "加载中…",
 
+  // 次级视图表格列头
+  "col.path": "路径",
+  "col.url": "URL",
+  "col.status": "状态",
+  "col.commit": "当前提交",
+  "col.branch": "分支",
+  "col.head": "HEAD",
+  "col.pattern": "模式",
+  "col.type": "类型",
+
   // 子模块
   "submodules.empty": "该仓库没有子模块",
   "submodules.init": "初始化",
@@ -120,6 +130,8 @@ export const zh = {
   "worktrees.detached": "分离头",
 
   // 稀疏检出
+  "sparse.include": "包含",
+  "sparse.exclude": "排除",
   "sparse.empty": "未开启稀疏检出",
   "sparse.desc": "稀疏检出已开启 —— 工作区只检出以下范围内的文件，其余路径不在磁盘上(更改/历史里看不到它们的工作区改动是正常的)。",
 
