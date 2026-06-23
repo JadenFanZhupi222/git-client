@@ -354,7 +354,7 @@ export default function App() {
     id: "panel:oplog",
     title: t("cmd.opLog"),
     subtitle: t("cmd.opLog.sub"),
-    group: t("group.panel"),
+    group: t("group.appearance"), // 对齐原型:操作日志归「外观」组(与主题/语言/玻璃同组)
     keywords: "operation log history 操作 日志 时间线",
     disabled: !repo,
     run: () => setOpLogOpen(true),
