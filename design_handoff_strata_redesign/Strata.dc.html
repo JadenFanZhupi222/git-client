@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600&family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  @font-face{ font-family:"Geist Variable"; font-style:normal; font-display:swap; font-weight:100 900; src:url("https://cdn.jsdelivr.net/npm/@fontsource-variable/geist@5.2.5/files/geist-latin-wght-normal.woff2") format("woff2"); }
+  @font-face{ font-family:"Geist Mono Variable"; font-style:normal; font-display:swap; font-weight:100 900; src:url("https://cdn.jsdelivr.net/npm/@fontsource-variable/geist-mono@5.2.5/files/geist-mono-latin-wght-normal.woff2") format("woff2"); }
+  @font-face{ font-family:"Instrument Serif"; font-weight:400; font-style:normal; font-display:swap; src:url("https://cdn.jsdelivr.net/npm/@fontsource/instrument-serif@5/files/instrument-serif-latin-400-normal.woff2") format("woff2"); }
+  @font-face{ font-family:"Instrument Serif"; font-weight:400; font-style:italic; font-display:swap; src:url("https://cdn.jsdelivr.net/npm/@fontsource/instrument-serif@5/files/instrument-serif-latin-400-italic.woff2") format("woff2"); }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; height:100%; }
+  [data-app]{
+    --canvas:#f4f1ea; --elevated:#fbfaf5; --overlay:#e9e4d8;
+    --line:rgba(38,28,18,.12); --line-strong:rgba(38,28,18,.20);
+    --fg:#1a160f; --fg-muted:#6a6053; --fg-subtle:#9a9082;
+    --accent:#d83a22; --accent-emph:#bb2f1a; --success:#2f7d4f; --danger:#bb2f1a; --warning:#b5791f;
+    --add-bg:rgba(47,125,79,.10); --del-bg:rgba(187,47,26,.08);
+    --lane-0:#d83a22; --lane-1:#3f6789; --lane-2:#b5791f; --lane-3:#8a4a6b;
+    --glass-bg:linear-gradient(135deg, rgba(255,253,248,.74), rgba(250,247,240,.52));
+    --glass-border:rgba(255,255,255,.85);
+    --glass-shadow:0 1px 2px rgba(60,44,28,.05), 0 22px 50px -18px rgba(60,44,28,.22);
+    --ambient:radial-gradient(62% 56% at 84% 8%, color-mix(in oklab, var(--accent) 9%, transparent), transparent 60%), radial-gradient(50% 50% at 6% 96%, rgba(40,30,20,.045), transparent 64%);
+    color-scheme:light;
+  }
+  [data-app][data-theme="dark"]{
+    --canvas:#16130f; --elevated:#1e1a14; --overlay:#2a241c;
+    --line:rgba(232,214,184,.13); --line-strong:rgba(232,214,184,.24);
+    --fg:#f1ebe0; --fg-muted:#a99e8d; --fg-subtle:#6f6556;
+    --accent:#ff6a4d; --accent-emph:#e2452d; --success:#5aa06a; --danger:#ff7a5e; --warning:#e0a94e;
+    --add-bg:rgba(90,160,106,.13); --del-bg:rgba(255,122,94,.12);
+    --lane-0:#ff6a4d; --lane-1:#6f9fc4; --lane-2:#e0a94e; --lane-3:#c98aa8;
+    --glass-bg:linear-gradient(135deg, rgba(60,50,38,.55), rgba(28,22,16,.36));
+    --glass-border:rgba(230,210,180,.18);
+    --glass-shadow:0 10px 34px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,235,210,.07);
+    --ambient:radial-gradient(62% 56% at 84% 8%, color-mix(in oklab, var(--accent) 16%, transparent), transparent 60%), radial-gradient(50% 50% at 6% 96%, color-mix(in oklab, var(--warning) 10%, transparent), transparent 64%);
+    color-scheme:dark;
+  }
+  [data-app]{ font-family:"Geist Variable", "Noto Sans SC", ui-sans-serif, system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; background:var(--canvas); color:var(--fg); -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; font-variant-numeric:tabular-nums; }
+  .mono{ font-family:"Geist Mono Variable", ui-monospace, "JetBrains Mono", Consolas, monospace; font-variant-numeric:tabular-nums; }
+  .serif{ font-family:"Instrument Serif", "Noto Serif SC", ui-serif, Georgia, "Songti SC", serif; }
+  .glass{ position:relative; isolation:isolate; background:var(--glass-bg); border:1px solid var(--glass-border); -webkit-backdrop-filter:blur(22px) saturate(185%); backdrop-filter:blur(22px) saturate(185%); box-shadow:var(--glass-shadow); }
+  .glass::before{ content:""; position:absolute; inset:0; border-radius:inherit; padding:1px; pointer-events:none; background:linear-gradient(135deg, rgba(255,255,255,.75), rgba(255,255,255,0) 40%, rgba(255,255,255,0) 64%, rgba(255,255,255,.28)); -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude; }
+  [data-app] *{ scrollbar-width:thin; scrollbar-color:var(--line-strong) transparent; }
+  [data-app] *::-webkit-scrollbar{ width:10px; height:10px; }
+  [data-app] *::-webkit-scrollbar-thumb{ background:var(--line-strong); border-radius:6px; border:2px solid transparent; background-clip:content-box; }
+  [data-app] :focus-visible{ outline:2px solid var(--accent); outline-offset:1px; }
+  [data-app] ::selection{ background:color-mix(in oklab, var(--accent) 28%, transparent); }
+  @keyframes rise{ from{ opacity:0; transform:translateY(18px); filter:blur(8px); } to{ opacity:1; transform:none; filter:blur(0); } }
+  .rise{ animation:rise .7s cubic-bezier(.22,1,.36,1) both; }
+  @keyframes fadein{ from{ opacity:0; transform:translateY(3px); } to{ opacity:1; transform:none; } }
+  .fadein{ animation:fadein .22s ease-out; }
+  @keyframes nodepop{ 0%{ transform:scale(.2);} 60%{ transform:scale(1.3);} 100%{ transform:scale(1);} }
+  @keyframes overlayin{ from{ opacity:0;} to{ opacity:1;} }
+  @keyframes panelin{ from{ opacity:0; transform:translateY(-8px) scale(.97);} to{ opacity:1; transform:none;} }
+  @keyframes drift{ from{ transform:translateY(0);} to{ transform:translateY(-336px);} }
+  @keyframes progress{ 0%{ transform:translateX(-100%);} 100%{ transform:translateX(400%);} }
+  @keyframes pulse-ring{ 0%{ box-shadow:0 0 0 0 color-mix(in oklab, var(--accent) 40%, transparent);} 70%{ box-shadow:0 0 0 7px transparent;} 100%{ box-shadow:0 0 0 0 transparent;} }
+  @media (prefers-reduced-motion: reduce){ .rise,.fadein{ animation:none; } }
+  .spine{ transition:top .28s cubic-bezier(.32,.72,0,1), height .28s cubic-bezier(.32,.72,0,1); }
+  .launch-drift{ animation:drift 26s linear infinite; }
+  @media (prefers-reduced-motion: reduce){ .launch-drift{ animation:none; } }
+  .hover-row:hover{ background:color-mix(in oklab, var(--fg) 4%, transparent); }
+  .hover-soft{ transition:background-color .14s ease, color .14s ease, border-color .14s ease, transform .14s ease; }
+  .hover-soft:hover{ background:color-mix(in oklab, var(--fg) 6%, transparent); }
+</style>
+</helmet>
+<div data-app data-theme="{{ themeAttr }}" style="height:100vh; display:flex; flex-direction:column; overflow:hidden; background:var(--canvas);">
+
+  <sc-if value="{{ isLaunch }}" hint-placeholder-val="{{ true }}">
+    <div style="position:relative; flex:1; display:flex; align-items:center; justify-content:flex-start; overflow:hidden; padding:0 clamp(40px,8vw,128px); background:var(--canvas); background-image:var(--ambient);">
+      <div style="position:absolute; inset:0; overflow:hidden; pointer-events:none; opacity:.5;">
+        <div class="launch-drift" style="position:absolute; right:6%; top:-40px; width:300px;">{{ launchGraph }}</div>
+      </div>
+      <div style="position:absolute; right:calc(6% + 150px); top:0; bottom:0; width:1px; background:linear-gradient(var(--line), transparent);"></div>
+      <div style="position:absolute; inset:0; pointer-events:none; opacity:.04; mix-blend-mode:overlay; background-image:url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22140%22 height=%22140%22%3E%3Cfilter id=%22n%22%3E%3CfeTurbulence type=%22fractalNoise%22 baseFrequency=%220.85%22 numOctaves=%222%22/%3E%3C/filter%3E%3Crect width=%22100%25%22 height=%22100%25%22 filter=%22url(%23n)%22/%3E%3C/svg%3E');"></div>
+
+      <button onClick="{{ toggleLang }}" title="{{ S.langTitle }}" class="hover-soft mono" style="position:absolute; top:26px; right:30px; z-index:3; display:flex; align-items:center; gap:7px; border:1px solid var(--line-strong); border-radius:999px; background:color-mix(in oklab, var(--elevated) 55%, transparent); padding:7px 15px; font:inherit; font-size:12px; font-weight:600; color:var(--fg-muted); cursor:pointer;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6.2"/><path d="M2 8h12M8 2a9 9 0 0 1 0 12M8 2a9 9 0 0 0 0 12"/></svg>{{ langLabel }}</button>
+
+      <div style="position:relative; z-index:1; width:100%; max-width:560px;">
+        <div class="rise" style="animation-delay:0ms; display:flex; align-items:center; gap:14px;">
+          <div class="glass" style="border-radius:13px; height:44px; width:44px; display:grid; place-items:center; color:var(--accent);"><svg width="22" height="22" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="3.5" r="1.6"/><circle cx="4" cy="12.5" r="1.6"/><circle cx="12" cy="3.5" r="1.6"/><path d="M4 5.1v5.8M12 5.1v1.2a3 3 0 0 1-3 3H4"/></svg></div>
+          <span style="height:1px; width:38px; background:var(--accent);"></span>
+          <span class="mono" style="font-size:11px; letter-spacing:.22em; text-transform:uppercase; color:var(--fg-subtle);">{{ S.eyebrow }}</span>
+        </div>
+        <h1 class="rise serif" style="animation-delay:120ms; margin:28px 0 0; font-size:108px; line-height:.9; letter-spacing:-.01em; font-weight:400; color:var(--fg);">Strata</h1>
+        <p class="rise serif" style="animation-delay:180ms; margin:10px 0 0; font-size:31px; line-height:1.12; font-style:italic; color:var(--accent);">{{ S.sub }}</p>
+        <p class="rise" style="animation-delay:230ms; margin:22px 0 0; font-size:15px; line-height:1.6; color:var(--fg-muted); max-width:30rem; text-wrap:pretty;">{{ S.body }}</p>
+        <div class="rise" style="animation-delay:300ms; margin-top:36px; display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <button onClick="{{ enterApp }}" class="hover-soft" style="display:flex; align-items:center; gap:12px; border:none; border-radius:999px; background:var(--accent); padding:12px 14px 12px 24px; font:inherit; font-size:14px; font-weight:600; color:#fff; cursor:pointer; box-shadow:0 14px 38px -12px color-mix(in oklab, var(--accent) 55%, transparent);">{{ S.pick }}<span style="display:grid; place-items:center; height:30px; width:30px; border-radius:999px; background:rgba(255,255,255,.18);"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8h9M8.5 4l4 4-4 4"></path></svg></span></button>
+          <button onClick="{{ enterApp }}" class="hover-soft" style="display:flex; align-items:center; gap:7px; border:1px solid var(--line-strong); border-radius:999px; background:transparent; padding:9px 16px; font:inherit; font-size:13px; color:var(--fg-muted); cursor:pointer; white-space:nowrap;"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 1.5a4 4 0 0 1 3.7 2.5A3.2 3.2 0 0 1 11.5 14H5a3.5 3.5 0 0 1-.8-6.9A4 4 0 0 1 8 1.5Z"/></svg>{{ S.clone }}</button>
+          <button onClick="{{ enterApp }}" class="hover-soft" style="display:flex; align-items:center; gap:7px; border:1px solid var(--line-strong); border-radius:999px; background:transparent; padding:9px 16px; font:inherit; font-size:13px; color:var(--fg-muted); cursor:pointer; white-space:nowrap;"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3.5v9M3.5 8h9"/></svg>{{ S.init }}</button>
+        </div>
+        <div class="rise" style="animation-delay:360ms; margin-top:28px; display:flex; align-items:center; gap:16px; padding-top:22px; border-top:1px solid var(--line);">
+          <button onClick="{{ enterApp }}" class="hover-soft mono" style="display:flex; align-items:center; gap:8px; border:none; border-radius:8px; background:transparent; padding:6px 8px; margin-left:-8px; font:inherit; font-size:12px; color:var(--fg-muted); cursor:pointer;"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 1.5"/></svg><span style="font-family:'Geist Variable',sans-serif;">{{ S.resume }}</span> strata-git →</button>
+          <span class="rise" style="margin-left:auto; font-size:12px; color:var(--fg-subtle);"><kbd class="mono" style="border:1px solid var(--line-strong); border-radius:5px; background:color-mix(in oklab, var(--elevated) 60%, transparent); padding:2px 6px; font-size:11px; color:var(--fg-muted);">⌘K</kbd> {{ S.paletteHint }}</span>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ isApp }}" hint-placeholder-val="{{ true }}">
+    <div style="height:100vh; display:flex; flex-direction:column; overflow:hidden;">
+      <!-- 顶栏 -->
+      <div class="glass" style="position:relative; z-index:30; display:flex; height:46px; flex-shrink:0; align-items:center; gap:12px; padding:0 12px; border-left:none; border-right:none; border-top:none;">
+        <div style="display:flex; min-width:0; align-items:center; gap:9px;">
+          <button onClick="{{ goLaunch }}" title="{{ S.home }}" style="display:grid; height:24px; width:24px; place-items:center; border:none; border-radius:7px; background:color-mix(in oklab, var(--accent) 15%, transparent); color:var(--accent); cursor:pointer;">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="4" cy="3.5" r="1.5"/><circle cx="4" cy="12.5" r="1.5"/><circle cx="12" cy="3.5" r="1.5"/><path d="M4 5v6M12 5v1a3 3 0 0 1-3 3H4"/></svg>
+          </button>
+          <span class="mono" style="font-size:13px; font-weight:500; max-width:11rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">strata-git</span>
+          <span style="color:var(--fg-subtle); font-size:12px;">/</span>
+          <button class="hover-soft" style="display:flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:7px; background:color-mix(in oklab, var(--elevated) 50%, transparent); padding:4px 9px; font:inherit; cursor:pointer; color:var(--fg);">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--accent)" stroke-width="1.7" stroke-linecap="round"><circle cx="4" cy="3.5" r="1.5"/><circle cx="4" cy="12.5" r="1.5"/><circle cx="12" cy="3.5" r="1.5"/><path d="M4 5v6M12 5v1a3 3 0 0 1-3 3H4"/></svg>
+            <span class="mono" style="font-size:12px; font-weight:500;">main</span>
+            <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 6l4 4 4-4"/></svg>
+          </button>
+          <span class="mono" style="display:flex; align-items:center; gap:5px; font-size:11px; color:var(--fg-subtle);">
+            <span style="display:flex; align-items:center; gap:2px; color:var(--success);">↑2</span>
+            <span style="display:flex; align-items:center; gap:2px;">↓0</span>
+          </span>
+        </div>
+
+        <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
+          <div style="display:flex; align-items:center; gap:2px; border:1px solid var(--line); border-radius:9px; background:color-mix(in oklab, var(--elevated) 45%, transparent); padding:2px;">
+            <button class="hover-soft" title="{{ S.undo }}" style="display:grid; height:28px; width:28px; place-items:center; border:none; border-radius:6px; background:transparent; color:var(--fg-muted); cursor:pointer;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h7a3 3 0 0 1 0 6H7M3 8l3-3M3 8l3 3"/></svg></button>
+            <button class="hover-soft" title="{{ S.redo }}" style="display:grid; height:28px; width:28px; place-items:center; border:none; border-radius:6px; background:transparent; color:var(--fg-subtle); cursor:pointer; opacity:.5;"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 8H6a3 3 0 0 0 0 6h3M13 8l-3-3M13 8l-3 3"/></svg></button>
+          </div>
+          <div style="display:flex; align-items:center; gap:2px; border:1px solid var(--line); border-radius:9px; background:color-mix(in oklab, var(--elevated) 45%, transparent); padding:2px;">
+            <button class="hover-soft" style="display:flex; align-items:center; gap:6px; border:none; border-radius:6px; background:transparent; padding:5px 10px; font:inherit; font-size:12px; color:var(--fg); cursor:pointer;"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 2.5v4M8 2.5L5.5 5M8 2.5 10.5 5"/><path d="M2.5 9.5a5.5 5.5 0 0 0 11 0"/></svg>Fetch</button>
+            <button class="hover-soft" style="display:flex; align-items:center; gap:6px; border:none; border-radius:6px; background:transparent; padding:5px 10px; font:inherit; font-size:12px; color:var(--fg); cursor:pointer;"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10.5v-8M8 10.5 5 7.5M8 10.5 11 7.5M3 13.5h10"/></svg>Pull</button>
+            <button class="hover-soft" style="display:flex; align-items:center; gap:6px; border:none; border-radius:6px; background:transparent; padding:5px 10px; font:inherit; font-size:12px; color:var(--success); cursor:pointer;"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v8M8 2.5 5 5.5M8 2.5 11 5.5M3 13.5h10"/></svg>Push <span class="mono" style="border-radius:999px; background:color-mix(in oklab, var(--success) 16%, transparent); padding:0 5px; font-size:10px; font-weight:600;">↑2</span></button>
+          </div>
+          <button onClick="{{ openPalette }}" class="hover-soft" style="display:flex; align-items:center; gap:7px; border:1px solid var(--line); border-radius:8px; background:color-mix(in oklab, var(--elevated) 45%, transparent); padding:5px 9px; font:inherit; color:var(--fg-subtle); cursor:pointer;"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="m11 11 3 3"/></svg><kbd class="mono" style="font-size:10px;">{{ modLabel }}</kbd></button>
+          <button onClick="{{ toggleLang }}" class="hover-soft mono" title="{{ S.langTitle }}" style="display:grid; height:30px; min-width:30px; padding:0 7px; place-items:center; border:1px solid var(--line); border-radius:8px; background:color-mix(in oklab, var(--elevated) 45%, transparent); color:var(--fg-muted); cursor:pointer; font-size:11px; font-weight:600;">{{ langLabel }}</button>
+          <button onClick="{{ toggleTheme }}" class="hover-soft" title="{{ S.themeTitle }}" style="display:grid; height:30px; width:30px; place-items:center; border:1px solid var(--line); border-radius:8px; background:color-mix(in oklab, var(--elevated) 45%, transparent); color:var(--fg-muted); cursor:pointer;">{{ themeIcon }}</button>
+        </div>
+      </div>
+
+      <!-- 主体 -->
+      <div style="display:flex; min-height:0; flex:1;">
+        <!-- 侧栏 -->
+        <div style="position:relative; display:flex; width:212px; flex-shrink:0; flex-direction:column; border-right:1px solid var(--line); background:color-mix(in oklab, var(--elevated) 40%, transparent); padding:10px 10px;">
+          <div class="spine" style="position:absolute; left:0; width:2px; border-radius:0 2px 2px 0; background:var(--accent); top:{{ spineTop }}px; height:34px; box-shadow:0 0 10px var(--accent);"></div>
+          <div style="padding:6px 8px 10px; font-size:10px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--fg-subtle);">{{ S.workspace }}</div>
+          <sc-for list="{{ navItems }}" as="item" hint-placeholder-count="4">
+            <button onClick="{{ item.go }}" class="hover-soft" style="display:flex; align-items:center; gap:10px; width:100%; border:none; border-radius:8px; background:{{ item.bg }}; padding:8px 10px; margin-bottom:2px; font:inherit; font-size:13px; font-weight:{{ item.weight }}; color:{{ item.color }}; cursor:pointer; text-align:left;">
+              <span style="display:grid; place-items:center; width:18px; color:{{ item.icColor }};">{{ item.icon }}</span>
+              <span style="flex:1;">{{ item.label }}</span>
+              <sc-if value="{{ item.badge }}" hint-placeholder-val="">
+                <span class="mono" style="border-radius:999px; background:{{ item.badgeBg }}; padding:1px 7px; font-size:10px; font-weight:600; color:{{ item.badgeColor }};">{{ item.badge }}</span>
+              </sc-if>
+            </button>
+          </sc-for>
+          <div style="margin-top:auto; padding-top:10px; border-top:1px solid var(--line); display:flex; align-items:center; gap:8px;">
+            <div style="display:grid; place-items:center; height:28px; width:28px; border-radius:7px; background:color-mix(in oklab, var(--accent) 16%, transparent); color:var(--accent); font-size:11px; font-weight:600;">JK</div>
+            <div style="min-width:0; flex:1;">
+              <div style="font-size:12px; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">jiang.k</div>
+              <div class="mono" style="font-size:10px; color:var(--fg-subtle);">clean · ✓ signed</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 视图区 -->
+        <div style="position:relative; min-width:0; flex:1; overflow:hidden;">
+          {{ viewSlot }}
+        </div>
+      </div>
+
+      <!-- 状态栏 -->
+      <div class="mono" style="display:flex; height:24px; flex-shrink:0; align-items:center; gap:14px; border-top:1px solid var(--line); background:var(--elevated); padding:0 12px; font-size:11px; color:var(--fg-subtle);">
+        <span style="display:flex; align-items:center; gap:5px; color:var(--fg-muted);"><span style="height:6px; width:6px; border-radius:999px; background:var(--success);"></span>main ↑2</span>
+        <span>{{ statusFiles }}</span>
+        <span style="margin-left:auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">~/dev/strata-git</span>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- 命令面板 -->
+  <sc-if value="{{ paletteOpen }}" hint-placeholder-val="">
+    <div onClick="{{ closePalette }}" style="position:fixed; inset:0; z-index:80; display:flex; justify-content:center; padding-top:14vh; background:color-mix(in oklab, #05080d 55%, transparent); animation:overlayin .16s ease-out;">
+      <div onClick="{{ stop }}" class="glass" style="width:560px; max-width:92vw; height:max-content; max-height:62vh; overflow:hidden; border-radius:16px; animation:panelin .22s cubic-bezier(.32,.72,0,1); display:flex; flex-direction:column;">
+        <div style="display:flex; align-items:center; gap:10px; padding:14px 16px; border-bottom:1px solid var(--line);">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--fg-subtle)" stroke-width="1.6"><circle cx="7" cy="7" r="4.5"/><path d="m11 11 3 3"/></svg>
+          <input autofocus placeholder="{{ palettePlaceholder }}" style="flex:1; border:none; background:transparent; font:inherit; font-size:15px; color:var(--fg); outline:none;" />
+          <kbd class="mono" style="border:1px solid var(--line-strong); border-radius:5px; padding:2px 6px; font-size:10px; color:var(--fg-subtle);">esc</kbd>
+        </div>
+        <div style="overflow:auto; padding:8px;">
+          <sc-for list="{{ paletteGroups }}" as="grp" hint-placeholder-count="3">
+            <div style="padding:8px 10px 4px; font-size:10px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--fg-subtle);">{{ grp.name }}</div>
+            <sc-for list="{{ grp.items }}" as="cmd" hint-placeholder-count="2">
+              <button onClick="{{ cmd.run }}" class="hover-soft" style="display:flex; align-items:center; gap:11px; width:100%; border:none; border-radius:9px; background:transparent; padding:9px 11px; font:inherit; cursor:pointer; text-align:left; color:var(--fg);">
+                <span style="display:grid; place-items:center; width:18px; color:var(--fg-subtle);">{{ cmd.icon }}</span>
+                <span style="flex:1; font-size:13px;">{{ cmd.title }}</span>
+                <sc-if value="{{ cmd.hint }}" hint-placeholder-val="">
+                  <kbd class="mono" style="border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:10px; color:var(--fg-subtle);">{{ cmd.hint }}</kbd>
+                </sc-if>
+              </button>
+            </sc-for>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+class Component extends DCLogic {
+  state = { theme: "dark", view: "launch", tab: "history", lang: "zh", sel: 0, paletteOpen: false, stageSel: 1, blameSel: 2, cmpSel: 0 };
+
+  // ── 数据 ───────────────────────────────────────────────
+  get commits() {
+    return [
+      { lane:0, sha:"a7f3c91", msg:"feat: 流式 diff 解析器 — 边读边渲染大文件", who:"jiang.k", t:"2 分钟前", refs:[{n:"main",k:"head"}] },
+      { lane:0, sha:"4e8b2da", msg:"Merge branch 'blame-heat'", who:"jiang.k", t:"26 分钟前", refs:[], merge:true },
+      { lane:0, sha:"1c0d7af", msg:"perf: 用 TanStack 虚拟化提交列表", who:"r.oss", t:"1 小时前", refs:[{n:"origin/main",k:"remote"}] },
+      { lane:1, sha:"9b21e6c", msg:"blame: 每行年龄热度着色", who:"m.wei", t:"2 小时前", refs:[] },
+      { lane:1, sha:"3df90b8", msg:"blame: 行号槽提交归属", who:"m.wei", t:"3 小时前", refs:[] },
+      { lane:0, sha:"7a44f12", msg:"fix: 泳道交叉几何在合并处错位", who:"jiang.k", t:"昨天", refs:[{n:"v0.4.0",k:"tag"}] },
+      { lane:0, sha:"c5e8b30", msg:"feat: 命令面板 ⌘K(键盘优先入口)", who:"jiang.k", t:"昨天", refs:[] },
+      { lane:0, sha:"e0117da", msg:"Merge branch 'glass-strata'", who:"r.oss", t:"2 天前", refs:[], merge:true },
+      { lane:2, sha:"b8c4f59", msg:"ui: 浮动磨砂顶栏地层", who:"r.oss", t:"2 天前", refs:[] },
+      { lane:2, sha:"6fa0c27", msg:"ui: 招牌高光发丝边", who:"r.oss", t:"3 天前", refs:[] },
+      { lane:0, sha:"2d9e718", msg:"chore: 升级 tauri 2.3", who:"m.wei", t:"4 天前", refs:[] },
+      { lane:0, sha:"f31a6b4", msg:"feat: 稀疏检出视图", who:"jiang.k", t:"5 天前", refs:[{n:"origin/dev",k:"remote"}] },
+      { lane:0, sha:"08bd5e2", msg:"init: 六边形架构工作区", who:"jiang.k", t:"6 天前", refs:[] },
+    ];
+  }
+  get edges() {
+    // child idx -> parent idx; colored by lane
+    return [
+      {c:0,p:1,cl:0,pl:0,lane:0},
+      {c:1,p:2,cl:0,pl:0,lane:0},
+      {c:1,p:3,cl:0,pl:1,lane:1},
+      {c:2,p:5,cl:0,pl:0,lane:0},
+      {c:3,p:4,cl:1,pl:1,lane:1},
+      {c:4,p:5,cl:1,pl:0,lane:1},
+      {c:5,p:6,cl:0,pl:0,lane:0},
+      {c:6,p:7,cl:0,pl:0,lane:0},
+      {c:7,p:8,cl:0,pl:2,lane:2},
+      {c:7,p:10,cl:0,pl:0,lane:0},
+      {c:8,p:9,cl:2,pl:2,lane:2},
+      {c:9,p:10,cl:2,pl:0,lane:2},
+      {c:10,p:11,cl:0,pl:0,lane:0},
+      {c:11,p:12,cl:0,pl:0,lane:0},
+    ];
+  }
+  get detailFiles() {
+    return [
+      { path:"crates/git-engine/src/diff/stream.rs", st:"M", add:84, del:12 },
+      { path:"crates/ipc-types/src/diff.rs", st:"M", add:9, del:2 },
+      { path:"app/src/components/DiffView.tsx", st:"M", add:31, del:18 },
+      { path:"app/src/lib/diffRows.ts", st:"A", add:46, del:0 },
+    ];
+  }
+  get detailDiff() {
+    return [
+      { k:"hunk", t:"@@ -18,7 +18,9 @@ impl StreamDiff {" },
+      { k:"ctx", o:"18", n:"18", t:"    pub fn parse(reader: impl BufRead) -> Result<Self> {" },
+      { k:"ctx", o:"19", n:"19", t:"        let mut hunks = Vec::new();" },
+      { k:"del", o:"20", n:"",   t:"        let lines = reader.lines().collect();" },
+      { k:"add", o:"",   n:"20", t:"        // 流式:逐块产出,避免大文件整读" },
+      { k:"add", o:"",   n:"21", t:"        let mut lines = reader.lines().peekable();" },
+      { k:"ctx", o:"21", n:"22", t:"        while let Some(line) = lines.next() {" },
+      { k:"del", o:"22", n:"",   t:"            hunks.push(parse_hunk(line)?);" },
+      { k:"add", o:"",   n:"23", t:"            let hunk = parse_hunk(line, &mut lines)?;" },
+      { k:"add", o:"",   n:"24", t:"            yield_hunk(hunk).await;" },
+      { k:"ctx", o:"23", n:"25", t:"        }" },
+      { k:"ctx", o:"24", n:"26", t:"        Ok(Self { hunks })" },
+    ];
+  }
+  get staged() {
+    return [
+      { path:"crates/git-engine/src/diff/stream.rs", st:"M", add:84, del:12 },
+      { path:"app/src/lib/diffRows.ts", st:"A", add:46, del:0 },
+    ];
+  }
+  get unstaged() {
+    return [
+      { path:"app/src/components/DiffView.tsx", st:"M", add:31, del:18 },
+      { path:"app/src/index.css", st:"M", add:12, del:4 },
+      { path:"docs/HANDOFF.md", st:"M", add:6, del:1 },
+      { path:"app/src/views/BlameView.tsx", st:"?", add:0, del:0 },
+    ];
+  }
+  get blameLines() {
+    return [
+      { sha:"a7f3c91", who:"jiang.k", t:"2 分钟前", age:0, no:1,  t2:"export function diffRows(diff: FileDiff): Row[] {" },
+      { sha:"a7f3c91", who:"jiang.k", t:"2 分钟前", age:0, no:2,  t2:"  const rows: Row[] = [];" },
+      { sha:"a7f3c91", who:"jiang.k", t:"2 分钟前", age:0, no:3,  t2:"  for (const hunk of diff.hunks) {" },
+      { sha:"9b21e6c", who:"m.wei",   t:"2 小时前", age:1, no:4,  t2:"    rows.push({ kind: 'hunk', text: hunk.header });" },
+      { sha:"9b21e6c", who:"m.wei",   t:"2 小时前", age:1, no:5,  t2:"    let oldNo = hunk.oldStart;" },
+      { sha:"9b21e6c", who:"m.wei",   t:"2 小时前", age:1, no:6,  t2:"    let newNo = hunk.newStart;" },
+      { sha:"7a44f12", who:"jiang.k", t:"昨天",     age:2, no:7,  t2:"    for (const line of hunk.lines) {" },
+      { sha:"7a44f12", who:"jiang.k", t:"昨天",     age:2, no:8,  t2:"      const kind = classify(line);" },
+      { sha:"2d9e718", who:"m.wei",   t:"4 天前",   age:3, no:9,  t2:"      rows.push({ kind, oldNo, newNo, text: line });" },
+      { sha:"2d9e718", who:"m.wei",   t:"4 天前",   age:3, no:10, t2:"      if (kind !== 'add') oldNo++;" },
+      { sha:"08bd5e2", who:"jiang.k", t:"6 天前",   age:4, no:11, t2:"      if (kind !== 'del') newNo++;" },
+      { sha:"08bd5e2", who:"jiang.k", t:"6 天前",   age:4, no:12, t2:"    }" },
+      { sha:"08bd5e2", who:"jiang.k", t:"6 天前",   age:4, no:13, t2:"  }" },
+      { sha:"08bd5e2", who:"jiang.k", t:"6 天前",   age:4, no:14, t2:"  return rows;" },
+      { sha:"08bd5e2", who:"jiang.k", t:"6 天前",   age:4, no:15, t2:"}" },
+    ];
+  }
+
+  // ── 几何 ───────────────────────────────────────────────
+  cx(l){ return 22 + l*22; }
+  cy(i){ return i*56 + 28; }
+
+  buildGraph(sel) {
+    const R = React.createElement;
+    const N = this.commits.length;
+    const h = N*56;
+    const selLane = this.commits[sel].lane;
+    const paths = this.edges.map((e,k) => {
+      const x1 = this.cx(e.cl), y1 = this.cy(e.c), x2 = this.cx(e.pl), y2 = this.cy(e.p);
+      let d;
+      if (e.cl === e.pl) d = `M ${x1} ${y1} L ${x2} ${y2}`;
+      else d = `M ${x1} ${y1} C ${x1} ${y1+28}, ${x2} ${y2-28}, ${x2} ${y2}`;
+      const hot = e.lane === selLane;
+      return R("path", { key:"e"+k, d, fill:"none", stroke:`var(--lane-${e.lane})`, strokeWidth: hot?2.2:1.6, strokeLinecap:"round", strokeOpacity: hot?1:0.7, style:{ transition:"stroke-opacity .18s, stroke-width .18s" } });
+    });
+    const nodes = this.commits.map((c,i) => {
+      const x = this.cx(c.lane), y = this.cy(i);
+      const isSel = i === sel;
+      const isHead = c.refs && c.refs.some(r => r.k==="head");
+      const r = isSel ? 6 : (c.merge ? 4.5 : 5);
+      const els = [];
+      if (c.merge) {
+        els.push(R("circle", { key:"o", cx:x, cy:y, r:r, fill:"var(--canvas)", stroke:`var(--lane-${c.lane})`, strokeWidth:2 }));
+      } else {
+        els.push(R("circle", { key:"f", cx:x, cy:y, r:r, fill:`var(--lane-${c.lane})`, stroke:"var(--canvas)", strokeWidth:2,
+          style: isSel ? { filter:`drop-shadow(0 0 6px var(--lane-${c.lane}))` } : undefined }));
+      }
+      if (isHead) els.push(R("circle", { key:"h", cx:x, cy:y, r:r+3, fill:"none", stroke:`var(--lane-${c.lane})`, strokeWidth:1.4, strokeOpacity:.5 }));
+      return R("g", { key:"n"+i, style:{ cursor:"pointer" }, onClick:()=>this.setState({sel:i}) }, ...els);
+    });
+    return R("svg", { width:120, height:h, style:{ display:"block", overflow:"visible" } }, ...paths, ...nodes);
+  }
+
+  launchMini() {
+    const R = React.createElement;
+    const rows = [0,1,2,3,4,5,6,7,8,9,10,11];
+    const els = [];
+    for (let pass=0; pass<2; pass++){
+      const dy = pass*336;
+      rows.forEach((i)=>{
+        const lane = (i%5===2||i%5===3)?1:0;
+        const x = 30 + lane*26, y = i*28+14+dy;
+        els.push(R("line",{key:`l${pass}-${i}`, x1:30, y1:y, x2:30, y2:y+28, stroke:"var(--accent)", strokeWidth:1.4, strokeOpacity:.5}));
+        if(lane) els.push(R("line",{key:`b${pass}-${i}`, x1:56, y1:y, x2:56, y2:y+28, stroke:"var(--accent)", strokeWidth:1.4, strokeOpacity:.4}));
+        els.push(R("circle",{key:`c${pass}-${i}`, cx:x, cy:y, r:3.4, fill:"var(--accent)", fillOpacity:.7}));
+      });
+    }
+    return R("svg",{width:120, height:672, style:{display:"block"}}, ...els);
+  }
+
+  glyph(){
+    return React.createElement("svg",{width:36,height:36,viewBox:"0 0 16 16",fill:"none",stroke:"currentColor",strokeWidth:1.4,strokeLinecap:"round",strokeLinejoin:"round"},
+      React.createElement("circle",{cx:4,cy:3.5,r:1.6}),React.createElement("circle",{cx:4,cy:12.5,r:1.6}),
+      React.createElement("circle",{cx:12,cy:3.5,r:1.6}),React.createElement("path",{d:"M4 5.1v5.8M12 5.1v1.2a3 3 0 0 1-3 3H4"}));
+  }
+  ic(name){
+    const R=React.createElement, p={width:16,height:16,viewBox:"0 0 16 16",fill:"none",stroke:"currentColor",strokeWidth:1.6,strokeLinecap:"round",strokeLinejoin:"round"};
+    const paths={
+      changes:["M8 2v12M3.5 5.5 8 2l4.5 3.5","M3 13.5h10"],
+      history:["M8 4v4l2.5 1.5","M2.6 8a5.4 5.4 0 1 1 1.2 3.4"],
+      compare:["M5.5 2.5v11M10.5 2.5v11","M3 5h5M8 11h5"],
+      blame:["M3 3h10v10H3z","M6 6h4M6 8h4M6 10h2"],
+      branch:["M4 3.5v6","M12 3.5v1a3 3 0 0 1-3 3H4"],
+      tree:["M8 2.5v3M4 13.5v-3a3 3 0 0 1 3-3h2a3 3 0 0 1 3 3v3"],
+    };
+    const single={ history:true };
+    if(name==="history") return R("svg",p,R("circle",{cx:8,cy:8,r:5.4}),R("path",{d:"M8 4.5V8l2.4 1.4"}));
+    if(name==="changes") return R("svg",p,R("path",{d:"M8 2v9"}),R("path",{d:"M4.5 7.5 8 11l3.5-3.5"}),R("path",{d:"M3 13.5h10"}));
+    if(name==="compare") return R("svg",p,R("path",{d:"M5.5 13V3l-2.5 2.5"}),R("path",{d:"M10.5 3v10l2.5-2.5"}));
+    if(name==="blame") return R("svg",p,R("rect",{x:2.5,y:2.5,width:11,height:11,rx:1.5}),R("path",{d:"M6 6h4M6 8.5h4M6 11h2"}));
+    if(name==="tree") return R("svg",p,R("circle",{cx:4,cy:4,r:1.6}),R("circle",{cx:12,cy:4,r:1.6}),R("circle",{cx:8,cy:12,r:1.6}),R("path",{d:"M4 5.6V8a2 2 0 0 0 2 2h.5M12 5.6V8a2 2 0 0 1-2 2h-.5"}));
+    if(name==="cube") return R("svg",p,R("path",{d:"M8 2 3 4.6v6.8L8 14l5-2.6V4.6L8 2z"}),R("path",{d:"M3 4.6 8 7l5-2.4M8 7v7"}));
+    if(name==="layers") return R("svg",p,R("path",{d:"M8 2 2 5l6 3 6-3-6-3z"}),R("path",{d:"M2 8.5 8 11.5 14 8.5M2 11 8 14 14 11"}));
+    return R("svg",p,R("circle",{cx:8,cy:8,r:5}));
+  }
+  cmdIc(n){
+    const R=React.createElement, p={width:15,height:15,viewBox:"0 0 16 16",fill:"none",stroke:"currentColor",strokeWidth:1.5,strokeLinecap:"round",strokeLinejoin:"round"};
+    if(n==="branch") return R("svg",p,R("circle",{cx:4,cy:3.5,r:1.5}),R("circle",{cx:4,cy:12.5,r:1.5}),R("circle",{cx:12,cy:3.5,r:1.5}),R("path",{d:"M4 5v6M12 5v1a3 3 0 0 1-3 3H4"}));
+    if(n==="pull") return R("svg",p,R("path",{d:"M8 10.5v-8M8 10.5 5 7.5M8 10.5 11 7.5M3 13.5h10"}));
+    if(n==="push") return R("svg",p,R("path",{d:"M8 2.5v8M8 2.5 5 5.5M8 2.5 11 5.5M3 13.5h10"}));
+    if(n==="theme") return R("svg",p,R("circle",{cx:8,cy:8,r:3.2}),R("path",{d:"M8 1.5v1.5M8 13v1.5M2.5 8H1M15 8h-1.5M3.8 3.8 2.8 2.8M13.2 13.2l-1-1M12.2 3.8l1-1M2.8 13.2l1-1"}));
+    if(n==="log") return R("svg",p,R("path",{d:"M3 3.5h10M3 8h10M3 12.5h6"}));
+    if(n==="search") return R("svg",p,R("circle",{cx:7,cy:7,r:4.5}),R("path",{d:"m11 11 3 3"}));
+    return R("svg",p,R("circle",{cx:8,cy:8,r:5}));
+  }
+
+  // ── 交互 ───────────────────────────────────────────────
+  setTab(t){ this.setState({ tab:t }); }
+  enterApp = () => this.setState({ view:"app" });
+  goLaunch = () => this.setState({ view:"launch" });
+  toggleTheme = () => this.setState({ theme: this.state.theme==="dark"?"light":"dark" });
+  openPalette = () => this.setState({ paletteOpen:true });
+  closePalette = () => this.setState({ paletteOpen:false });
+  stop = (e) => { e.stopPropagation(); };
+  toggleLang = () => this.setState({ lang: this.state.lang==="zh" ? "en" : "zh" });
+  tr(s){ if(this.state.lang!=="en") return s; const m=this._trmap||(this._trmap=this.buildTR()); return (m[s]!==undefined?m[s]:s); }
+  buildTR(){ return {
+    "本地优先 · 纯 Rust 内核":"Local-first · Pure-Rust core",
+    "大仓库也跟手。":"Smooth, even on huge repos.",
+    "纯 Rust 内核，十几万次提交滚动也不卡。所有操作都在本地，代码不离开这台电脑。":"A pure-Rust core keeps scrolling smooth across hundreds of thousands of commits. Everything runs locally — your code never leaves this machine.",
+    "选择仓库":"Open repository", "克隆":"Clone", "新建":"New", "继续上次":"Resume", "命令面板":"Command palette",
+    "主页":"Home", "撤销":"Undo", "重做":"Redo", "切换主题":"Toggle theme", "切换语言":"Switch language",
+    "工作区":"Workspace",
+    "更改":"Changes", "历史":"History", "比较":"Compare", "追溯":"Blame", "子模块":"Submodules", "工作树":"Worktrees", "稀疏检出":"Sparse",
+    "2 暂存 · 4 未暂存":"2 staged · 4 unstaged", "13 提交 · 4 分支 · 1 远程":"13 commits · 4 branches · 1 remote",
+    "视图":"Views", "远程":"Remote", "外观":"Appearance", "语言":"Language",
+    "切换到「历史」":"Go to History", "切换到「更改」":"Go to Changes", "Pull · 变基":"Pull · rebase",
+    "切换到浅色主题":"Switch to light theme", "切换到暗色主题":"Switch to dark theme", "操作日志":"Operation log",
+    "切换到 English":"切换到中文", "输入命令或搜索…":"Type a command or search…",
+    "搜索提交 · 作者 · SHA":"Search commits · author · SHA", "图谱":"Graph", "列表":"List", "13 提交":"13 commits",
+    "feat: 流式 diff 解析器 — 边读边渲染大文件":"feat: streaming diff parser — render huge files as they read",
+    "perf: 用 TanStack 虚拟化提交列表":"perf: virtualize commit list with TanStack",
+    "blame: 每行年龄热度着色":"blame: per-line age-heat coloring",
+    "blame: 行号槽提交归属":"blame: gutter commit attribution",
+    "fix: 泳道交叉几何在合并处错位":"fix: lane-crossing geometry misaligned at merges",
+    "feat: 命令面板 ⌘K（键盘优先入口）":"feat: command palette ⌘K (keyboard-first)",
+    "ui: 浮动磨砂顶栏地层":"ui: floating frosted toolbar strata",
+    "ui: 招牌高光发丝边":"ui: signature hairline highlight",
+    "chore: 升级 tauri 2.3":"chore: bump tauri 2.3",
+    "feat: 稀疏检出视图":"feat: sparse checkout view",
+    "init: 六边形架构工作区":"init: hexagonal architecture workspace",
+    "2 分钟前":"2 min ago", "26 分钟前":"26 min ago", "1 小时前":"1 hour ago", "2 小时前":"2 hours ago", "3 小时前":"3 hours ago",
+    "昨天":"yesterday", "2 天前":"2 days ago", "3 天前":"3 days ago", "4 天前":"4 days ago", "5 天前":"5 days ago", "6 天前":"6 days ago",
+    "复制 SHA":"Copy SHA", "检出":"Checkout", "变更文件":"Changed files", "已验签":"Verified", "统一视图":"Unified view",
+    "工作区更改":"Working tree", "刷新":"Refresh", "未暂存":"Unstaged", "已暂存":"Staged", "全部暂存":"Stage all", "全部取消":"Unstage all",
+    "提交信息 — 概述本次改动…":"Commit message — summarize your changes…", "修正(amend)":"Amend", "2 暂存":"2 staged", "提交到 main":"Commit to main", "取消暂存":"Unstage", "暂存":"Stage",
+    "统一":"Unified", "并排":"Split",
+    "从":"Base", "到":"Head", "交换":"Swap", "main 领先 origin/main 2 个提交 · 4 文件改动":"main is 2 commits ahead of origin/main · 4 files changed",
+    "15 行 · 5 次提交":"15 lines · 5 commits", "近":"new", "远":"old",
+    "15 行，5 次提交，跨 6 天 — 主要由 ":"15 lines across 5 commits over 6 days — mostly by ", " 与 ":" and ", " 维护。":".",
+    "路径":"Path", "状态":"Status", "当前提交":"Current commit", "分支":"Branch", "模式":"Pattern", "类型":"Type", "匹配":"Match",
+    "已检出 ✓":"Checked out ✓", "落后 3":"3 behind", "主工作树 · 当前":"Main worktree · current", "干净":"Clean", "3 处改动":"3 changes", "包含":"Include", "排除":"Exclude",
+    "1,284 文件":"1,284 files", "312 文件":"312 files"
+  }; }
+
+  componentDidMount(){
+    this._key = (e) => {
+      if((e.metaKey||e.ctrlKey) && (e.key==="k"||e.key==="K")){ e.preventDefault(); this.setState(s=>({paletteOpen:!s.paletteOpen})); }
+      if(e.key==="Escape") this.setState({paletteOpen:false});
+    };
+    window.addEventListener("keydown", this._key);
+  }
+  componentWillUnmount(){ window.removeEventListener("keydown", this._key); }
+
+  renderVals(){
+    const R = React.createElement;
+    const { theme, view, tab, sel, paletteOpen } = this.state;
+    const isMac = typeof navigator!=="undefined" && navigator.platform.toLowerCase().includes("mac");
+
+    const navDefs = [
+      { id:"changes", label:this.tr("更改"), icon:this.ic("changes"), badge:"6", tone:"warning" },
+      { id:"history", label:this.tr("历史"), icon:this.ic("history") },
+      { id:"compare", label:this.tr("比较"), icon:this.ic("compare") },
+      { id:"blame", label:this.tr("追溯"), icon:this.ic("blame") },
+      { id:"submodules", label:this.tr("子模块"), icon:this.ic("cube"), badge:"2" },
+      { id:"worktrees", label:this.tr("工作树"), icon:this.ic("tree"), badge:"3" },
+      { id:"sparse", label:this.tr("稀疏检出"), icon:this.ic("layers") },
+    ];
+    const navItems = navDefs.map((n,i) => {
+      const active = tab===n.id;
+      return {
+        label:n.label, icon:n.icon, go:()=>this.setTab(n.id),
+        bg: active ? "color-mix(in oklab, var(--accent) 13%, transparent)" : "transparent",
+        color: active ? "var(--fg)" : "var(--fg-muted)",
+        icColor: active ? "var(--accent)" : "var(--fg-subtle)",
+        weight: active ? 600 : 450,
+        badge: n.badge || "",
+        badgeBg: n.tone==="warning" ? "color-mix(in oklab, var(--warning) 16%, transparent)" : "color-mix(in oklab, var(--fg) 8%, transparent)",
+        badgeColor: n.tone==="warning" ? "var(--warning)" : "var(--fg-subtle)",
+      };
+    });
+    const navIndex = navDefs.findIndex(n=>n.id===tab);
+    const spineTop = 36 + navIndex*36 + (navIndex>=0?0:0);
+
+    return {
+      themeAttr: theme,
+      isLaunch: view==="launch",
+      isApp: view==="app",
+      paletteOpen,
+      modLabel: isMac ? "⌘K" : "Ctrl K",
+      lang: this.state.lang,
+      toggleLang: this.toggleLang,
+      langLabel: this.state.lang==="zh" ? "EN" : "中",
+      palettePlaceholder: this.tr("输入命令或搜索…"),
+      S: {
+        eyebrow:this.tr("本地优先 · 纯 Rust 内核"), sub:this.tr("大仓库也跟手。"),
+        body:this.tr("纯 Rust 内核，十几万次提交滚动也不卡。所有操作都在本地，代码不离开这台电脑。"),
+        pick:this.tr("选择仓库"), clone:this.tr("克隆"), init:this.tr("新建"), resume:this.tr("继续上次"), paletteHint:this.tr("命令面板"),
+        workspace:this.tr("工作区"), home:this.tr("主页"), themeTitle:this.tr("切换主题"), langTitle:this.tr("切换语言"), undo:this.tr("撤销"), redo:this.tr("重做"),
+      },
+      themeIcon: theme==="dark"
+        ? R("svg",{width:15,height:15,viewBox:"0 0 16 16",fill:"none",stroke:"currentColor",strokeWidth:1.5,strokeLinecap:"round"}, R("circle",{cx:8,cy:8,r:3.2}), R("path",{d:"M8 1.5v1.5M8 13v1.5M2.5 8H1M15 8h-1.5M3.8 3.8 2.8 2.8M13.2 13.2l-1-1M12.2 3.8l1-1M2.8 13.2l1-1"}))
+        : R("svg",{width:15,height:15,viewBox:"0 0 16 16",fill:"none",stroke:"currentColor",strokeWidth:1.5,strokeLinecap:"round",strokeLinejoin:"round"}, R("path",{d:"M13.5 9.2A5.5 5.5 0 0 1 6.8 2.5 5.5 5.5 0 1 0 13.5 9.2Z"})),
+      brandGlyph: this.glyph(),
+      launchGraph: this.launchMini(),
+      navItems,
+      spineTop,
+      enterApp:this.enterApp, goLaunch:this.goLaunch, toggleTheme:this.toggleTheme,
+      openPalette:this.openPalette, closePalette:this.closePalette, stop:this.stop,
+      statusFiles: this.tr(tab==="changes" ? "2 暂存 · 4 未暂存" : "13 提交 · 4 分支 · 1 远程"),
+      viewSlot: this.renderView(),
+      paletteGroups: [
+        { name:this.tr("视图"), items:[
+          { icon:this.cmdIc("search"), title:this.tr("切换到「历史」"), hint:"", run:()=>{this.setTab("history");this.closePalette();} },
+          { icon:this.cmdIc("search"), title:this.tr("切换到「更改」"), hint:"", run:()=>{this.setTab("changes");this.closePalette();} },
+        ]},
+        { name:this.tr("远程"), items:[
+          { icon:this.cmdIc("pull"), title:this.tr("Pull · 变基"), hint:"", run:this.closePalette },
+          { icon:this.cmdIc("push"), title:"Push", hint:"", run:this.closePalette },
+        ]},
+        { name:this.tr("外观"), items:[
+          { icon:this.cmdIc("theme"), title: this.tr(theme==="dark"?"切换到浅色主题":"切换到暗色主题"), hint:"", run:()=>{this.toggleTheme();this.closePalette();} },
+          { icon:this.cmdIc("search"), title:this.tr("切换到 English"), hint:"", run:()=>{this.toggleLang();this.closePalette();} },
+          { icon:this.cmdIc("log"), title:this.tr("操作日志"), hint:"", run:this.closePalette },
+        ]},
+      ],
+    };
+  }
+
+  renderView(){
+    const t = this.state.tab;
+    if(t==="changes") return this.viewChanges();
+    if(t==="compare") return this.viewCompare();
+    if(t==="blame") return this.viewBlame();
+    if(t==="submodules") return this.viewSecondary("submodules");
+    if(t==="worktrees") return this.viewSecondary("worktrees");
+    if(t==="sparse") return this.viewSecondary("sparse");
+    return this.viewHistory();
+  }
+
+  // 浮动玻璃工具栏外壳
+  floatBar(children){
+    return React.createElement("div",{ style:{ position:"absolute", left:0, right:0, top:0, zIndex:10, padding:"9px 14px" } },
+      React.createElement("div",{ className:"glass", style:{ borderRadius:"12px", display:"flex", alignItems:"center", gap:"10px", padding:"7px 10px", minHeight:"40px" } }, ...children));
+  }
+  statBadge(st){
+    const R=React.createElement;
+    const cm = { M:["var(--warning)","M"], A:["var(--success)","A"], D:["var(--danger)","D"], "?":["var(--fg-subtle)","?"], R:["var(--accent)","R"] }[st] || ["var(--fg-subtle)",st];
+    return R("span",{ className:"mono", style:{ display:"grid", placeItems:"center", width:"16px", height:"16px", borderRadius:"4px", fontSize:"10px", fontWeight:700, color:cm[0], background:`color-mix(in oklab, ${cm[0]} 15%, transparent)` } }, cm[1]);
+  }
+  diffPane(title, lines, sub){
+    const R=React.createElement;
+    const diffLine = (l,i) => {
+      if(l.k==="hunk") return R("div",{ key:i, className:"mono", style:{ padding:"3px 12px", fontSize:"11.5px", color:"var(--accent)", background:"color-mix(in oklab, var(--accent) 8%, transparent)" } }, l.t);
+      const bg = l.k==="add" ? "var(--add-bg)" : l.k==="del" ? "var(--del-bg)" : "transparent";
+      const mk = l.k==="add" ? "+" : l.k==="del" ? "−" : " ";
+      const col = l.k==="add" ? "var(--success)" : l.k==="del" ? "var(--danger)" : "var(--fg-muted)";
+      return R("div",{ key:i, className:"mono", style:{ display:"flex", fontSize:"12px", background:bg, lineHeight:"1.7" } },
+        R("span",{ style:{ width:"38px", textAlign:"right", paddingRight:"8px", color:"var(--fg-subtle)", opacity:.6, userSelect:"none", flexShrink:0 } }, l.o),
+        R("span",{ style:{ width:"38px", textAlign:"right", paddingRight:"10px", color:"var(--fg-subtle)", opacity:.6, userSelect:"none", flexShrink:0 } }, l.n),
+        R("span",{ style:{ width:"16px", color:col, flexShrink:0, textAlign:"center" } }, mk),
+        R("span",{ style:{ color: l.k==="ctx"?"var(--fg-muted)":"var(--fg)", whiteSpace:"pre" } }, l.t));
+    };
+    return R("div",{ style:{ flex:1, minWidth:0, display:"flex", flexDirection:"column", overflow:"hidden", background:"var(--canvas)" } },
+      this.floatBar([
+        R("div",{ key:"p", style:{ display:"flex", alignItems:"center", gap:"8px", flex:1, minWidth:0 } },
+          this.statBadge("M"),
+          R("span",{ key:"t", className:"mono", style:{ fontSize:"12.5px", color:"var(--fg)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" } }, title),
+          R("span",{ key:"s", className:"mono", style:{ fontSize:"11px", color:"var(--fg-subtle)", flexShrink:0 } }, sub||"")
+        ),
+        R("div",{ key:"seg", style:{ display:"flex", gap:"2px", border:"1px solid var(--line)", borderRadius:"8px", padding:"2px", flexShrink:0 } },
+          R("button",{ className:"hover-soft", style:{ border:"none", borderRadius:"6px", background:"color-mix(in oklab, var(--accent) 14%, transparent)", color:"var(--accent)", padding:"4px 10px", font:"inherit", fontSize:"11.5px", fontWeight:600, cursor:"pointer" } }, this.tr("统一")),
+          R("button",{ className:"hover-soft", style:{ border:"none", borderRadius:"6px", background:"transparent", color:"var(--fg-muted)", padding:"4px 10px", font:"inherit", fontSize:"11.5px", cursor:"pointer" } }, this.tr("并排"))
+        )
+      ]),
+      R("div",{ style:{ flex:1, minHeight:0, overflow:"auto" } },
+        R("div",{ className:"fadein", key:title, style:{ paddingTop:"58px", paddingBottom:"20px" } }, ...lines.map(diffLine)))
+    );
+  }
+
+  viewChanges(){
+    const R=React.createElement;
+    const sel = this.state.stageSel;
+    const all = [...this.unstaged];
+    const fileRow = (f, idx, staged) => {
+      const isSel = !staged && idx===sel;
+      return R("div",{ key:(staged?"s":"u")+idx, className:"hover-soft", onClick:()=>!staged&&this.setState({stageSel:idx}),
+        style:{ position:"relative", display:"flex", alignItems:"center", gap:"9px", borderRadius:"7px", padding:"7px 9px", cursor:"pointer",
+          background: isSel ? "color-mix(in oklab, var(--accent) 10%, transparent)" : "transparent" } },
+        isSel && R("div",{ key:"sp", style:{ position:"absolute", left:"-9px", top:"7px", bottom:"7px", width:"2px", borderRadius:"2px", background:"var(--accent)", boxShadow:"0 0 8px var(--accent)" } }),
+        R("button",{ className:"hover-soft", title: this.tr(staged?"取消暂存":"暂存"), onClick:(e)=>e.stopPropagation(), style:{ display:"grid", placeItems:"center", width:"18px", height:"18px", border:"1px solid var(--line-strong)", borderRadius:"5px", background: staged?"var(--accent)":"transparent", color:"#fff", cursor:"pointer", flexShrink:0 } }, staged ? R("svg",{width:11,height:11,viewBox:"0 0 16 16",fill:"none",stroke:"currentColor",strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round"}, R("path",{d:"M3.5 8.5 7 12l5.5-7"})) : null),
+        this.statBadge(f.st),
+        R("span",{ className:"mono", style:{ flex:1, minWidth:0, fontSize:"12px", color: isSel?"var(--fg)":"var(--fg-muted)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", direction:"rtl", textAlign:"left" } }, f.path),
+        f.add>0 && R("span",{ className:"mono", style:{ fontSize:"11px", color:"var(--success)", flexShrink:0 } }, "+"+f.add),
+        f.del>0 && R("span",{ className:"mono", style:{ fontSize:"11px", color:"var(--danger)", flexShrink:0 } }, "−"+f.del)
+      );
+    };
+    const sectionHead = (label, count, action) => R("div",{ style:{ display:"flex", alignItems:"center", gap:"8px", padding:"10px 4px 6px" } },
+      R("span",{ style:{ fontSize:"11px", fontWeight:600, letterSpacing:".04em", textTransform:"uppercase", color:"var(--fg-subtle)" } }, label),
+      R("span",{ className:"mono", style:{ borderRadius:"999px", background:"color-mix(in oklab, var(--fg) 8%, transparent)", padding:"0 7px", fontSize:"10px", color:"var(--fg-subtle)" } }, count),
+      R("button",{ className:"hover-soft", style:{ marginLeft:"auto", border:"none", borderRadius:"6px", background:"transparent", padding:"3px 8px", font:"inherit", fontSize:"11px", color:"var(--accent)", cursor:"pointer" } }, action)
+    );
+
+    const left = R("div",{ style:{ position:"relative", width:"352px", flexShrink:0, borderRight:"1px solid var(--line)", display:"flex", flexDirection:"column", overflow:"hidden", background:"color-mix(in oklab, var(--elevated) 35%, transparent)" } },
+      this.floatBar([
+        R("span",{ key:"t", style:{ flex:1, fontSize:"12.5px", fontWeight:600 } }, this.tr("工作区更改")),
+        R("button",{ key:"r", className:"hover-soft", title:this.tr("刷新"), style:{ display:"grid", placeItems:"center", width:"28px", height:"28px", border:"1px solid var(--line)", borderRadius:"7px", background:"transparent", color:"var(--fg-muted)", cursor:"pointer" } }, R("svg",{width:13,height:13,viewBox:"0 0 16 16",fill:"none",stroke:"currentColor",strokeWidth:1.6,strokeLinecap:"round"}, R("path",{d:"M13 8a5 5 0 1 1-1.5-3.5M13 2v3h-3"})))
+      ]),
+      R("div",{ style:{ flex:1, minHeight:0, overflow:"auto", padding:"58px 12px 12px" } },
+        sectionHead(this.tr("未暂存"), this.unstaged.length, this.tr("全部暂存")),
+        ...this.unstaged.map((f,i)=>fileRow(f,i,false)),
+        sectionHead(this.tr("已暂存"), this.staged.length, this.tr("全部取消")),
+        ...this.staged.map((f,i)=>fileRow(f,i,true))
+      ),
+      // 提交盒
+      R("div",{ style:{ borderTop:"1px solid var(--line)", padding:"12px", background:"var(--canvas)" } },
+        R("div",{ style:{ border:"1px solid var(--line)", borderRadius:"10px", overflow:"hidden", background:"color-mix(in oklab, var(--elevated) 50%, transparent)" } },
+          R("textarea",{ rows:3, placeholder:this.tr("提交信息 — 概述本次改动…"), style:{ width:"100%", resize:"none", border:"none", background:"transparent", padding:"10px 12px", font:"inherit", fontSize:"13px", color:"var(--fg)", outline:"none", boxSizing:"border-box" } }),
+          R("div",{ style:{ display:"flex", alignItems:"center", gap:"8px", padding:"8px 10px", borderTop:"1px solid var(--line)" } },
+            R("label",{ style:{ display:"flex", alignItems:"center", gap:"6px", fontSize:"11.5px", color:"var(--fg-muted)", cursor:"pointer" } }, R("input",{type:"checkbox", style:{accentColor:"var(--accent)"}}), this.tr("修正(amend)")),
+            R("span",{ className:"mono", style:{ fontSize:"10.5px", color:"var(--fg-subtle)" } }, this.tr("2 暂存")),
+            R("button",{ className:"hover-soft", style:{ marginLeft:"auto", display:"flex", alignItems:"center", gap:"6px", border:"none", borderRadius:"8px", background:"var(--accent)", padding:"7px 16px", font:"inherit", fontSize:"12.5px", fontWeight:600, color:"#fff", cursor:"pointer" } },
+              R("svg",{width:13,height:13,viewBox:"0 0 16 16",fill:"none",stroke:"currentColor",strokeWidth:1.7,strokeLinecap:"round",strokeLinejoin:"round"}, R("path",{d:"M3.5 8.5 7 12l5.5-7"})), this.tr("提交到 main"))
+          )
+        )
+      )
+    );
+
+    const f = all[sel] || all[0];
+    const right = this.diffPane(f.path, this.changesDiff, "+"+f.add+" −"+f.del);
+    return R("div",{ style:{ display:"flex", height:"100%" } }, left, right);
+  }
+
+  get changesDiff(){
+    return [
+      { k:"hunk", t:"@@ -42,6 +42,9 @@ export function DiffView({ diff }: Props) {" },
+      { k:"ctx", o:"42", n:"42", t:"  const rows = useMemo(() => diffRows(diff), [diff]);" },
+      { k:"ctx", o:"43", n:"43", t:"  const parentRef = useRef<HTMLDivElement>(null);" },
+      { k:"del", o:"44", n:"",   t:"  const virt = useVirtualizer({ count: rows.length });" },
+      { k:"add", o:"",   n:"44", t:"  const virt = useVirtualizer({" },
+      { k:"add", o:"",   n:"45", t:"    count: rows.length," },
+      { k:"add", o:"",   n:"46", t:"    estimateSize: () => 22," },
+      { k:"add", o:"",   n:"47", t:"    overscan: 24," },
+      { k:"add", o:"",   n:"48", t:"  });" },
+      { k:"ctx", o:"45", n:"49", t:"  return (" },
+      { k:"ctx", o:"46", n:"50", t:"    <div ref={parentRef} className=\"diff-scroll\">" },
+    ];
+  }
+
+  viewCompare(){
+    const R=React.createElement;
+    const refPill = (label, kind) => R("button",{ className:"hover-soft", style:{ display:"flex", alignItems:"center", gap:"6px", border:"1px solid var(--line)", borderRadius:"8px", background:"color-mix(in oklab, var(--canvas) 50%, transparent)", padding:"5px 11px", font:"inherit", cursor:"pointer" } },
+      R("span",{ style:{ fontSize:"9px", fontWeight:600, letterSpacing:".05em", textTransform:"uppercase", color:"var(--fg-subtle)" } }, kind),
+      R("span",{ className:"mono", style:{ fontSize:"12.5px", fontWeight:500, color:"var(--fg)" } }, label),
+      R("svg",{width:10,height:10,viewBox:"0 0 16 16",fill:"none",stroke:"var(--fg-subtle)",strokeWidth:1.6,strokeLinecap:"round"}, R("path",{d:"M4 6l4 4 4-4"}))
+    );
+    const sel = this.state.cmpSel;
+    const files = this.detailFiles;
+    const fileRow = (f,i) => {
+      const isSel = i===sel;
+      return R("div",{ key:i, className:"hover-soft", onClick:()=>this.setState({cmpSel:i}),
+        style:{ position:"relative", display:"flex", alignItems:"center", gap:"9px", borderRadius:"7px", padding:"7px 9px", cursor:"pointer", background: isSel?"color-mix(in oklab, var(--accent) 10%, transparent)":"transparent" } },
+        isSel && R("div",{ key:"sp", style:{ position:"absolute", left:"-9px", top:"7px", bottom:"7px", width:"2px", borderRadius:"2px", background:"var(--accent)", boxShadow:"0 0 8px var(--accent)" } }),
+        this.statBadge(f.st),
+        R("span",{ className:"mono", style:{ flex:1, minWidth:0, fontSize:"12px", color: isSel?"var(--fg)":"var(--fg-muted)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", direction:"rtl", textAlign:"left" } }, f.path),
+        f.add>0 && R("span",{ className:"mono", style:{ fontSize:"11px", color:"var(--success)", flexShrink:0 } }, "+"+f.add),
+        f.del>0 && R("span",{ className:"mono", style:{ fontSize:"11px", color:"var(--danger)", flexShrink:0 } }, "−"+f.del)
+      );
+    };
+    const left = R("div",{ style:{ position:"relative", width:"340px", flexShrink:0, borderRight:"1px solid var(--line)", display:"flex", flexDirection:"column", overflow:"hidden", background:"color-mix(in oklab, var(--elevated) 35%, transparent)" } },
+      this.floatBar([
+        refPill("origin/main",this.tr("从")),
+        R("svg",{key:"ar",width:14,height:14,viewBox:"0 0 16 16",fill:"none",stroke:"var(--fg-subtle)",strokeWidth:1.6,strokeLinecap:"round"}, R("path",{d:"M3 8h10M9 4l4 4-4 4"})),
+        refPill("main",this.tr("到")),
+        R("button",{key:"sw",className:"hover-soft",title:this.tr("交换"),style:{marginLeft:"auto",display:"grid",placeItems:"center",width:"28px",height:"28px",border:"1px solid var(--line)",borderRadius:"7px",background:"transparent",color:"var(--fg-muted)",cursor:"pointer"}}, R("svg",{width:13,height:13,viewBox:"0 0 16 16",fill:"none",stroke:"currentColor",strokeWidth:1.6,strokeLinecap:"round",strokeLinejoin:"round"}, R("path",{d:"M4 5h8l-2-2M12 11H4l2 2"})))
+      ]),
+      R("div",{ style:{ flex:1, minHeight:0, overflow:"auto", padding:"58px 12px 12px" } },
+        R("div",{ style:{ padding:"2px 2px 14px", marginBottom:"8px", borderBottom:"1px solid var(--line)" } },
+          R("div",{ style:{ display:"flex", alignItems:"baseline", gap:"12px" } },
+            R("span",{ className:"serif", style:{ fontSize:"30px", color:"var(--success)", lineHeight:1 } }, "+170"),
+            R("span",{ className:"serif", style:{ fontSize:"30px", color:"var(--danger)", lineHeight:1 } }, "−32")
+          ),
+          R("p",{ style:{ margin:"9px 0 0", fontSize:"12.5px", color:"var(--fg-muted)" } }, this.tr("main 领先 origin/main 2 个提交 · 4 文件改动"))
+        ),
+        ...files.map(fileRow)
+      )
+    );
+    const f = files[sel]||files[0];
+    const right = this.diffPane(f.path, this.detailDiff, "+"+f.add+" −"+f.del);
+    return R("div",{ style:{ display:"flex", height:"100%" } }, left, right);
+  }
+
+  viewBlame(){
+    const R=React.createElement;
+    const heat = ["var(--accent)","color-mix(in oklab, var(--accent) 70%, var(--fg-subtle))","color-mix(in oklab, var(--accent) 40%, var(--fg-subtle))","color-mix(in oklab, var(--accent) 20%, var(--fg-subtle))","var(--fg-subtle)"];
+    const lines = this.blameLines;
+    let groupIdx = -1;
+    const rows = lines.map((l,i)=>{
+      const prev = lines[i-1];
+      const firstOfGroup = !prev || prev.sha!==l.sha;
+      if(firstOfGroup) groupIdx++;
+      const band = groupIdx%2===1 ? "color-mix(in oklab, var(--fg) 2.5%, transparent)" : "transparent";
+      return R("div",{ key:i, className:"hover-row", style:{ display:"flex", alignItems:"stretch", minHeight:"23px", lineHeight:"23px", background:band, borderTop:(firstOfGroup && i>0)?"1px solid var(--line)":"none" } },
+        R("div",{ style:{ width:"252px", flexShrink:0, display:"flex", alignItems:"center", gap:"10px", paddingRight:"14px", borderRight:"1px solid var(--line)", overflow:"hidden" } },
+          R("span",{ style:{ width:"3px", alignSelf:"stretch", background:heat[l.age], opacity: firstOfGroup?1:.3, flexShrink:0 } }),
+          firstOfGroup ? R("span",{ className:"mono", style:{ fontSize:"11px", fontWeight:600, color:heat[l.age], width:"58px", flexShrink:0 } }, l.sha) : R("span",{style:{width:"58px",flexShrink:0}}),
+          firstOfGroup ? R("span",{ style:{ fontSize:"11.5px", color:"var(--fg-muted)", flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" } }, l.who) : R("span",{style:{flex:1}}),
+          firstOfGroup ? R("span",{ className:"mono", style:{ fontSize:"10.5px", color:"var(--fg-subtle)", flexShrink:0 } }, l.t) : null
+        ),
+        R("span",{ className:"mono", style:{ width:"48px", flexShrink:0, textAlign:"right", paddingRight:"16px", fontSize:"11.5px", color:"var(--fg-subtle)", opacity:.5, userSelect:"none" } }, l.no),
+        R("span",{ className:"mono", style:{ fontSize:"12.5px", color:"var(--fg)", whiteSpace:"pre", paddingLeft:"8px" } }, l.t2)
+      );
+    });
+    return R("div",{ style:{ position:"relative", height:"100%", display:"flex", flexDirection:"column", overflow:"hidden", background:"var(--canvas)" } },
+      this.floatBar([
+        R("div",{key:"p",style:{display:"flex",alignItems:"center",gap:"8px",flex:1,minWidth:0}},
+          R("svg",{width:13,height:13,viewBox:"0 0 16 16",fill:"none",stroke:"var(--fg-subtle)",strokeWidth:1.6}, R("rect",{x:2.5,y:2.5,width:11,height:11,rx:1.5}),R("path",{d:"M6 6h4M6 8.5h4M6 11h2"})),
+          R("span",{className:"mono",style:{fontSize:"12.5px",color:"var(--fg)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}, "app/src/lib/diffRows.ts"),
+          R("span",{className:"mono",style:{fontSize:"11px",color:"var(--fg-subtle)",flexShrink:0}}, this.tr("15 行 · 5 次提交"))
+        ),
+        R("div",{key:"leg",style:{display:"flex",alignItems:"center",gap:"6px",flexShrink:0}},
+          R("span",{style:{fontSize:"10px",color:"var(--fg-subtle)"}},this.state.lang==="en"?"new":"新"),
+          ...heat.map((c,i)=>R("span",{key:i,style:{width:"12px",height:"6px",borderRadius:"2px",background:c}})),
+          R("span",{style:{fontSize:"10px",color:"var(--fg-subtle)"}},this.state.lang==="en"?"old":"旧")
+        )
+      ]),
+      R("div",{ style:{ flex:1, minHeight:0, overflow:"auto" } },
+        R("div",{ className:"fadein", style:{ paddingTop:"58px", paddingBottom:"20px" } },
+          R("div",{ style:{ padding:"2px 24px 16px", marginBottom:"6px", borderBottom:"1px solid var(--line)" } },
+            R("div",{ className:"serif", style:{ fontSize:"24px", color:"var(--fg)", lineHeight:1.1 } }, "diffRows.ts"),
+            R("p",{ style:{ margin:"7px 0 0", fontSize:"13px", color:"var(--fg-muted)", lineHeight:1.5 } }, this.tr("15 行，5 次提交，跨 6 天 — 主要由 "), R("span",{style:{color:"var(--fg)",fontWeight:500}},"jiang.k"), this.tr(" 与 "), R("span",{style:{color:"var(--fg)",fontWeight:500}},"m.wei"), this.tr(" 维护。"))
+          ),
+          ...rows))
+    );
+  }
+
+  viewSecondary(kind){
+    const R=React.createElement;
+    const T=(s)=>this.tr(s);
+    const data = {
+      submodules: { title:T("子模块"), icon:this.ic("cube"), cols:[T("路径"),"URL",T("状态"),T("当前提交")], rows:[
+        ["vendor/git-core","github.com/strata/git-core",T("已检出 ✓"),"a7f3c91"],
+        ["vendor/ipc-types","github.com/strata/ipc",T("落后 3"),"2d9e718"],
+      ]},
+      worktrees: { title:T("工作树"), icon:this.ic("tree"), cols:[T("路径"),T("分支"),"HEAD",T("状态")], rows:[
+        ["~/dev/strata-git","main","a7f3c91",T("主工作树 · 当前")],
+        ["~/dev/strata-hotfix","hotfix/lane-geom","7a44f12",T("干净")],
+        ["~/dev/strata-rfc","feat/rfc-019","c5e8b30",T("3 处改动")],
+      ]},
+      sparse: { title:T("稀疏检出"), icon:this.ic("layers"), cols:[T("模式"),T("类型"),T("匹配")], rows:[
+        ["/app/",T("包含"),T("1,284 文件")],
+        ["/crates/git-core/",T("包含"),T("312 文件")],
+        ["/docs/",T("排除"),"—"],
+      ]},
+    }[kind];
+    const header = R("div",{ style:{ display:"flex", alignItems:"center", gap:"10px", padding:"4px 4px 16px" } },
+      R("span",{ style:{ display:"grid", placeItems:"center", width:"34px", height:"34px", borderRadius:"9px", background:"color-mix(in oklab, var(--accent) 14%, transparent)", color:"var(--accent)" } }, data.icon),
+      R("div",null, R("h2",{className:"serif", style:{margin:0,fontSize:"27px",fontWeight:400,letterSpacing:"0",lineHeight:1.1}}, data.title),
+        R("p",{className:"mono",style:{margin:"2px 0 0",fontSize:"11.5px",color:"var(--fg-subtle)"}}, data.rows.length+(this.state.lang==="en"?" items":" 项")))
+    );
+    const table = R("div",{ style:{ border:"1px solid var(--line)", borderRadius:"12px", overflow:"hidden", background:"color-mix(in oklab, var(--elevated) 40%, transparent)" } },
+      R("div",{ style:{ display:"flex", padding:"9px 16px", borderBottom:"1px solid var(--line)", background:"color-mix(in oklab, var(--elevated) 60%, transparent)" } },
+        ...data.cols.map((c,i)=>R("span",{key:i,style:{flex: i===0?2:1, fontSize:"10.5px",fontWeight:600,letterSpacing:".05em",textTransform:"uppercase",color:"var(--fg-subtle)"}}, c))),
+      ...data.rows.map((row,ri)=>R("div",{key:ri, className:"hover-row", style:{ display:"flex", alignItems:"center", padding:"11px 16px", borderBottom: ri<data.rows.length-1?"1px solid var(--line)":"none", cursor:"pointer" } },
+        ...row.map((cell,ci)=>R("span",{key:ci, className: ci===0||ci===row.length-1?"mono":"", style:{ flex: ci===0?2:1, fontSize:"12.5px", color: ci===0?"var(--fg)":"var(--fg-muted)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", paddingRight:"10px" } }, cell))
+      ))
+    );
+    return R("div",{ style:{ position:"relative", height:"100%", overflow:"auto" } },
+      R("div",{ className:"fadein", style:{ maxWidth:"860px", margin:"0 auto", padding:"32px 28px" } }, header, table));
+  }
+
+  viewHistory(){
+    const R = React.createElement;
+    const sel = this.state.sel;
+    const c = this.commits[sel];
+    const barH = 56;
+    // 左:图谱 + 列表  右:详情
+    const refChip = (r) => {
+      const map = { head:["var(--accent)","color-mix(in oklab, var(--accent) 16%, transparent)"], remote:["var(--fg-muted)","color-mix(in oklab, var(--fg) 8%, transparent)"], tag:["var(--warning)","color-mix(in oklab, var(--warning) 16%, transparent)"] };
+      const [fg,bg]=map[r.k]||map.remote;
+      return R("span",{key:r.n, className:"mono", style:{ display:"inline-flex", alignItems:"center", gap:"4px", borderRadius:"5px", background:bg, padding:"1px 7px", fontSize:"10.5px", fontWeight:600, color:fg } },
+        r.k==="tag" ? R("svg",{width:9,height:9,viewBox:"0 0 16 16",fill:"none",stroke:"currentColor",strokeWidth:1.8}, R("path",{d:"M2 7 7 2h5v5l-5 5z"}), R("circle",{cx:9.5,cy:5.5,r:.6,fill:"currentColor"}))
+          : R("svg",{width:9,height:9,viewBox:"0 0 16 16",fill:"none",stroke:"currentColor",strokeWidth:1.8,strokeLinecap:"round"}, R("circle",{cx:4,cy:3.5,r:1.5}),R("circle",{cx:4,cy:12.5,r:1.5}),R("circle",{cx:12,cy:3.5,r:1.5}),R("path",{d:"M4 5v6M12 5v1a3 3 0 0 1-3 3H4"})),
+        r.n);
+    };
+    const rows = this.commits.map((cm,i)=>{
+      const isSel = i===sel;
+      return R("div",{ key:i, className:"hover-row", onClick:()=>this.setState({sel:i}),
+        style:{ position:"relative", display:"flex", alignItems:"center", height:"56px", paddingLeft:"112px", paddingRight:"14px", cursor:"pointer",
+          background: isSel ? "color-mix(in oklab, var(--accent) 9%, transparent)" : "transparent" } },
+        isSel && R("div",{ key:"sp", style:{ position:"absolute", left:0, top:"8px", bottom:"8px", width:"2px", borderRadius:"0 2px 2px 0", background:"var(--accent)", boxShadow:"0 0 8px var(--accent)" } }),
+        R("div",{ key:"m", style:{ minWidth:0, flex:1, display:"flex", flexDirection:"column", gap:"3px" } },
+          R("div",{ style:{ display:"flex", alignItems:"center", gap:"7px", minWidth:0 } },
+            cm.refs.map(refChip),
+            R("span",{ style:{ fontSize:"13.5px", fontWeight: isSel?600:450, color: cm.merge?"var(--fg-muted)":"var(--fg)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" } }, this.tr(cm.msg))
+          ),
+          R("div",{ className:"mono", style:{ fontSize:"11px", color:"var(--fg-subtle)", display:"flex", gap:"8px" } }, R("span",null,cm.who))
+        ),
+        R("div",{ key:"t", style:{ fontSize:"11px", color:"var(--fg-subtle)", width:"62px", textAlign:"right", flexShrink:0 } }, this.tr(cm.t)),
+        R("div",{ key:"s", className:"mono", style:{ fontSize:"11.5px", color: isSel?"var(--accent)":"var(--fg-subtle)", width:"54px", textAlign:"right", flexShrink:0 } }, cm.sha)
+      );
+    });
+
+    const left = R("div",{ style:{ position:"relative", flex:1, minWidth:0, display:"flex", flexDirection:"column", overflow:"hidden" } },
+      // 浮动玻璃工具栏
+      R("div",{ style:{ position:"absolute", left:0, right:0, top:0, zIndex:10, padding:"9px 14px" } },
+        R("div",{ className:"glass", style:{ borderRadius:"12px", display:"flex", alignItems:"center", gap:"10px", padding:"7px 10px" } },
+          R("div",{ style:{ display:"flex", alignItems:"center", gap:"7px", flex:1, minWidth:"60px", border:"1px solid var(--line)", borderRadius:"8px", background:"color-mix(in oklab, var(--canvas) 50%, transparent)", padding:"5px 10px" } },
+            R("svg",{width:13,height:13,viewBox:"0 0 16 16",fill:"none",stroke:"var(--fg-subtle)",strokeWidth:1.6,style:{flexShrink:0}}, R("circle",{cx:7,cy:7,r:4.5}),R("path",{d:"m11 11 3 3"})),
+            R("span",{ style:{ fontSize:"12.5px", color:"var(--fg-subtle)", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" } }, this.tr("搜索提交 · 作者 · SHA"))
+          ),
+          R("div",{ style:{ display:"flex", gap:"2px", border:"1px solid var(--line)", borderRadius:"8px", padding:"2px" } },
+            R("button",{ className:"hover-soft", style:{ border:"none", borderRadius:"6px", background:"color-mix(in oklab, var(--accent) 14%, transparent)", color:"var(--accent)", padding:"4px 11px", font:"inherit", fontSize:"12px", fontWeight:600, cursor:"pointer" } }, this.tr("图谱")),
+            R("button",{ className:"hover-soft", style:{ border:"none", borderRadius:"6px", background:"transparent", color:"var(--fg-muted)", padding:"4px 11px", font:"inherit", fontSize:"12px", cursor:"pointer" } }, this.tr("列表"))
+          ),
+          R("span",{ className:"mono", style:{ fontSize:"11px", color:"var(--fg-subtle)" } }, this.tr("13 提交"))
+        )
+      ),
+      // 滚动体
+      R("div",{ style:{ flex:1, minHeight:0, overflow:"auto" } },
+        R("div",{ style:{ position:"relative", paddingTop:barH+"px" } },
+          R("div",{ style:{ position:"absolute", left:"12px", top:barH+"px", pointerEvents:"none" } }, this.buildGraph(sel)),
+          R("div",{ className:"fadein", style:{ position:"relative" } }, ...rows)
+        )
+      )
+    );
+
+    const right = this.commitDetail(c);
+    return R("div",{ style:{ display:"flex", height:"100%" } }, left, right);
+  }
+
+  commitDetail(c){
+    const R = React.createElement;
+    const stat = (f) => {
+      const cm = { M:["var(--warning)","M"], A:["var(--success)","A"], D:["var(--danger)","D"], "?":["var(--fg-subtle)","?"] }[f.st] || ["var(--fg-subtle)",f.st];
+      return R("span",{ className:"mono", style:{ display:"grid", placeItems:"center", width:"16px", height:"16px", borderRadius:"4px", fontSize:"10px", fontWeight:700, color:cm[0], background:`color-mix(in oklab, ${cm[0]} 15%, transparent)` } }, cm[1]);
+    };
+    const fileRow = (f,i) => R("div",{ key:i, className:"hover-soft", style:{ display:"flex", alignItems:"center", gap:"9px", borderRadius:"7px", padding:"6px 9px", cursor:"pointer" } },
+      stat(f),
+      R("span",{ className:"mono", style:{ flex:1, minWidth:0, fontSize:"12px", color:"var(--fg-muted)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", direction:"rtl", textAlign:"left" } }, f.path),
+      f.add>0 && R("span",{ className:"mono", style:{ fontSize:"11px", color:"var(--success)" } }, "+"+f.add),
+      f.del>0 && R("span",{ className:"mono", style:{ fontSize:"11px", color:"var(--danger)" } }, "−"+f.del)
+    );
+    const diffLine = (l,i) => {
+      if(l.k==="hunk") return R("div",{ key:i, className:"mono", style:{ padding:"3px 12px", fontSize:"11.5px", color:"var(--accent)", background:"color-mix(in oklab, var(--accent) 8%, transparent)" } }, l.t);
+      const bg = l.k==="add" ? "var(--add-bg)" : l.k==="del" ? "var(--del-bg)" : "transparent";
+      const mk = l.k==="add" ? "+" : l.k==="del" ? "−" : " ";
+      const col = l.k==="add" ? "var(--success)" : l.k==="del" ? "var(--danger)" : "var(--fg-muted)";
+      return R("div",{ key:i, className:"mono", style:{ display:"flex", fontSize:"12px", background:bg, lineHeight:"1.65" } },
+        R("span",{ style:{ width:"34px", textAlign:"right", paddingRight:"8px", color:"var(--fg-subtle)", opacity:.7, userSelect:"none", flexShrink:0 } }, l.o),
+        R("span",{ style:{ width:"34px", textAlign:"right", paddingRight:"10px", color:"var(--fg-subtle)", opacity:.7, userSelect:"none", flexShrink:0 } }, l.n),
+        R("span",{ style:{ width:"14px", color:col, flexShrink:0, textAlign:"center" } }, mk),
+        R("span",{ style:{ color: l.k==="ctx"?"var(--fg-muted)":"var(--fg)", whiteSpace:"pre" } }, l.t)
+      );
+    };
+    const mono = c.who.slice(0,2).toUpperCase();
+    return R("div",{ style:{ width:"388px", flexShrink:0, borderLeft:"1px solid var(--line)", background:"color-mix(in oklab, var(--elevated) 35%, transparent)", display:"flex", flexDirection:"column", overflow:"hidden" } },
+      R("div",{ style:{ flex:1, minHeight:0, overflow:"auto" } },
+        R("div",{ className:"fadein", key:c.sha, style:{ padding:"18px 18px 14px" } },
+          R("div",{ style:{ display:"flex", alignItems:"center", gap:"8px", marginBottom:"14px" } },
+            R("span",{ className:"mono", style:{ borderRadius:"6px", border:"1px solid var(--line)", background:"var(--canvas)", padding:"3px 8px", fontSize:"12px", fontWeight:600, color:"var(--accent)" } }, c.sha),
+            R("button",{ className:"hover-soft", title:this.tr("复制 SHA"), style:{ display:"grid", placeItems:"center", width:"26px", height:"26px", border:"1px solid var(--line)", borderRadius:"6px", background:"transparent", color:"var(--fg-subtle)", cursor:"pointer" } }, R("svg",{width:12,height:12,viewBox:"0 0 16 16",fill:"none",stroke:"currentColor",strokeWidth:1.5}, R("rect",{x:5.5,y:5.5,width:8,height:8,rx:1.5}),R("path",{d:"M3.5 10.5h-1v-8h8v1"}))),
+            R("div",{ style:{ marginLeft:"auto", display:"flex", gap:"6px" } },
+              R("button",{ className:"hover-soft", style:{ border:"1px solid var(--line)", borderRadius:"7px", background:"transparent", padding:"5px 11px", font:"inherit", fontSize:"12px", color:"var(--fg-muted)", cursor:"pointer" } }, this.tr("检出")),
+              R("button",{ className:"hover-soft", style:{ border:"1px solid var(--line)", borderRadius:"7px", background:"transparent", padding:"5px 9px", font:"inherit", fontSize:"12px", color:"var(--fg-muted)", cursor:"pointer" } }, "···")
+            )
+          ),
+          R("h2",{ className:"serif", style:{ margin:"0 0 14px", fontSize:"25px", lineHeight:1.18, fontWeight:400, letterSpacing:"0", textWrap:"pretty", color:"var(--fg)" } }, this.tr(c.msg)),
+          R("div",{ style:{ display:"flex", alignItems:"center", gap:"10px", paddingBottom:"14px", marginBottom:"14px", borderBottom:"1px solid var(--line)" } },
+            R("div",{ style:{ display:"grid", placeItems:"center", width:"30px", height:"30px", borderRadius:"8px", background:"color-mix(in oklab, var(--accent) 16%, transparent)", color:"var(--accent)", fontSize:"11px", fontWeight:600 } }, mono),
+            R("div",{ style:{ minWidth:0, flex:1 } },
+              R("div",{ style:{ fontSize:"13px", fontWeight:500 } }, c.who),
+              R("div",{ className:"mono", style:{ fontSize:"11px", color:"var(--fg-subtle)" } }, c.who+"@strata.dev · "+this.tr(c.t))
+            ),
+            R("span",{ className:"mono", style:{ display:"flex", alignItems:"center", gap:"4px", fontSize:"11px", color:"var(--success)" } }, R("svg",{width:11,height:11,viewBox:"0 0 16 16",fill:"none",stroke:"currentColor",strokeWidth:1.6}, R("path",{d:"M8 1.5 3 3.5v3.2C3 10 5 12.6 8 14c3-1.4 5-4 5-7.3V3.5L8 1.5Z"}),R("path",{d:"M6 8l1.5 1.5L10.5 6.5"})), this.tr("已验签"))
+          ),
+          R("div",{ style:{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:"6px" } },
+            R("span",{ style:{ fontSize:"11px", fontWeight:600, letterSpacing:".04em", textTransform:"uppercase", color:"var(--fg-subtle)" } }, this.tr("变更文件")),
+            R("span",{ className:"mono", style:{ fontSize:"11px", color:"var(--fg-subtle)" } }, this.detailFiles.length+(this.state.lang==="en"?" files · +170 −32":" 文件 · +170 −32"))
+          ),
+          R("div",{ style:{ marginBottom:"6px" } }, ...this.detailFiles.map(fileRow))
+        ),
+        R("div",{ style:{ borderTop:"1px solid var(--line)" } },
+          R("div",{ style:{ padding:"10px 18px 4px", display:"flex", alignItems:"center", gap:"8px" } },
+            R("span",{ className:"mono", style:{ fontSize:"12px", color:"var(--fg-muted)" } }, "diff/stream.rs"),
+            R("span",{ className:"mono", style:{ fontSize:"11px", color:"var(--fg-subtle)" } }, this.tr("统一视图"))
+          ),
+          R("div",{ style:{ paddingBottom:"16px" } }, ...this.detailDiff.map(diffLine))
+        )
+      )
+    );
+  }
+}
+</script>
+</body>
+</html>

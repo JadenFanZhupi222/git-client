@@ -223,6 +223,22 @@ export const CloudIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+// 追溯 blame:框 + 行(代码块逐行归属)。
+export const BlameIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
+    <path d="M6 6h4M6 8.5h4M6 11h2" />
+  </svg>
+);
+
+// 地球:语言切换(经线 + 纬线)。
+export const GlobeIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p} strokeWidth={1.4}>
+    <circle cx="8" cy="8" r="6.2" />
+    <path d="M2 8h12M8 2a9 9 0 0 1 0 12M8 2a9 9 0 0 0 0 12" />
+  </svg>
+);
+
 // 拖拽手柄:两列六点(drag-handle / grip),提示「可拖动」。
 export const GripIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p} strokeWidth={0} fill="currentColor">

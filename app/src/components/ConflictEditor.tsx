@@ -7,6 +7,7 @@ import { useConflictSides, useFileText, invalidateWorktree, qk } from "../lib/qu
 import { buildMergeModel, type MergeModel, type MergeRegion, type Spacer } from "../lib/mergeModel";
 import { useToast } from "./Toast";
 import { Button } from "./ui/Button";
+import { useT } from "../lib/i18n";
 
 const LH = 18; // 行高(px),与下方 theme 里的 line-height 严格一致,占位行高度据此换算
 
@@ -63,11 +64,13 @@ class AcceptWidget extends WidgetType {
     readonly theirs: boolean,
     readonly conflict: boolean,
     readonly onPick: (idx: number, side: "o" | "t") => void,
+    readonly oursLabel: string,
+    readonly theirsLabel: string,
   ) {
     super();
   }
   eq(o: AcceptWidget) {
-    return o.idx === this.idx && o.ours === this.ours && o.theirs === this.theirs && o.conflict === this.conflict;
+    return o.idx === this.idx && o.ours === this.ours && o.theirs === this.theirs && o.conflict === this.conflict && o.oursLabel === this.oursLabel && o.theirsLabel === this.theirsLabel;
   }
   toDOM() {
     const wrap = document.createElement("div");
@@ -85,8 +88,8 @@ class AcceptWidget extends WidgetType {
       };
       return b;
     };
-    if (this.ours) bar.appendChild(mk("用我方", "o", "ours"));
-    if (this.theirs) bar.appendChild(mk("用对方", "t", "theirs"));
+    if (this.ours) bar.appendChild(mk(this.oursLabel, "o", "ours"));
+    if (this.theirs) bar.appendChild(mk(this.theirsLabel, "t", "theirs"));
     wrap.appendChild(bar);
     return wrap;
   }
@@ -157,6 +160,7 @@ function lineHi(doc: Text, from: number, to: number, cls: string): Range<Decorat
 
 /** 三栏合并冲突编辑器(对标 JetBrains):左=我方(只读)/ 中=可编辑结果 / 右=对方(只读)。 */
 export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
+  const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
   const sidesQ = useConflictSides(repo, file);
@@ -224,7 +228,7 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
         // 真冲突两侧按钮都给;单边变更只给那一边。
         ranges.push(
           Decoration.widget({
-            widget: new AcceptWidget(idx, r.oursChanged || r.conflict, r.theirsChanged || r.conflict, r.conflict, handlePick),
+            widget: new AcceptWidget(idx, r.oursChanged || r.conflict, r.theirsChanged || r.conflict, r.conflict, handlePick, t("conflictEd.useOurs"), t("conflictEd.useTheirs")),
             block: true,
             side: -1,
           }).range(pos),
@@ -301,8 +305,8 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
     };
   }, [ready, repo, file, oursStr, theirsStr, baseStr, initialResult]);
 
-  if (sidesQ.isLoading || workingQ.isLoading) return <Center>加载冲突内容…</Center>;
-  if (sidesQ.error || workingQ.error) return <Center>无法读取冲突内容</Center>;
+  if (sidesQ.isLoading || workingQ.isLoading) return <Center>{t("conflictEd.loading")}</Center>;
+  if (sidesQ.error || workingQ.error) return <Center>{t("conflictEd.readFailed")}</Center>;
 
   const replaceAll = (text: string) => {
     const v = resultViewRef.current;
@@ -318,7 +322,7 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
       await writeResolved(repo, file, v.state.doc.toString());
       invalidateWorktree(qc, repo);
       qc.invalidateQueries({ queryKey: qk.repoState(repo) });
-      toast({ kind: "success", title: "已解决并标记" });
+      toast({ kind: "success", title: t("conflictEd.resolved") });
     } catch (e) {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
@@ -330,34 +334,34 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-1.5 text-xs">
         <span className={remaining > 0 ? "text-warning" : "text-fg-muted"}>
-          {remaining > 0 ? `${remaining} 处冲突` : "无冲突"}
+          {remaining > 0 ? t("conflictEd.nConflicts", { n: remaining }) : t("conflictEd.noConflict")}
         </span>
-        <span className="text-fg-subtle">· 每块「用我方/用对方」一键并入，中间结果可直接编辑</span>
+        <span className="text-fg-subtle">{t("conflictEd.hint")}</span>
         <div className="ml-auto flex items-center gap-1.5">
           <Button variant="ghost" size="sm" onClick={() => replaceAll(oursStr)}>
-            全用我方
+            {t("conflictEd.allOurs")}
           </Button>
           <Button variant="ghost" size="sm" onClick={() => replaceAll(theirsStr)}>
-            全用对方
+            {t("conflictEd.allTheirs")}
           </Button>
           <Button
             variant="commit"
             size="sm"
             onClick={apply}
             disabled={busy}
-            title="把结果写回并标记已解决(git add)"
+            title={t("conflictEd.applyTitle")}
           >
-            应用解决
+            {t("conflictEd.apply")}
           </Button>
         </div>
       </div>
 
       <div className="flex min-h-0 flex-1">
-        <Pane label="我方 (ours)" tint="text-success" forwardRef={oursRef} />
+        <Pane label={t("conflictEd.paneOurs")} tint="text-success" forwardRef={oursRef} />
         <div className="w-px shrink-0 bg-line" />
-        <Pane label="结果 (可编辑)" tint="text-fg" forwardRef={resultRef} />
+        <Pane label={t("conflictEd.paneResult")} tint="text-fg" forwardRef={resultRef} />
         <div className="w-px shrink-0 bg-line" />
-        <Pane label="对方 (theirs)" tint="text-accent" forwardRef={theirsRef} />
+        <Pane label={t("conflictEd.paneTheirs")} tint="text-accent" forwardRef={theirsRef} />
       </div>
     </div>
   );

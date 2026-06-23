@@ -14,19 +14,21 @@ import { ConflictBanner } from "../components/ConflictBanner";
 import { Resizer, useResizableWidth } from "../components/Resizer";
 import { useToast } from "../components/Toast";
 import { Button } from "../components/ui/Button";
+import { useT } from "../lib/i18n";
+import type { MessageKey } from "../lib/locales/zh";
 
-/** 工作区状态 → 颜色 + 单字母徽章 + 中文名(tooltip) */
-const STATE_STYLE: Record<string, { letter: string; cls: string; label: string }> = {
-  new: { letter: "A", cls: "text-success", label: "新增" },
-  added: { letter: "A", cls: "text-success", label: "新增" },
-  modified: { letter: "M", cls: "text-accent", label: "修改" },
-  deleted: { letter: "D", cls: "text-danger", label: "删除" },
-  renamed: { letter: "R", cls: "text-warning", label: "重命名" },
-  untracked: { letter: "U", cls: "text-success", label: "未跟踪" },
-  conflicted: { letter: "!", cls: "text-danger", label: "冲突" },
+/** 工作区状态 → 颜色 + 单字母徽章 + i18n key(tooltip) */
+const STATE_STYLE: Record<string, { letter: string; cls: string; key: MessageKey }> = {
+  new: { letter: "A", cls: "text-success", key: "file.new" },
+  added: { letter: "A", cls: "text-success", key: "file.new" },
+  modified: { letter: "M", cls: "text-accent", key: "file.modified" },
+  deleted: { letter: "D", cls: "text-danger", key: "file.deleted" },
+  renamed: { letter: "R", cls: "text-warning", key: "file.renamed" },
+  untracked: { letter: "U", cls: "text-success", key: "file.untracked" },
+  conflicted: { letter: "!", cls: "text-danger", key: "file.conflicted" },
 };
-function styleFor(state: string) {
-  return STATE_STYLE[state.toLowerCase()] ?? { letter: "?", cls: "text-fg-muted", label: state };
+function styleFor(state: string): { letter: string; cls: string; key: MessageKey | null; raw?: string } {
+  return STATE_STYLE[state.toLowerCase()] ?? { letter: "?", cls: "text-fg-muted", key: null, raw: state };
 }
 
 /** 文件路径拆成 目录(灰)+ 文件名(亮),便于扫读 */
@@ -36,6 +38,7 @@ function splitPath(path: string) {
 }
 
 export function ChangesView({ repo }: { repo: string }) {
+  const t = useT();
   const qc = useQueryClient();
   const statusQ = useStatus(repo);
   const status = statusQ.data;
@@ -145,7 +148,7 @@ export function ChangesView({ repo }: { repo: string }) {
       const sha = amend ? await amendCommit(repo, message) : await commit(repo, message);
       setMessage("");
       setAmend(false);
-      toast({ kind: "success", title: `${amend ? "已修订" : "已提交"} ${sha.slice(0, 7)}` });
+      toast({ kind: "success", title: amend ? t("changes.amended", { sha: sha.slice(0, 7) }) : t("changes.committed", { sha: sha.slice(0, 7) }) });
       invalidateWorktree(qc, repo);
       invalidateHistory(qc, repo);
     } catch (e) { toast({ kind: "error", title: (e as IpcError).message ?? String(e) }); }
@@ -156,7 +159,7 @@ export function ChangesView({ repo }: { repo: string }) {
   const selEntry = sel && status ? status.entries.find((e) => e.path === sel.path && e.staged === sel.staged) : undefined;
   const isConflict = selEntry?.state.toLowerCase() === "conflicted";
   const hunkAction = sel && selEntry && !isConflict && selEntry.state.toLowerCase() !== "untracked"
-    ? { label: sel.staged ? "取消暂存此块" : "暂存此块", disabled: busy, onAct: (hi: number) => doHunk(sel.path, sel.staged, hi) }
+    ? { label: sel.staged ? t("changes.unstageHunk") : t("changes.stageHunk"), disabled: busy, onAct: (hi: number) => doHunk(sel.path, sel.staged, hi) }
     : undefined;
   // 行级暂存仅未暂存侧、可 diff 的跟踪文件
   const lineStage = sel && !sel.staged && selEntry && !isConflict && selEntry.state.toLowerCase() !== "untracked"
@@ -173,13 +176,13 @@ export function ChangesView({ repo }: { repo: string }) {
         onClick={() => setSel({ path: entry.path, staged: isStaged })}
         className={`group flex cursor-pointer items-center gap-2 py-1 pl-3 pr-1.5 ${on ? "bg-overlay" : "hover:bg-elevated"}`}
       >
-        <span className={`w-3.5 shrink-0 text-center font-mono text-xs font-semibold ${s.cls}`} title={s.label}>{s.letter}</span>
+        <span className={`w-3.5 shrink-0 text-center font-mono text-xs font-semibold ${s.cls}`} title={s.key ? t(s.key) : s.raw}>{s.letter}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[13px]" title={entry.path}>
           {dir && <span className="text-fg-subtle">{dir}</span>}
           <span className="text-fg">{name}</span>
         </span>
         <button
-          title={isStaged ? "取消暂存" : "暂存"}
+          title={isStaged ? t("changes.unstage") : t("changes.stage")}
           disabled={busy}
           onClick={(e) => { e.stopPropagation(); run(() => (isStaged ? unstageFile(repo, entry.path) : stageFile(repo, entry.path))); }}
           className="grid h-5 w-5 shrink-0 place-items-center rounded text-fg-subtle opacity-0 transition-colors hover:bg-overlay hover:text-fg group-hover:opacity-100 disabled:opacity-40"
@@ -199,18 +202,18 @@ export function ChangesView({ repo }: { repo: string }) {
         onClick={() => setSel({ path: entry.path, staged: false })}
         className={`group flex cursor-pointer items-center gap-2 py-1 pl-3 pr-1.5 ${on ? "bg-overlay" : "hover:bg-elevated"}`}
       >
-        <span className="w-3.5 shrink-0 text-center font-mono text-xs font-semibold text-danger" title="冲突">!</span>
+        <span className="w-3.5 shrink-0 text-center font-mono text-xs font-semibold text-danger" title={t("file.conflicted")}>!</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[13px]" title={entry.path}>
           {dir && <span className="text-fg-subtle">{dir}</span>}
           <span className="text-fg">{name}</span>
         </span>
         <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
           <button onClick={(e) => { e.stopPropagation(); useOurs(entry.path); }} disabled={busy}
-            title="采用我方(ours)" className="rounded px-1.5 py-0.5 text-[11px] text-accent hover:bg-overlay disabled:opacity-40">我方</button>
+            title={t("changes.useOursTitle")} className="rounded px-1.5 py-0.5 text-[11px] text-accent hover:bg-overlay disabled:opacity-40">{t("changes.useOurs")}</button>
           <button onClick={(e) => { e.stopPropagation(); useTheirs(entry.path); }} disabled={busy}
-            title="采用对方(theirs)" className="rounded px-1.5 py-0.5 text-[11px] text-accent hover:bg-overlay disabled:opacity-40">对方</button>
+            title={t("changes.useTheirsTitle")} className="rounded px-1.5 py-0.5 text-[11px] text-accent hover:bg-overlay disabled:opacity-40">{t("changes.useTheirs")}</button>
           <button onClick={(e) => { e.stopPropagation(); run(() => stageFile(repo, entry.path)); }} disabled={busy}
-            title="标记已解决(手动编辑后)" className="rounded px-1.5 py-0.5 text-[11px] text-success hover:bg-overlay disabled:opacity-40">已解决</button>
+            title={t("changes.resolvedTitle")} className="rounded px-1.5 py-0.5 text-[11px] text-success hover:bg-overlay disabled:opacity-40">{t("changes.resolved")}</button>
         </div>
       </li>
     );
@@ -256,39 +259,39 @@ export function ChangesView({ repo }: { repo: string }) {
             onClick={() => qc.invalidateQueries({ queryKey: qk.status(repo) })}
             disabled={busy || statusQ.isFetching}
           >
-            <RefreshIcon width={13} height={13} className={busy || statusQ.isFetching ? "animate-spin" : ""} /> 刷新
+            <RefreshIcon width={13} height={13} className={busy || statusQ.isFetching ? "animate-spin" : ""} /> {t("changes.refresh")}
           </Button>
         </div>
 
         {/* 文件区(滚动) */}
         <div ref={listScrollRef} className="min-h-0 flex-1 overflow-y-auto">
           {conflicts.length > 0 && (
-            <Section title="冲突" count={conflicts.length}>
+            <Section title={t("changes.sectionConflicts")} count={conflicts.length}>
               <ul>
                 {conflicts.map((e) => <ConflictRow key={e.path} entry={e} />)}
               </ul>
             </Section>
           )}
           <Section
-            title="已暂存" count={staged.length} accent
+            title={t("changes.sectionStaged")} count={staged.length} accent
             onBulk={() => unstageAll(staged.map((e) => e.path))}
-            bulkLabel="全部取消暂存"
+            bulkLabel={t("changes.unstageAll")}
             bulkIcon={<MinusIcon width={12} height={12} />}
           >
             <ul>
               {staged.map((e) => <Row key={e.path} entry={e} isStaged />)}
-              {staged.length === 0 && <li className="px-3 py-2 text-xs text-fg-subtle">暂无已暂存的改动</li>}
+              {staged.length === 0 && <li className="px-3 py-2 text-xs text-fg-subtle">{t("changes.noStaged")}</li>}
             </ul>
           </Section>
           <Section
-            title="未暂存" count={unstaged.length}
+            title={t("changes.sectionUnstaged")} count={unstaged.length}
             onBulk={() => stageAll(unstaged.map((e) => e.path))}
-            bulkLabel="全部暂存"
+            bulkLabel={t("changes.stageAll")}
             bulkIcon={<PlusIcon width={12} height={12} />}
           >
             <ul>
               {unstaged.map((e) => <Row key={e.path} entry={e} isStaged={false} />)}
-              {unstaged.length === 0 && <li className="px-3 py-2 text-xs text-fg-subtle">工作区干净</li>}
+              {unstaged.length === 0 && <li className="px-3 py-2 text-xs text-fg-subtle">{t("changes.clean")}</li>}
             </ul>
           </Section>
         </div>
@@ -298,7 +301,7 @@ export function ChangesView({ repo }: { repo: string }) {
           <textarea
             className="field w-full resize-none rounded-md border border-line bg-canvas p-2.5 text-sm text-fg placeholder:text-fg-subtle"
             rows={3}
-            placeholder="提交信息…  (⌘/Ctrl+Enter 提交)"
+            placeholder={t("changes.commitPlaceholder")}
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyDown={(e) => {
@@ -309,17 +312,17 @@ export function ChangesView({ repo }: { repo: string }) {
             }}
           />
           <div className="mt-2 flex items-center justify-between">
-            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-fg-muted" title="用当前暂存改动修订最近一次提交(会改写历史，勾选后会预填上次信息)">
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-fg-muted" title={t("changes.amendTitle")}>
               <input
                 type="checkbox"
                 checked={amend}
                 onChange={(e) => toggleAmend(e.target.checked)}
                 className="accent-accent"
               />
-              修订上次提交
+              {t("changes.amend")}
             </label>
             <Button variant="commit" size="md" disabled={!canCommit} onClick={doCommit}>
-              <CheckIcon width={14} height={14} /> {amend ? "修订提交" : "提交"}
+              <CheckIcon width={14} height={14} /> {amend ? t("changes.amendCommit") : t("changes.commit")}
             </Button>
           </div>
         </div>
@@ -335,7 +338,7 @@ export function ChangesView({ repo }: { repo: string }) {
             <span className="truncate font-mono normal-case tracking-normal text-fg" title={sel.path}>
               {sel.path}
               <span className="ml-1.5 text-fg-subtle">
-                {isConflict ? "(冲突)" : sel.staged ? "(已暂存)" : "(未暂存)"}
+                {isConflict ? t("changes.tagConflict") : sel.staged ? t("changes.tagStaged") : t("changes.tagUnstaged")}
               </span>
             </span>
           ) : "Diff"}

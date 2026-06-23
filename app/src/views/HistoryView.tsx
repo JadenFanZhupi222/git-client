@@ -22,6 +22,8 @@ import { DiffView } from "../components/DiffView";
 import { Resizer, useResizableWidth } from "../components/Resizer";
 import { useToast } from "../components/Toast";
 import { BranchIcon, CommitIcon, FileDiffIcon, SearchIcon, CloseIcon } from "../components/icons";
+import { useT } from "../lib/i18n";
+import type { MessageKey } from "../lib/locales/zh";
 
 const PAGE = 50;
 const SEARCH_LIMIT = 200;
@@ -51,6 +53,7 @@ export function HistoryView({ repo }: { repo: string }) {
   const [menu, setMenu] = useState<{ commit: CommitDto; x: number; y: number } | null>(null);
   const [focusedPane, setFocusedPane] = useState<"commits" | "files">("commits"); // 键盘焦点在哪个列表
   const [kbMode, setKbMode] = useState(false); // 最近一次交互是否来自键盘(决定是否显示聚焦环)
+  const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -189,7 +192,7 @@ export function HistoryView({ repo }: { repo: string }) {
       invalidateHistory(qc, repo);
       invalidateWorktree(qc, repo);
       qc.invalidateQueries({ queryKey: qk.repoState(repo) });
-      toast({ kind: "success", title: `已拣选 ${commit.short_id} 到当前分支` });
+      toast({ kind: "success", title: t("history.cherryPicked", { short: commit.short_id }) });
     } catch (e) {
       const err = e as IpcError;
       // 冲突也进入 cherry-pick 中 → 刷新让「更改」页出现冲突与横幅
@@ -197,7 +200,7 @@ export function HistoryView({ repo }: { repo: string }) {
       qc.invalidateQueries({ queryKey: qk.repoState(repo) });
       toast({
         kind: "error",
-        title: err.code === "MERGE_CONFLICT" ? "拣选有冲突，请到「更改」页解决" : (err.message ?? String(e)),
+        title: err.code === "MERGE_CONFLICT" ? t("history.cherryConflict") : (err.message ?? String(e)),
       });
     } finally {
       setBusy(false);
@@ -211,7 +214,7 @@ export function HistoryView({ repo }: { repo: string }) {
       invalidateHistory(qc, repo);
       invalidateWorktree(qc, repo);
       qc.invalidateQueries({ queryKey: qk.repoState(repo) });
-      toast({ kind: "success", title: `已回滚 ${commit.short_id}` });
+      toast({ kind: "success", title: t("history.reverted", { short: commit.short_id }) });
     } catch (e) {
       const err = e as IpcError;
       // 冲突进入 reverting 中 → 刷新让「更改」页出现冲突与横幅
@@ -219,7 +222,7 @@ export function HistoryView({ repo }: { repo: string }) {
       qc.invalidateQueries({ queryKey: qk.repoState(repo) });
       toast({
         kind: "error",
-        title: err.code === "MERGE_CONFLICT" ? "回滚有冲突，请到「更改」页解决" : (err.message ?? String(e)),
+        title: err.code === "MERGE_CONFLICT" ? t("history.revertConflict") : (err.message ?? String(e)),
       });
     } finally {
       setBusy(false);
@@ -264,13 +267,13 @@ export function HistoryView({ repo }: { repo: string }) {
         /* 比较模式:横幅 + 两提交的改动文件/diff(占据中+右区域) */
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex shrink-0 items-center gap-2 border-b border-line bg-accent/5 px-3 py-2 text-xs">
-            <span className="text-fg-muted">比较</span>
+            <span className="text-fg-muted">{t("history.compareLabel")}</span>
             <span className="font-mono text-accent">{cmpFrom.short_id}</span>
             <span className="truncate text-fg-subtle" title={cmpFrom.summary}>{cmpFrom.summary}</span>
             <span className="shrink-0 text-fg-subtle">→</span>
             <span className="font-mono text-accent">{cmpTo.short_id}</span>
             <span className="truncate text-fg-subtle" title={cmpTo.summary}>{cmpTo.summary}</span>
-            <IconButton aria-label="退出比较" title="退出比较" onClick={() => setCompareWith(null)} className="ml-auto shrink-0">
+            <IconButton aria-label={t("history.exitCompare")} title={t("history.exitCompare")} onClick={() => setCompareWith(null)} className="ml-auto shrink-0">
               <CloseIcon width={14} height={14} />
             </IconButton>
           </div>
@@ -360,12 +363,12 @@ export function HistoryView({ repo }: { repo: string }) {
 
 /** 搜索模式:提交信息(git2) / 内容 -S / 正则 -G(后两者 = pickaxe)。 */
 type SearchMode = "message" | "content" | "regex";
-const SEARCH_PLACEHOLDER: Record<SearchMode, string> = {
-  message: "搜索提交(信息 / 作者 / SHA)",
-  content: "搜内容:引入/删除某段文本的提交(-S)",
-  regex: "搜正则:改动行匹配的提交(-G)",
+const SEARCH_PLACEHOLDER: Record<SearchMode, MessageKey> = {
+  message: "history.searchMessage",
+  content: "history.searchContent",
+  regex: "history.searchRegex",
 };
-const SEARCH_MODE_LABEL: Record<SearchMode, string> = { message: "信息", content: "内容", regex: "正则" };
+const SEARCH_MODE_LABEL: Record<SearchMode, MessageKey> = { message: "history.modeMessage", content: "history.modeContent", regex: "history.modeRegex" };
 
 /** 图谱列(含可拖拽宽度 + 提交搜索)。搜索时切扁平匹配列表,清空回到图谱。 */
 function GraphColumn({
@@ -394,6 +397,7 @@ function GraphColumn({
   searchLoading: boolean;
   onOpenReflog: () => void;
 }) {
+  const t = useT();
   const col = useResizableWidth("history.graphW", 320, 220, 640);
   // 拖放拣选的一次性发现性提示(localStorage 记忆,用过即不再出现)。仅图谱模式且有数据时显示。
   const [dragHintDismissed, setDragHintDismissed] = useState(() => localStorage.getItem("hint.dragCherryPick") === "1");
@@ -441,12 +445,12 @@ function GraphColumn({
           <Glass>
             <div ref={barRef}>
             <ColumnHead icon={<BranchIcon width={13} height={13} />}>
-              {branch ? <span className="font-mono normal-case tracking-normal text-fg">{branch}</span> : "提交历史"}
+              {branch ? <span className="font-mono normal-case tracking-normal text-fg">{branch}</span> : t("history.commitHistory")}
               <Button
                 variant="secondary"
                 size="chip"
                 onClick={onOpenReflog}
-                title="查看 reflog(HEAD 移动历史 / 找回丢失提交)"
+                title={t("history.reflogTitle")}
                 className="ml-auto normal-case tracking-normal"
               >
                 Reflog
@@ -458,11 +462,11 @@ function GraphColumn({
               <input
                 value={searchInput}
                 onChange={(e) => onSearchChange(e.target.value)}
-                placeholder={SEARCH_PLACEHOLDER[searchMode]}
+                placeholder={t(SEARCH_PLACEHOLDER[searchMode])}
                 className="min-w-0 flex-1 bg-transparent text-xs text-fg placeholder:text-fg-subtle focus:outline-none"
               />
               {searchInput && (
-                <IconButton aria-label="清除搜索" onClick={() => onSearchChange("")} title="清除" className="shrink-0">
+                <IconButton aria-label={t("history.clearSearch")} onClick={() => onSearchChange("")} title={t("history.clear")} className="shrink-0">
                   <CloseIcon width={12} height={12} />
                 </IconButton>
               )}
@@ -473,12 +477,12 @@ function GraphColumn({
                 <button
                   key={m}
                   onClick={() => onSearchModeChange(m)}
-                  title={SEARCH_PLACEHOLDER[m]}
+                  title={t(SEARCH_PLACEHOLDER[m])}
                   className={`rounded px-1.5 py-0.5 text-[11px] transition-colors ${
                     searchMode === m ? "bg-accent/15 text-accent" : "text-fg-muted hover:text-fg"
                   }`}
                 >
-                  {SEARCH_MODE_LABEL[m]}
+                  {t(SEARCH_MODE_LABEL[m])}
                 </button>
               ))}
             </div>
@@ -487,9 +491,9 @@ function GraphColumn({
               <div className="flex items-center gap-2 border-b border-line px-2.5 py-1.5 text-[11px] text-fg-muted">
                 <span aria-hidden className="shrink-0 font-mono leading-none text-fg-subtle">⠿</span>
                 <span className="min-w-0 flex-1 leading-snug">
-                  拖任意提交到 <span className="text-accent">当前分支(HEAD)</span> 行 → 拣选到此分支
+                  {t("history.dragHintBefore")}<span className="text-accent">{t("history.dragHintHead")}</span>{t("history.dragHintAfter")}
                 </span>
-                <IconButton aria-label="不再提示此功能" title="不再提示" onClick={dismissDragHint} className="shrink-0">
+                <IconButton aria-label={t("history.dragHintDismissAria")} title={t("history.dragHintDismiss")} onClick={dismissDragHint} className="shrink-0">
                   <CloseIcon width={12} height={12} />
                 </IconButton>
               </div>
@@ -515,6 +519,7 @@ function SearchList({
   /** 顶部留白(px):同 CommitGraph,给浮动玻璃工具栏让位。 */
   topInset?: number;
 }) {
+  const t = useT();
   const boxRef = useRef<HTMLDivElement>(null);
   // 键盘选中变化 → 把该行滚进可视区(block nearest:已可见则不动)。
   useEffect(() => {
@@ -523,14 +528,14 @@ function SearchList({
   }, [selectedId]);
 
   if (loading && results.length === 0) {
-    return <div className="p-3 text-xs text-fg-subtle" style={{ paddingTop: topInset + 12 }}>搜索中…</div>;
+    return <div className="p-3 text-xs text-fg-subtle" style={{ paddingTop: topInset + 12 }}>{t("history.searching")}</div>;
   }
   if (results.length === 0) {
-    return <div className="p-3 text-xs text-fg-subtle" style={{ paddingTop: topInset + 12 }}>没有匹配的提交</div>;
+    return <div className="p-3 text-xs text-fg-subtle" style={{ paddingTop: topInset + 12 }}>{t("history.noMatch")}</div>;
   }
   return (
     <div ref={boxRef} className="fade-in h-full overflow-y-auto" style={{ paddingTop: topInset }}>
-      <div className="px-3 py-1.5 text-[11px] text-fg-subtle">{results.length} 条匹配{results.length >= SEARCH_LIMIT ? "(已截断)" : ""}</div>
+      <div className="px-3 py-1.5 text-[11px] text-fg-subtle">{t("history.matchCount", { n: results.length })}{results.length >= SEARCH_LIMIT ? t("history.truncated") : ""}</div>
       {results.map((c) => {
         const on = selectedId === c.id;
         return (
@@ -573,6 +578,7 @@ function MidColumn({
   onTagsChanged: () => void;
   busy?: boolean;
 }) {
+  const t = useT();
   const col = useResizableWidth("history.midW", 288, 200, 640);
   const list = files;
   return (
@@ -580,7 +586,7 @@ function MidColumn({
       <div className={`flex shrink-0 flex-col overflow-hidden ${focused ? "ring-1 ring-inset ring-accent/50" : ""}`} style={{ width: col.w }}>
         <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
           <CommitIcon width={13} height={13} />
-          <span>提交详情</span>
+          <span>{t("history.commitDetail")}</span>
           {commit && (
             <div className="ml-auto flex items-center gap-1">
               <ResetMenu repo={repo} commitId={commit.id} label={commit.short_id} onDone={onResetDone} />
@@ -590,7 +596,7 @@ function MidColumn({
                   size="chip"
                   onClick={onCherryPick}
                   disabled={busy}
-                  title="把此提交拣选(cherry-pick)到当前分支"
+                  title={t("history.cherryPickTitle")}
                   className="normal-case tracking-normal"
                 >
                   Cherry-pick
@@ -602,7 +608,7 @@ function MidColumn({
                   size="chip"
                   onClick={onRevert}
                   disabled={busy}
-                  title="回滚此提交(生成一个抵消其改动的新提交)"
+                  title={t("history.revertTitle")}
                   className="normal-case tracking-normal"
                 >
                   Revert
@@ -614,10 +620,10 @@ function MidColumn({
                   size="chip"
                   onClick={onRebase}
                   disabled={busy}
-                  title="从此提交开始交互式变基(改写历史：reorder/squash/reword/drop)"
+                  title={t("history.rebaseTitle")}
                   className="normal-case tracking-normal"
                 >
-                  变基
+                  {t("history.rebase")}
                 </Button>
               )}
             </div>
@@ -631,11 +637,11 @@ function MidColumn({
         <div className="max-h-[45%] shrink-0 overflow-hidden border-b border-line">
           <CommitDetail repo={repo} commit={commit} />
         </div>
-        <ColumnHead icon={<FileDiffIcon width={13} height={13} />}>改动文件{commit && ` (${list.length})`}</ColumnHead>
+        <ColumnHead icon={<FileDiffIcon width={13} height={13} />}>{t("history.changedFiles")}{commit && ` (${list.length})`}</ColumnHead>
         <div className="min-h-0 flex-1 overflow-hidden">
           {commit
             ? <CommitFileList files={list} selected={selectedFile} onSelect={onSelectFile} onFileHistory={onFileHistory} />
-            : <EmptyHint icon={<CommitIcon width={24} height={24} />}>从左侧图谱选择一个提交，查看详情与改动文件</EmptyHint>}
+            : <EmptyHint icon={<CommitIcon width={24} height={24} />}>{t("history.selectCommit")}</EmptyHint>}
         </div>
       </div>
       <Resizer onDown={col.onDown} />

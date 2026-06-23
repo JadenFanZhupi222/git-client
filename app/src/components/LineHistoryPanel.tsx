@@ -5,6 +5,7 @@ import { formatRelative } from "../lib/time";
 import { DiffView } from "./DiffView";
 import { IconButton } from "./ui/IconButton";
 import { CloseIcon } from "./icons";
+import { useT } from "../lib/i18n";
 
 /** 行历史面板:某文件第 start–end 行的演变史(git log -L)。
  *  左侧动过这几行的提交列表,选中 → 右侧显示那几行在该提交的 diff(仅范围 hunk,复用 DiffView)。 */
@@ -16,6 +17,7 @@ export function LineHistoryPanel({
   range: { start: number; end: number };
   onClose: () => void;
 }) {
+  const t = useT();
   const q = useLineHistory(repo, file, range);
   const entries = q.data ?? [];
   const [idx, setIdx] = useState(0);
@@ -35,7 +37,7 @@ export function LineHistoryPanel({
   }, [safeIdx]);
 
   const name = file.slice(file.lastIndexOf("/") + 1);
-  const rangeLabel = range.start === range.end ? `第 ${range.start} 行` : `第 ${range.start}–${range.end} 行`;
+  const rangeLabel = range.start === range.end ? t("lineHist.rangeOne", { start: range.start }) : t("lineHist.rangeMulti", { start: range.start, end: range.end });
 
   return (
     <div className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={onClose}>
@@ -43,7 +45,7 @@ export function LineHistoryPanel({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label={`行历史 ${name} ${rangeLabel}`}
+        aria-label={`${t("lineHist.title")} ${name} ${rangeLabel}`}
         tabIndex={-1}
         onKeyDown={onKeyDown}
         className="panel-in popover flex h-[85vh] w-[90vw] max-w-[1200px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas outline-none"
@@ -51,10 +53,10 @@ export function LineHistoryPanel({
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
           <h2 className="min-w-0 text-sm font-semibold text-fg">
-            行历史 · <span className="font-mono text-accent" title={file}>{name}</span>
+            {t("lineHist.title")} · <span className="font-mono text-accent" title={file}>{name}</span>
             <span className="ml-1.5 text-fg-muted">{rangeLabel}</span>
           </h2>
-          <IconButton aria-label="关闭" onClick={onClose}><CloseIcon width={15} height={15} /></IconButton>
+          <IconButton aria-label={t("toast.close")} onClick={onClose}><CloseIcon width={15} height={15} /></IconButton>
         </div>
 
         <div className="flex min-h-0 flex-1">
@@ -62,11 +64,11 @@ export function LineHistoryPanel({
           <div className="flex w-[340px] shrink-0 flex-col overflow-hidden border-r border-line">
             <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
               {q.isLoading ? (
-                <div className="p-4 text-xs text-fg-subtle">加载中…</div>
+                <div className="p-4 text-xs text-fg-subtle">{t("common.loading")}</div>
               ) : q.error ? (
-                <div className="p-4 text-xs text-danger">{(q.error as { message?: string }).message ?? "读取行历史失败"}</div>
+                <div className="p-4 text-xs text-danger">{(q.error as { message?: string }).message ?? t("lineHist.readFailed")}</div>
               ) : entries.length === 0 ? (
-                <div className="p-4 text-xs text-fg-subtle">这几行没有可追溯的历史</div>
+                <div className="p-4 text-xs text-fg-subtle">{t("lineHist.empty")}</div>
               ) : (
                 entries.map((e, i) => {
                   const c = e.commit;
@@ -94,7 +96,7 @@ export function LineHistoryPanel({
             </div>
             {entries.length > 0 && (
               <div className="shrink-0 border-t border-line px-3 py-1.5 text-[11px] text-fg-subtle">
-                {entries.length} 次改动
+                {t("lineHist.count", { n: entries.length })}
               </div>
             )}
           </div>

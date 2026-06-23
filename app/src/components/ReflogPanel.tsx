@@ -3,6 +3,7 @@ import { formatRelative } from "../lib/time";
 import { ResetMenu } from "./ResetMenu";
 import { IconButton } from "./ui/IconButton";
 import { CloseIcon } from "./icons";
+import { useT } from "../lib/i18n";
 
 const REFLOG_LIMIT = 200;
 
@@ -16,6 +17,7 @@ export function ReflogPanel({
   onClose: () => void;
   onReset: () => void;
 }) {
+  const t = useT();
   const q = useReflog(repo, REFLOG_LIMIT, true);
   const entries = q.data ?? [];
 
@@ -26,21 +28,21 @@ export function ReflogPanel({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold text-fg">Reflog · HEAD 移动历史</h2>
-          <IconButton aria-label="关闭" onClick={onClose}><CloseIcon width={15} height={15} /></IconButton>
+          <h2 className="text-sm font-semibold text-fg">{t("reflog.title")}</h2>
+          <IconButton aria-label={t("toast.close")} onClick={onClose}><CloseIcon width={15} height={15} /></IconButton>
         </div>
 
         <p className="shrink-0 border-b border-line bg-accent/10 px-4 py-2 text-xs text-fg-muted">
-          找回被 reset / rebase 丢弃的提交：挑一条「Reset」回那一刻的状态。
+          {t("reflog.desc")}
         </p>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           {q.isLoading ? (
-            <div className="p-4 text-xs text-fg-subtle">加载中…</div>
+            <div className="p-4 text-xs text-fg-subtle">{t("common.loading")}</div>
           ) : q.error ? (
-            <div className="p-4 text-xs text-danger">{(q.error as { message?: string }).message ?? "读取 reflog 失败"}</div>
+            <div className="p-4 text-xs text-danger">{(q.error as { message?: string }).message ?? t("reflog.readFailed")}</div>
           ) : entries.length === 0 ? (
-            <div className="p-4 text-xs text-fg-subtle">暂无 reflog 记录</div>
+            <div className="p-4 text-xs text-fg-subtle">{t("reflog.empty")}</div>
           ) : (
             entries.map((e) => (
               <div

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { type FileChangeDto } from "../ipc";
 import { HistoryIcon } from "./icons";
+import { useT } from "../lib/i18n";
 
 /** 提交内文件状态 → 颜色 + 单字母 */
 const STYLE: Record<string, { letter: string; cls: string }> = {
@@ -19,6 +20,7 @@ export function CommitFileList({
   /** 可选:行内悬浮出现「文件历史」按钮,点击查看该文件的 git log --follow。 */
   onFileHistory?: (path: string) => void;
 }) {
+  const t = useT();
   const boxRef = useRef<HTMLDivElement>(null);
   // 键盘选中变化 → 把该行滚进可视区(已可见则不动)。
   useEffect(() => {
@@ -26,7 +28,7 @@ export function CommitFileList({
     boxRef.current?.querySelector<HTMLElement>(`[data-path="${CSS.escape(selected)}"]`)?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
-  if (files.length === 0) return <div className="p-3 text-xs text-fg-subtle">无改动文件</div>;
+  if (files.length === 0) return <div className="p-3 text-xs text-fg-subtle">{t("file.noChanges")}</div>;
   return (
     <div ref={boxRef} className="h-full overflow-y-auto">
       {files.map((f) => {
@@ -54,8 +56,8 @@ export function CommitFileList({
             {onFileHistory && (
               <button
                 onClick={(e) => { e.stopPropagation(); onFileHistory(f.path); }}
-                title="查看文件历史(git log --follow)"
-                aria-label="查看文件历史"
+                title={t("file.history")}
+                aria-label={t("file.historyAria")}
                 className="shrink-0 rounded p-0.5 text-fg-subtle opacity-0 transition-colors hover:text-accent group-hover:opacity-100"
               >
                 <HistoryIcon width={13} height={13} />

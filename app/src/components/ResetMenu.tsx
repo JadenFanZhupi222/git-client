@@ -4,11 +4,13 @@ import { useStatus } from "../lib/queries";
 import { useToast } from "./Toast";
 import { Button } from "./ui/Button";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { useT } from "../lib/i18n";
+import type { MessageKey } from "../lib/locales/zh";
 
-const MODES: { mode: ResetMode; label: string; desc: string; danger?: boolean }[] = [
-  { mode: "soft", label: "Soft", desc: "保留暂存区与工作区(改动转为已暂存)" },
-  { mode: "mixed", label: "Mixed", desc: "保留工作区，重置暂存区(改动转为未暂存)" },
-  { mode: "hard", label: "Hard", desc: "丢弃所有未提交改动", danger: true },
+const MODES: { mode: ResetMode; label: string; descKey: MessageKey; danger?: boolean }[] = [
+  { mode: "soft", label: "Soft", descKey: "reset.softDesc" },
+  { mode: "mixed", label: "Mixed", descKey: "reset.mixedDesc" },
+  { mode: "hard", label: "Hard", descKey: "reset.hardDesc", danger: true },
 ];
 
 /** 把当前分支重置到 commitId(提交 / reflog 条目皆可)。下拉选模式;
@@ -22,6 +24,7 @@ export function ResetMenu({
   label: string;
   onDone: () => void;
 }) {
+  const t = useT();
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -39,7 +42,7 @@ export function ResetMenu({
     try {
       await resetTo(repo, commitId, mode);
       onDone();
-      toast({ kind: "success", title: `已 ${mode} reset 到 ${label}` });
+      toast({ kind: "success", title: t("reset.done", { mode, label }) });
       close();
     } catch (e) {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
@@ -55,10 +58,10 @@ export function ResetMenu({
         size="chip"
         onClick={() => (open ? close() : setOpen(true))}
         disabled={busy}
-        title="把当前分支重置到此提交"
+        title={t("reset.btnTitle")}
         className="normal-case tracking-normal"
       >
-        Reset
+        {t("reset.label")}
       </Button>
       {open && (
         <>
@@ -82,7 +85,7 @@ export function ResetMenu({
                 }`}
               >
                 <div className="text-[12px] font-medium normal-case tracking-normal">{m.label}</div>
-                <div className="text-[11px] text-fg-muted">{m.desc}</div>
+                <div className="text-[11px] text-fg-muted">{t(m.descKey)}</div>
               </button>
             ))}
           </div>
@@ -91,14 +94,10 @@ export function ResetMenu({
 
       <ConfirmDialog
         open={confirmHard}
-        title={`Hard reset 到 ${label}?`}
-        message="当前分支会移到该提交并重置工作区。被跳过的提交仍可用「撤销」或 reflog 找回。"
-        impactNote={
-          dirty > 0
-            ? `将永久丢弃 ${dirty} 处未提交改动(reflog 也无法找回未提交内容)。`
-            : undefined
-        }
-        confirmLabel="确认 Hard reset"
+        title={t("reset.confirmTitle", { label })}
+        message={t("reset.confirmMsg")}
+        impactNote={dirty > 0 ? t("reset.impact", { n: dirty }) : undefined}
+        confirmLabel={t("reset.confirmLabel")}
         busy={busy}
         onConfirm={() => run("hard")}
         onCancel={() => setConfirmHard(false)}

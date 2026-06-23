@@ -6,48 +6,49 @@ import { SubmoduleIcon, SpinnerIcon, PullIcon, RefreshIcon } from "../components
 import { Button } from "../components/ui/Button";
 import { EmptyHint } from "../components/ui/EmptyHint";
 import { useToast } from "../components/Toast";
+import { useT } from "../lib/i18n";
 
-/** 各状态的徽章样式 + 中文。颜色只用 @theme token,不硬编码 hex。 */
-const STATUS_META: Record<SubmoduleStatusStr, { label: string; cls: string }> = {
-  "up-to-date": { label: "已同步", cls: "border-success/40 bg-success/10 text-success" },
-  modified: { label: "未同步", cls: "border-warning/40 bg-warning/10 text-warning" },
-  uninitialized: { label: "未初始化", cls: "border-line-strong bg-elevated text-fg-subtle" },
-  conflict: { label: "冲突", cls: "border-danger/40 bg-danger/10 text-danger" },
+/** 各状态的徽章 i18n key + 样式。颜色只用 @theme token,不硬编码 hex。 */
+const STATUS_META: Record<SubmoduleStatusStr, { key: "submodules.statusUpToDate" | "submodules.statusModified" | "submodules.statusUninitialized" | "submodules.statusConflict"; cls: string }> = {
+  "up-to-date": { key: "submodules.statusUpToDate", cls: "border-success/40 bg-success/10 text-success" },
+  modified: { key: "submodules.statusModified", cls: "border-warning/40 bg-warning/10 text-warning" },
+  uninitialized: { key: "submodules.statusUninitialized", cls: "border-line-strong bg-elevated text-fg-subtle" },
+  conflict: { key: "submodules.statusConflict", cls: "border-danger/40 bg-danger/10 text-danger" },
 };
 
 export function SubmodulesView({ repo }: { repo: string }) {
+  const t = useT();
   const q = useSubmodules(repo);
   const subs = q.data ?? [];
   const queryErr = (q.error as IpcError | null)?.message ?? null;
 
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-1.5 text-xs text-fg-muted">
-        <SubmoduleIcon width={13} height={13} />
-        <span>子模块</span>
-        {subs.length > 0 && <span className="text-fg-subtle">· {subs.length}</span>}
-      </div>
+  if (q.isLoading) return <Center>{t("common.loading")}</Center>;
+  if (queryErr) return <Center>{queryErr}</Center>;
 
-      {q.isLoading ? (
-        <Center>加载中…</Center>
-      ) : queryErr ? (
-        <Center>{queryErr}</Center>
-      ) : subs.length === 0 ? (
-        <EmptyHint icon={<SubmoduleIcon width={24} height={24} />}>该仓库没有子模块</EmptyHint>
-      ) : (
-        <div className="fade-in flex-1 overflow-auto p-3">
+  return (
+    <div className="fade-in h-full overflow-auto px-6 py-7">
+      {/* 居中卡片栏(max 860):杂志级版式 —— 衬线标题 + mono 计数,内容居中成一栏。 */}
+      <div className="mx-auto max-w-[860px]">
+        <div className="mb-5 flex items-baseline gap-3">
+          <h1 className="serif text-[27px] font-normal leading-none text-fg">{t("title.submodules")}</h1>
+          {subs.length > 0 && <span className="font-mono text-xs text-fg-subtle">{subs.length} {t("count.items")}</span>}
+        </div>
+        {subs.length === 0 ? (
+          <EmptyHint icon={<SubmoduleIcon width={24} height={24} />}>{t("submodules.empty")}</EmptyHint>
+        ) : (
           <div className="flex flex-col gap-2">
             {subs.map((s) => (
               <SubmoduleRow key={s.path} repo={repo} sub={s} />
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
 
 function SubmoduleRow({ repo, sub }: { repo: string; sub: SubmoduleInfoDto }) {
+  const t = useT();
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const qc = useQueryClient();
@@ -55,16 +56,16 @@ function SubmoduleRow({ repo, sub }: { repo: string; sub: SubmoduleInfoDto }) {
   // 未初始化 → 初始化检出;未同步 → 更新到记录版本。两者同一后端命令,文案/图标不同。
   const action =
     sub.status === "uninitialized"
-      ? { label: "初始化", Icon: PullIcon }
+      ? { label: t("submodules.init"), Icon: PullIcon }
       : sub.status === "modified"
-        ? { label: "更新到记录版本", Icon: RefreshIcon }
+        ? { label: t("submodules.update"), Icon: RefreshIcon }
         : null;
 
   async function doUpdate() {
     setBusy(true);
     try {
       await updateSubmodule(repo, sub.path);
-      toast({ kind: "success", title: `已更新子模块 ${sub.path}` });
+      toast({ kind: "success", title: t("submodules.updated", { path: sub.path }) });
     } catch (e) {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
@@ -83,7 +84,7 @@ function SubmoduleRow({ repo, sub }: { repo: string; sub: SubmoduleInfoDto }) {
             {sub.path}
           </span>
           <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] ${meta.cls}`}>
-            {meta.label}
+            {t(meta.key)}
           </span>
         </div>
         <div className="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-fg-subtle">

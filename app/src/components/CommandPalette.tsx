@@ -3,6 +3,7 @@ import { rankCommands, rankBy, type Command, type JumpMode } from "../lib/comman
 import { cx } from "./ui/Button";
 import { SearchIcon } from "./icons";
 import { Glass } from "./ui/Glass";
+import { useT } from "../lib/i18n";
 
 /**
  * 命令面板(⌘K):所有动作可搜索、可键盘触发——M3「Fluid」的入口。
@@ -17,6 +18,7 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
   const [active, setActive] = useState(0);
   const [jump, setJump] = useState<JumpMode | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const t = useT();
 
   // 把两级统一成 Entry,键盘/渲染逻辑只认 Entry。
   const entries: Entry[] = useMemo(() => {
@@ -100,7 +102,7 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
   }
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-start justify-center" role="dialog" aria-modal="true" aria-label="命令面板">
+    <div className="fixed inset-0 z-[80] flex items-start justify-center" role="dialog" aria-modal="true" aria-label={t("action.commandPalette")}>
       <div className="overlay-in absolute inset-0 bg-black/40" onClick={onClose} />
       <Glass className="panel-in relative mt-[12vh] w-[34rem] max-w-[92vw] overflow-hidden rounded-lg">
         {/* 搜索框 */}
@@ -111,9 +113,9 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
             <button
               onClick={() => setJump(null)}
               className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[11px] text-accent transition-colors hover:bg-accent/25"
-              title="返回命令(Esc)"
+              title={t("palette.back")}
             >
-              ‹ 命令
+              {t("palette.backShort")}
             </button>
           )}
           <input
@@ -121,7 +123,7 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder={jump ? jump.placeholder : "输入命令…"}
+            placeholder={jump ? jump.placeholder : t("palette.placeholder")}
             // index.css 的全局 :focus-visible 焦点环是无层级规则,工具类盖不住,只能内联 style 关掉
             style={{ outline: "none" }}
             className="w-full bg-transparent py-2.5 text-sm text-fg placeholder:text-fg-subtle"
@@ -132,7 +134,7 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
         {/* 结果列表 */}
         <ul ref={listRef} className="max-h-[50vh] overflow-y-auto py-1">
           {entries.length === 0 ? (
-            <li className="px-3 py-6 text-center text-xs text-fg-subtle">{jump ? "无匹配项" : "无匹配命令"}</li>
+            <li className="px-3 py-6 text-center text-xs text-fg-subtle">{jump ? t("palette.noMatchItem") : t("palette.noMatchCmd")}</li>
           ) : (
             entries.map((e, i) => (
               // 灰条(disabled)不参与 hover 高亮:鼠标移上去不抢选中

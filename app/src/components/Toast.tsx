@@ -8,6 +8,7 @@ import {
 } from "react";
 import { AlertIcon, CheckIcon, CloseIcon } from "./icons";
 import { IconButton } from "./ui/IconButton";
+import { useT } from "../lib/i18n";
 
 /**
  * 可复用 toast 通知系统。
@@ -87,6 +88,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 }
 
 function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void }) {
+  const t = useT();
   const style = KIND_STYLE[item.kind];
   const c = `var(${style.varName})`;
   return (
@@ -111,7 +113,7 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
           </div>
         )}
       </div>
-      <IconButton aria-label="关闭" onClick={onDismiss} title="关闭" className="-mr-0.5 -mt-0.5 shrink-0">
+      <IconButton aria-label={t("toast.close")} onClick={onDismiss} title={t("toast.close")} className="-mr-0.5 -mt-0.5 shrink-0">
         <CloseIcon width={12} height={12} />
       </IconButton>
     </div>

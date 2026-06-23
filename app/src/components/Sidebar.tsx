@@ -10,6 +10,7 @@ import {
   FolderIcon,
   ChevronDownIcon,
 } from "./icons";
+import { useT } from "../lib/i18n";
 
 type Item = { id: Tab; label: string; icon: ReactNode };
 
@@ -30,15 +31,16 @@ export function Sidebar({
   hasWorktrees?: boolean;
   hasSparse?: boolean;
 }) {
+  const t = useT();
   const items: Item[] = [
-    { id: "changes", label: "更改", icon: <FileDiffIcon width={16} height={16} /> },
-    { id: "history", label: "历史", icon: <HistoryIcon width={16} height={16} /> },
-    { id: "compare", label: "比较", icon: <FileDiffIcon width={16} height={16} /> },
-    { id: "blame", label: "追溯", icon: <HistoryIcon width={16} height={16} /> },
+    { id: "changes", label: t("nav.changes"), icon: <FileDiffIcon width={16} height={16} /> },
+    { id: "history", label: t("nav.history"), icon: <HistoryIcon width={16} height={16} /> },
+    { id: "compare", label: t("nav.compare"), icon: <FileDiffIcon width={16} height={16} /> },
+    { id: "blame", label: t("nav.blame"), icon: <HistoryIcon width={16} height={16} /> },
   ];
-  if (hasSubmodules) items.push({ id: "submodules", label: "子模块", icon: <SubmoduleIcon width={16} height={16} /> });
-  if (hasWorktrees) items.push({ id: "worktrees", label: "工作树", icon: <WorktreeIcon width={16} height={16} /> });
-  if (hasSparse) items.push({ id: "sparse", label: "稀疏检出", icon: <FolderIcon width={16} height={16} /> });
+  if (hasSubmodules) items.push({ id: "submodules", label: t("nav.submodules"), icon: <SubmoduleIcon width={16} height={16} /> });
+  if (hasWorktrees) items.push({ id: "worktrees", label: t("nav.worktrees"), icon: <WorktreeIcon width={16} height={16} /> });
+  if (hasSparse) items.push({ id: "sparse", label: t("nav.sparse"), icon: <FolderIcon width={16} height={16} /> });
 
   return (
     <Glass
@@ -73,7 +75,7 @@ export function Sidebar({
       {/* Collapse toggle — pinned to the bottom */}
       <button
         onClick={onToggleCollapse}
-        title={collapsed ? "展开侧栏" : "折叠侧栏"}
+        title={collapsed ? t("nav.expandSidebar") : t("nav.collapseSidebar")}
         className={cx(
           "mt-auto flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm text-fg-subtle transition-colors hover:bg-overlay hover:text-fg",
           collapsed ? "w-9 justify-center" : "w-full",
@@ -88,7 +90,7 @@ export function Sidebar({
         >
           <ChevronDownIcon width={16} height={16} />
         </span>
-        {!collapsed && <span>折叠</span>}
+        {!collapsed && <span>{t("nav.collapse")}</span>}
       </button>
     </Glass>
   );

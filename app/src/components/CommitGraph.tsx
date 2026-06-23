@@ -3,6 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { type CommitDto, type GraphRowDto, type RefDto } from "../ipc";
 import { CommitLines } from "./CommitLines";
 import { ROW_H, cx, gutterWidth, topPath, botPath } from "../lib/graphGeometry";
+import { useT } from "../lib/i18n";
 
 const NLANE = 8;
 const laneColor = (c: number) => `var(--lane-${((c % NLANE) + NLANE) % NLANE})`;
@@ -94,6 +95,7 @@ export function CommitGraph({
     isFirst.current = false;
   }, [rows]);
 
+  const t = useT();
   // hover 高亮:记住鼠标所在提交的泳道色,渲染时把同色泳道/节点点亮、其余淡下。
   // 设同值是 no-op(React 自动 bail),跨行移动只在颜色变化时重渲;离开整列才清空(避免行间闪烁)。
   const [hoverColor, setHoverColor] = useState<number | null>(null);
@@ -181,8 +183,8 @@ export function CommitGraph({
             : r.sync === "incoming" ? "var(--color-accent)"
             : null;
           const syncTip =
-            r.sync === "outgoing" ? "已提交，尚未 push 到远程"
-            : r.sync === "incoming" ? "已 fetch，尚未 pull/合并到本地"
+            r.sync === "outgoing" ? t("graph.syncOutgoing")
+            : r.sync === "incoming" ? t("graph.syncIncoming")
             : undefined;
           return (
             <div
@@ -254,7 +256,7 @@ export function CommitGraph({
               {/* 投放区提示:拖到当前分支(HEAD)行时显示「松开 → 拣选」 */}
               {isDropTarget && (
                 <span className="popover pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 shrink-0 rounded-full bg-accent px-2 py-0.5 text-[10px] font-medium text-white">
-                  松开 → 拣选到此分支
+                  {t("graph.dropToBranch")}
                 </span>
               )}
             </div>
@@ -268,10 +270,10 @@ export function CommitGraph({
           onClick={onLoadMore}
           disabled={loading}
         >
-          {loading ? "加载中…" : "加载更多"}
+          {loading ? t("common.loading") : t("graph.loadMore")}
         </button>
       ) : (
-        rows.length > 0 && <div className="py-2.5 text-center text-[11px] text-fg-subtle">已到历史开端</div>
+        rows.length > 0 && <div className="py-2.5 text-center text-[11px] text-fg-subtle">{t("graph.end")}</div>
       )}
       </div>
 
@@ -284,7 +286,7 @@ export function CommitGraph({
           className="popover absolute inset-x-2 z-20 flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-accent bg-accent/10 py-2 text-xs font-medium text-accent backdrop-blur-sm"
           style={{ top: topInset + 8 }}
         >
-          松开 → 拣选到当前分支
+          {t("graph.dropToCurrent")}
         </div>
       )}
     </div>

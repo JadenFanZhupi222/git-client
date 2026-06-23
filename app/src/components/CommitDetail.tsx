@@ -1,16 +1,18 @@
 import { type CommitDto } from "../ipc";
 import { formatAbsolute } from "../lib/time";
 import { useCommitSignature } from "../lib/queries";
+import { useT } from "../lib/i18n";
 
 /** 选中提交的完整信息:标题(完整换行)+ 作者/时间/SHA + 签名徽章 + 正文。
  *  正文用 pre-wrap 保留换行;整体可滚动,长 message 不会撑垮文件列表。 */
 export function CommitDetail({ repo, commit }: { repo: string; commit: CommitDto | null }) {
+  const t = useT();
   const sig = useCommitSignature(repo, commit?.id ?? null).data ?? null;
-  if (!commit) return <div className="p-3 text-xs text-fg-subtle">选择一个提交查看详情</div>;
+  if (!commit) return <div className="p-3 text-xs text-fg-subtle">{t("commit.selectToView")}</div>;
   return (
     <div className="h-full overflow-y-auto px-3 py-2.5">
-      {/* 标题:完整显示、可换行 */}
-      <div className="text-[13px] font-semibold leading-snug text-fg">{commit.summary}</div>
+      {/* 标题:编辑性衬线大字(Instrument Serif),完整显示、可换行 */}
+      <div className="serif text-[25px] font-normal leading-[1.15] text-fg">{commit.summary}</div>
 
       {/* 元信息 */}
       <div className="mt-1.5 space-y-0.5 font-mono text-[11px] text-fg-muted">
@@ -35,12 +37,13 @@ export function CommitDetail({ repo, commit }: { repo: string; commit: CommitDto
 
 /** 签名徽章:good=绿「已验证」/ unverified=黄「已签名·未验证」/ bad=红「签名无效」。 */
 function SignatureBadge({ status, signer }: { status: string; signer: string }) {
+  const t = useT();
   const style =
     status === "good"
-      ? { cls: "border-success/40 bg-success/10 text-success", label: "已验证签名" }
+      ? { cls: "border-success/40 bg-success/10 text-success", label: t("commit.sigGood") }
       : status === "bad"
-        ? { cls: "border-danger/40 bg-danger/10 text-danger", label: "签名无效" }
-        : { cls: "border-warning/40 bg-warning/10 text-warning", label: "已签名 · 未验证" };
+        ? { cls: "border-danger/40 bg-danger/10 text-danger", label: t("commit.sigBad") }
+        : { cls: "border-warning/40 bg-warning/10 text-warning", label: t("commit.sigUnverified") };
   const tip = signer ? `${style.label}:${signer}` : style.label;
   return (
     <span

@@ -5,6 +5,7 @@ import { formatRelative } from "../lib/time";
 import { DiffView } from "./DiffView";
 import { IconButton } from "./ui/IconButton";
 import { CloseIcon } from "./icons";
+import { useT } from "../lib/i18n";
 
 /** 文件历史面板:某文件的提交历史(git log --follow,跟随重命名)。
  *  左侧动过该文件的提交列表,选中 → 右侧显示该文件在那次提交的 diff(复用 DiffView,自带统一/并排)。
@@ -16,6 +17,7 @@ export function FileHistoryPanel({
   file: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const q = useFileHistory(repo, file);
   const commits = q.data ?? [];
   // 下标驱动选中:键盘 ↑↓ 直接走 navTarget,免去 null+effect 的择一。
@@ -45,7 +47,7 @@ export function FileHistoryPanel({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label={`文件历史 ${name}`}
+        aria-label={`${t("fileHist.title")} ${name}`}
         tabIndex={-1}
         onKeyDown={onKeyDown}
         className="panel-in popover flex h-[85vh] w-[90vw] max-w-[1200px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas outline-none"
@@ -53,9 +55,9 @@ export function FileHistoryPanel({
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
           <h2 className="min-w-0 text-sm font-semibold text-fg">
-            文件历史 · <span className="font-mono text-accent" title={file}>{name}</span>
+            {t("fileHist.title")} · <span className="font-mono text-accent" title={file}>{name}</span>
           </h2>
-          <IconButton aria-label="关闭" onClick={onClose}><CloseIcon width={15} height={15} /></IconButton>
+          <IconButton aria-label={t("toast.close")} onClick={onClose}><CloseIcon width={15} height={15} /></IconButton>
         </div>
 
         <div className="flex min-h-0 flex-1">
@@ -63,11 +65,11 @@ export function FileHistoryPanel({
           <div className="flex w-[340px] shrink-0 flex-col overflow-hidden border-r border-line">
             <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto">
               {q.isLoading ? (
-                <div className="p-4 text-xs text-fg-subtle">加载中…</div>
+                <div className="p-4 text-xs text-fg-subtle">{t("common.loading")}</div>
               ) : q.error ? (
-                <div className="p-4 text-xs text-danger">{(q.error as { message?: string }).message ?? "读取文件历史失败"}</div>
+                <div className="p-4 text-xs text-danger">{(q.error as { message?: string }).message ?? t("fileHist.readFailed")}</div>
               ) : commits.length === 0 ? (
-                <div className="p-4 text-xs text-fg-subtle">该文件没有提交历史</div>
+                <div className="p-4 text-xs text-fg-subtle">{t("fileHist.empty")}</div>
               ) : (
                 commits.map((c, i) => {
                   const on = i === safeIdx;
@@ -94,7 +96,7 @@ export function FileHistoryPanel({
             </div>
             {commits.length > 0 && (
               <div className="shrink-0 border-t border-line px-3 py-1.5 text-[11px] text-fg-subtle">
-                {commits.length} 次提交
+                {t("fileHist.count", { n: commits.length })}
               </div>
             )}
           </div>

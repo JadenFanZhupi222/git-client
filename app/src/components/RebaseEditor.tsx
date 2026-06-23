@@ -5,15 +5,17 @@ import { useToast } from "./Toast";
 import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
 import { CloseIcon, GripIcon } from "./icons";
+import { useT } from "../lib/i18n";
+import type { MessageKey } from "../lib/locales/zh";
 
 type Row = { sha: string; short: string; summary: string; action: RebaseActionKind; message: string };
 
-const ACTIONS: { value: RebaseActionKind; label: string }[] = [
-  { value: "pick", label: "保留 pick" },
-  { value: "reword", label: "改信息 reword" },
-  { value: "squash", label: "合并(留信息) squash" },
-  { value: "fixup", label: "合并(丢信息) fixup" },
-  { value: "drop", label: "删除 drop" },
+const ACTIONS: { value: RebaseActionKind; labelKey: MessageKey }[] = [
+  { value: "pick", labelKey: "rebase.actPick" },
+  { value: "reword", labelKey: "rebase.actReword" },
+  { value: "squash", labelKey: "rebase.actSquash" },
+  { value: "fixup", labelKey: "rebase.actFixup" },
+  { value: "drop", labelKey: "rebase.actDrop" },
 ];
 
 /** 交互式 rebase 编辑器。commits 按 oldest→newest;base=最旧提交的父 SHA(null→--root)。 */
@@ -27,6 +29,7 @@ export function RebaseEditor({
   onConflict: () => void;
   onDone: () => void;
 }) {
+  const t = useT();
   const toast = useToast();
   const [rows, setRows] = useState<Row[]>(
     commits.map((c) => ({ sha: c.id, short: c.short_id, summary: c.summary, action: "pick", message: c.summary })),
@@ -103,12 +106,12 @@ export function RebaseEditor({
     }));
     try {
       await interactiveRebase(repo, base, steps);
-      toast({ kind: "success", title: "变基完成" });
+      toast({ kind: "success", title: t("rebase.done") });
       onDone();
     } catch (e) {
       const err = e as IpcError;
       if (err.code === "MERGE_CONFLICT") {
-        toast({ kind: "error", title: "变基有冲突，请到「更改」页解决" });
+        toast({ kind: "error", title: t("rebase.conflict") });
         onConflict();
       } else {
         toast({ kind: "error", title: err.message ?? String(e) });
@@ -125,12 +128,12 @@ export function RebaseEditor({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold text-fg">交互式变基 · {rows.length} 个提交</h2>
-          <IconButton aria-label="关闭" onClick={onClose}><CloseIcon width={15} height={15} /></IconButton>
+          <h2 className="text-sm font-semibold text-fg">{t("rebase.title", { n: rows.length })}</h2>
+          <IconButton aria-label={t("toast.close")} onClick={onClose}><CloseIcon width={15} height={15} /></IconButton>
         </div>
 
         <p className="shrink-0 border-b border-line bg-warning/10 px-4 py-2 text-xs text-warning">
-          ⚠ 会改写提交历史。若这些提交已 push，变基后需 force push。冲突可在「更改」页解决或中止。
+          {t("rebase.warn")}
         </p>
 
         <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -145,7 +148,7 @@ export function RebaseEditor({
                   {/* 拖拽手柄:从这里按下可拖动整行重排(指针拖拽,自带预览) */}
                   <span
                     onPointerDown={(e) => startDrag(i, e)}
-                    title="拖动重排"
+                    title={t("rebase.dragReorder")}
                     className="shrink-0 cursor-grab touch-none text-fg-subtle hover:text-fg active:cursor-grabbing"
                   >
                     <GripIcon width={14} height={14} />
@@ -159,7 +162,7 @@ export function RebaseEditor({
                     onChange={(e) => setAction(i, e.target.value as RebaseActionKind)}
                     className="shrink-0 rounded border border-line-strong bg-canvas px-1.5 py-1 text-xs text-fg field"
                   >
-                    {ACTIONS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+                    {ACTIONS.map((a) => <option key={a.value} value={a.value}>{t(a.labelKey)}</option>)}
                   </select>
                   <span className="shrink-0 font-mono text-[11px] text-accent">{r.short}</span>
                   <span className={`min-w-0 flex-1 truncate text-[13px] ${r.action === "drop" ? "text-fg-subtle line-through" : "text-fg"}`} title={r.summary}>
@@ -170,7 +173,7 @@ export function RebaseEditor({
                   <input
                     value={r.message}
                     onChange={(e) => setMessage(i, e.target.value)}
-                    placeholder="新的提交信息"
+                    placeholder={t("rebase.newMessage")}
                     className="mt-1 ml-7 w-[calc(100%-1.75rem)] rounded border border-line-strong bg-canvas px-2 py-1 text-xs text-fg field"
                   />
                 )}
@@ -183,12 +186,12 @@ export function RebaseEditor({
 
         <div className="flex shrink-0 items-center justify-between border-t border-line px-4 py-3">
           <span className="text-xs text-danger">
-            {firstKeptInvalid ? "第一个保留的提交不能是 squash/fixup" : allDropped ? "至少保留一个提交" : ""}
+            {firstKeptInvalid ? t("rebase.errFirstSquash") : allDropped ? t("rebase.errAllDropped") : ""}
           </span>
           <div className="flex gap-2">
-            <Button variant="secondary" size="md" onClick={onClose}>取消</Button>
+            <Button variant="secondary" size="md" onClick={onClose}>{t("confirm.cancel")}</Button>
             <Button variant="primary" size="md" onClick={start} disabled={!canStart}>
-              开始变基
+              {t("rebase.start")}
             </Button>
           </div>
         </div>
