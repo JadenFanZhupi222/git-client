@@ -15,6 +15,7 @@ import { CommitContextMenu } from "../components/CommitContextMenu";
 import { Button } from "../components/ui/Button";
 import { IconButton } from "../components/ui/IconButton";
 import { Glass } from "../components/ui/Glass";
+import { Spine } from "../components/ui/Spine";
 import { CommitFileList } from "../components/CommitFileList";
 import { EmptyHint } from "../components/ui/EmptyHint";
 import { CommitDetail } from "../components/CommitDetail";
@@ -544,10 +545,11 @@ function SearchList({
             data-id={c.id}
             onClick={() => onSelect(c)}
             onContextMenu={(e) => { e.preventDefault(); onSelect(c); onContext(c, e.clientX, e.clientY); }}
-            className={`flex cursor-pointer items-center gap-2 border-l-2 px-3 py-2 transition-colors ${
-              on ? "border-accent-emphasis bg-overlay" : "border-transparent hover:bg-elevated"
+            className={`relative flex cursor-pointer items-center gap-2 px-3 py-2 transition-colors ${
+              on ? "bg-accent/10" : "hover:bg-elevated"
             }`}
           >
+            {on && <Spine />}
             <span className="h-2 w-2 shrink-0 rounded-full bg-fg-subtle" />
             <div className="min-w-0 flex-1">
               <CommitLines commit={c} />

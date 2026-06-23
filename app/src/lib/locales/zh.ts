@@ -158,7 +158,10 @@ export const zh = {
   "file.historyAria": "查看文件历史",
 
   // 更改页
+  "changes.workingTree": "工作区更改",
   "changes.refresh": "刷新",
+  "changes.commitTo": "提交到 {branch}",
+  "changes.stagedCount": "{n} 暂存",
   "changes.sectionConflicts": "冲突",
   "changes.sectionStaged": "已暂存",
   "changes.sectionUnstaged": "未暂存",

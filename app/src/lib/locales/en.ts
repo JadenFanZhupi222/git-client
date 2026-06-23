@@ -158,7 +158,10 @@ export const en: Record<MessageKey, string> = {
   "file.historyAria": "View file history",
 
   // Changes view
+  "changes.workingTree": "Working tree",
   "changes.refresh": "Refresh",
+  "changes.commitTo": "Commit to {branch}",
+  "changes.stagedCount": "{n} staged",
   "changes.sectionConflicts": "Conflicts",
   "changes.sectionStaged": "Staged",
   "changes.sectionUnstaged": "Unstaged",

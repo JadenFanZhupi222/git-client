@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { type FileChangeDto } from "../ipc";
 import { HistoryIcon } from "./icons";
+import { Spine } from "./ui/Spine";
 import { useT } from "../lib/i18n";
 
 /** 提交内文件状态 → 颜色 + 单字母 */
@@ -44,10 +45,11 @@ export function CommitFileList({
             data-path={f.path}
             onClick={() => onSelect(f.path)}
             title={f.path}
-            className={`group flex cursor-pointer items-center gap-2 px-3 py-1.5 font-mono text-[13px] transition-colors ${
-              on ? "bg-overlay" : "hover:bg-elevated"
+            className={`group relative flex cursor-pointer items-center gap-2 px-3 py-1.5 font-mono text-[13px] transition-colors ${
+              on ? "bg-accent/10" : "hover:bg-elevated"
             }`}
           >
+            {on && <Spine />}
             <span className={`w-3.5 shrink-0 text-center text-xs font-semibold ${s.cls}`}>{s.letter}</span>
             <span className="min-w-0 flex-1 truncate">
               {dir && <span className="text-fg-subtle">{dir}</span>}
