@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { Tab } from "./components/TabBar";
 import { Sidebar } from "./components/Sidebar";
@@ -11,7 +11,7 @@ import { WorktreesView } from "./views/WorktreesView";
 import { SparseCheckoutView } from "./views/SparseCheckoutView";
 import { useQueryClient } from "@tanstack/react-query";
 import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, checkoutBranch, initRepo, type IpcError } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon, MoreIcon, DropletIcon, CloudIcon, PlusIcon } from "./components/icons";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon, MoreIcon, DropletIcon, CloudIcon, PlusIcon, FileDiffIcon, BlameIcon, SubmoduleIcon, WorktreeIcon, BranchIcon } from "./components/icons";
 import { RemoteManager } from "./components/RemoteManager";
 import { CloneDialog } from "./components/CloneDialog";
 import { BranchSwitcher } from "./components/BranchSwitcher";
@@ -260,9 +260,19 @@ export default function App() {
   if (hasSubmodules) views.push({ id: "submodules", label: t("nav.submodules") });
   if (hasWorktrees) views.push({ id: "worktrees", label: t("nav.worktrees") });
   if (hasSparse) views.push({ id: "sparse", label: t("nav.sparse") });
+  const VIEW_ICON: Record<string, ReactNode> = {
+    changes: <FileDiffIcon width={15} height={15} />,
+    history: <HistoryIcon width={15} height={15} />,
+    compare: <FileDiffIcon width={15} height={15} />,
+    blame: <BlameIcon width={15} height={15} />,
+    submodules: <SubmoduleIcon width={15} height={15} />,
+    worktrees: <WorktreeIcon width={15} height={15} />,
+    sparse: <FolderIcon width={15} height={15} />,
+  };
   for (const v of views) {
     commands.push({
       id: `view:${v.id}`,
+      icon: VIEW_ICON[v.id],
       title: t("cmd.goToView", { name: v.label }),
       group: t("group.views"),
       keywords: `view tab ${v.id} ${v.label}`,
@@ -272,6 +282,7 @@ export default function App() {
   }
   commands.push({
     id: "lang:toggle",
+    icon: <GlobeIcon width={15} height={15} />,
     title: t("cmd.switchLang"),
     subtitle: t("cmd.switchLang.sub"),
     group: t("group.appearance"),
@@ -280,6 +291,7 @@ export default function App() {
   });
   commands.push({
     id: "jump:branch",
+    icon: <BranchIcon width={15} height={15} />,
     title: t("cmd.jumpBranch"),
     subtitle: t("cmd.jumpBranch.sub"),
     group: t("group.jump"),
@@ -300,6 +312,7 @@ export default function App() {
   });
   commands.push({
     id: "repo:pick",
+    icon: <FolderIcon width={15} height={15} />,
     title: repo ? t("cmd.switchRepo") : t("cmd.pickRepo"),
     group: t("group.repo"),
     keywords: "open repo folder 打开 仓库 切换",
@@ -307,6 +320,7 @@ export default function App() {
   });
   commands.push({
     id: "repo:clone",
+    icon: <CloudIcon width={15} height={15} />,
     title: t("cmd.clone"),
     subtitle: t("cmd.clone.sub"),
     group: t("group.repo"),
@@ -315,6 +329,7 @@ export default function App() {
   });
   commands.push({
     id: "repo:init",
+    icon: <PlusIcon width={15} height={15} />,
     title: t("cmd.init"),
     subtitle: t("cmd.init.sub"),
     group: t("group.repo"),
@@ -323,6 +338,7 @@ export default function App() {
   });
   commands.push({
     id: "theme:toggle",
+    icon: theme === "dark" ? <SunIcon width={15} height={15} /> : <MoonIcon width={15} height={15} />,
     title: theme === "dark" ? t("action.toLight") : t("action.toDark"),
     group: t("group.appearance"),
     keywords: "theme dark light 主题 暗色 浅色 切换",
@@ -330,6 +346,7 @@ export default function App() {
   });
   commands.push({
     id: "glass:toggle",
+    icon: <DropletIcon width={15} height={15} />,
     title: getStoredGlassPref() === "reduced" ? t("cmd.glassOn") : t("cmd.glassReduce"),
     group: t("group.appearance"),
     keywords: "glass transparency 玻璃 透明 实底 无障碍",
@@ -340,18 +357,19 @@ export default function App() {
     },
   });
   commands.push(
-    { id: "remote:fetch", title: t("cmd.fetch"), subtitle: t("cmd.fetch.sub"), group: t("group.remote"), keywords: "拉取 远程 fetch", disabled: !repo || busy, run: doFetch },
-    { id: "remote:pull-merge", title: t("cmd.pullMerge"), group: t("group.remote"), keywords: "拉取 合并 merge pull", disabled: !repo || busy, run: () => doPull(false) },
-    { id: "remote:pull-rebase", title: t("cmd.pullRebase"), group: t("group.remote"), keywords: "拉取 变基 rebase pull", disabled: !repo || busy, run: () => doPull(true) },
-    { id: "remote:push", title: t("cmd.push"), subtitle: t("cmd.push.sub"), group: t("group.remote"), keywords: "推送 push", disabled: !repo || busy, run: doPush },
-    { id: "remote:manage", title: t("cmd.manageRemote"), subtitle: t("cmd.manageRemote.sub"), group: t("group.remote"), keywords: "远程 remote 管理 添加 删除 重命名 add remove rename", disabled: !repo, run: () => setRemoteMgrOpen(true) },
+    { id: "remote:fetch", icon: <FetchIcon width={15} height={15} />, title: t("cmd.fetch"), subtitle: t("cmd.fetch.sub"), group: t("group.remote"), keywords: "拉取 远程 fetch", disabled: !repo || busy, run: doFetch },
+    { id: "remote:pull-merge", icon: <PullIcon width={15} height={15} />, title: t("cmd.pullMerge"), group: t("group.remote"), keywords: "拉取 合并 merge pull", disabled: !repo || busy, run: () => doPull(false) },
+    { id: "remote:pull-rebase", icon: <PullIcon width={15} height={15} />, title: t("cmd.pullRebase"), group: t("group.remote"), keywords: "拉取 变基 rebase pull", disabled: !repo || busy, run: () => doPull(true) },
+    { id: "remote:push", icon: <PushIcon width={15} height={15} />, title: t("cmd.push"), subtitle: t("cmd.push.sub"), group: t("group.remote"), keywords: "推送 push", disabled: !repo || busy, run: doPush },
+    { id: "remote:manage", icon: <CloudIcon width={15} height={15} />, title: t("cmd.manageRemote"), subtitle: t("cmd.manageRemote.sub"), group: t("group.remote"), keywords: "远程 remote 管理 添加 删除 重命名 add remove rename", disabled: !repo, run: () => setRemoteMgrOpen(true) },
   );
   commands.push(
-    { id: "undo", title: canUndo ? t("cmd.undoLabel", { label: canUndo.label }) : t("cmd.undo"), group: t("group.undo"), keywords: "undo 撤销 回退", disabled: !repo || busy || !canUndo, run: () => doNav("undo") },
-    { id: "redo", title: canRedo ? t("cmd.redoLabel", { label: canRedo.label }) : t("cmd.redo"), group: t("group.undo"), keywords: "redo 重做 前进", disabled: !repo || busy || !canRedo, run: () => doNav("redo") },
+    { id: "undo", icon: <UndoIcon width={15} height={15} />, title: canUndo ? t("cmd.undoLabel", { label: canUndo.label }) : t("cmd.undo"), group: t("group.undo"), keywords: "undo 撤销 回退", disabled: !repo || busy || !canUndo, run: () => doNav("undo") },
+    { id: "redo", icon: <RedoIcon width={15} height={15} />, title: canRedo ? t("cmd.redoLabel", { label: canRedo.label }) : t("cmd.redo"), group: t("group.undo"), keywords: "redo 重做 前进", disabled: !repo || busy || !canRedo, run: () => doNav("redo") },
   );
   commands.push({
     id: "panel:oplog",
+    icon: <HistoryIcon width={15} height={15} />,
     title: t("cmd.opLog"),
     subtitle: t("cmd.opLog.sub"),
     group: t("group.appearance"), // 对齐原型:操作日志归「外观」组(与主题/语言/玻璃同组)

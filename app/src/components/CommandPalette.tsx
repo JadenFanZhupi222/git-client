@@ -20,7 +20,8 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
   const listRef = useRef<HTMLUListElement>(null);
   const t = useT();
 
-  // 把两级统一成 Entry,键盘/渲染逻辑只认 Entry。
+  // 把两级统一成 Entry,键盘/渲染逻辑只认 Entry。命令模式按 group 分区(原型版式):
+  // 每组一个不可选 header 行 + 其命令行;跳转子模式则是扁平列表(按相关度排)。
   const entries: Entry[] = useMemo(() => {
     if (jump) {
       return rankBy(jump.items, (i) => i.label, query).map((r) => ({
@@ -32,31 +33,47 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
         node: <JumpRow label={r.item.label} hint={r.item.hint} indices={r.indices} />,
       }));
     }
-    return rankCommands(commands, query).map((r) => ({
-      key: r.cmd.id,
-      disabled: r.cmd.disabled,
-      onActivate: () => {
-        if (r.cmd.disabled) return;
-        if (r.cmd.jump) {
-          setJump(r.cmd.jump); // 进入跳转子模式,不关面板
-          setQuery("");
-          return;
-        }
-        onClose();
-        r.cmd.run();
-      },
-      node: <CommandRow title={r.cmd.title} subtitle={r.cmd.subtitle} group={r.cmd.group} indices={r.indices} />,
-    }));
+    const ranked = rankCommands(commands, query);
+    // 按 group 分桶,保留各组首次出现顺序(空 query = App 组装序;搜索 = 按最佳匹配组序)。
+    const order: string[] = [];
+    const byGroup = new Map<string, typeof ranked>();
+    for (const r of ranked) {
+      if (!byGroup.has(r.cmd.group)) { byGroup.set(r.cmd.group, []); order.push(r.cmd.group); }
+      byGroup.get(r.cmd.group)!.push(r);
+    }
+    const out: Entry[] = [];
+    for (const g of order) {
+      out.push({ key: `header:${g}`, header: g, onActivate: () => {} });
+      for (const r of byGroup.get(g)!) {
+        out.push({
+          key: r.cmd.id,
+          disabled: r.cmd.disabled,
+          onActivate: () => {
+            if (r.cmd.disabled) return;
+            if (r.cmd.jump) {
+              setJump(r.cmd.jump); // 进入跳转子模式,不关面板
+              setQuery("");
+              return;
+            }
+            onClose();
+            r.cmd.run();
+          },
+          node: <CommandRow icon={r.cmd.icon} title={r.cmd.title} subtitle={r.cmd.subtitle} indices={r.indices} />,
+        });
+      }
+    }
+    return out;
   }, [commands, query, jump, onClose]);
 
-  // 从 from 出发沿 dir 找下一个可用项;到边界停在原地。
+  // 从 from 出发沿 dir 找下一个可选项(跳过 header 与 disabled);到边界停在原地。
+  function selectable(e: Entry) { return !e.header && !e.disabled; }
   function step(from: number, dir: 1 | -1): number {
     for (let i = from + dir; i >= 0 && i < entries.length; i += dir) {
-      if (!entries[i].disabled) return i;
+      if (selectable(entries[i])) return i;
     }
-    return from >= 0 && from < entries.length && !entries[from]?.disabled ? from : -1;
+    return from >= 0 && from < entries.length && selectable(entries[from]) ? from : -1;
   }
-  const firstEnabled = () => entries.findIndex((e) => !e.disabled);
+  const firstEnabled = () => entries.findIndex(selectable);
 
   // query 或模式变化 → 高亮落到第一个可用项
   useEffect(() => {
@@ -132,16 +149,22 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
         </div>
 
         {/* 结果列表 */}
-        <ul ref={listRef} className="max-h-[50vh] overflow-y-auto py-1">
+        <ul ref={listRef} className="max-h-[50vh] overflow-y-auto px-1 py-1">
           {entries.length === 0 ? (
             <li className="px-3 py-6 text-center text-xs text-fg-subtle">{jump ? t("palette.noMatchItem") : t("palette.noMatchCmd")}</li>
           ) : (
-            entries.map((e, i) => (
-              // 灰条(disabled)不参与 hover 高亮:鼠标移上去不抢选中
-              <Row key={e.key} idx={i} active={i === active} disabled={e.disabled} onActivate={() => activate(i)} onHover={() => !e.disabled && setActive(i)}>
-                {e.node}
-              </Row>
-            ))
+            entries.map((e, i) =>
+              e.header ? (
+                <li key={e.key} className="px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.06em] text-fg-subtle first:pt-1.5">
+                  {e.header}
+                </li>
+              ) : (
+                // 灰条(disabled)不参与 hover 高亮:鼠标移上去不抢选中
+                <Row key={e.key} idx={i} active={i === active} disabled={e.disabled} onActivate={() => activate(i)} onHover={() => !e.disabled && setActive(i)}>
+                  {e.node}
+                </Row>
+              ),
+            )
           )}
         </ul>
       </Glass>
@@ -152,8 +175,10 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
 interface Entry {
   key: string;
   disabled?: boolean;
+  /** 非空表示这是分区标题行(不可选,渲染为小标签)。 */
+  header?: string;
   onActivate: () => void;
-  node: ReactNode;
+  node?: ReactNode;
 }
 
 function Row({
@@ -177,10 +202,10 @@ function Row({
         disabled={disabled}
         onClick={onActivate}
         onMouseMove={onHover}
-        // 选中行:accent 浅底 + 2px accent 左条(透明左条占位,切换时不抖动)
+        // 选中行:accent 浅底圆角整条(对齐原型,无左条)
         className={cx(
-          "flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-sm transition-colors",
-          active && !disabled ? "border-accent bg-accent/15" : "border-transparent",
+          "flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors",
+          active && !disabled ? "bg-accent/15" : "",
           disabled ? "cursor-not-allowed opacity-40" : "text-fg",
         )}
       >
@@ -190,15 +215,15 @@ function Row({
   );
 }
 
-/** 命令行内容:标题(高亮)+ 副标题 + 分组 chip。 */
-function CommandRow({ title, subtitle, group, indices }: { title: string; subtitle?: string; group: string; indices: number[] }) {
+/** 命令行内容:左图标 + 标题(高亮)+ 副标题。分组由分区标题表达,行内不再挂 chip。 */
+function CommandRow({ icon, title, subtitle, indices }: { icon?: ReactNode; title: string; subtitle?: string; indices: number[] }) {
   return (
     <>
+      <span className="grid w-4 shrink-0 place-items-center text-fg-subtle">{icon}</span>
       <span className="min-w-0 flex-1 truncate">
         <Highlight text={title} indices={indices} />
         {subtitle && <span className="ml-2 text-xs text-fg-subtle">{subtitle}</span>}
       </span>
-      <span className="shrink-0 rounded bg-canvas px-1.5 py-0.5 text-[10px] text-fg-subtle">{group}</span>
     </>
   );
 }
