@@ -4,12 +4,12 @@ import { HistoryIcon } from "./icons";
 import { Spine } from "./ui/Spine";
 import { useT } from "../lib/i18n";
 
-/** 提交内文件状态 → 颜色 + 单字母 */
-const STYLE: Record<string, { letter: string; cls: string }> = {
-  added: { letter: "A", cls: "text-success" },
-  modified: { letter: "M", cls: "text-accent" },
-  deleted: { letter: "D", cls: "text-danger" },
-  renamed: { letter: "R", cls: "text-warning" },
+/** 提交内文件状态 → 语义色 + 单字母(对齐原型 statBadge:M=warning、A=success、D=danger、R=accent)。 */
+const STYLE: Record<string, { letter: string; color: string }> = {
+  added: { letter: "A", color: "var(--color-success)" },
+  modified: { letter: "M", color: "var(--color-warning)" },
+  deleted: { letter: "D", color: "var(--color-danger)" },
+  renamed: { letter: "R", color: "var(--color-accent)" },
 };
 
 export function CommitFileList({
@@ -33,7 +33,7 @@ export function CommitFileList({
   return (
     <div ref={boxRef} className="h-full overflow-y-auto">
       {files.map((f) => {
-        const s = STYLE[f.status] ?? { letter: "?", cls: "text-fg-muted" };
+        const s = STYLE[f.status] ?? { letter: "?", color: "var(--color-fg-subtle)" };
         const on = selected === f.path;
         // 文件名与所在目录分开显示:文件名亮、目录灰,便于扫读
         const slash = f.path.lastIndexOf("/");
@@ -50,7 +50,12 @@ export function CommitFileList({
             }`}
           >
             {on && <Spine />}
-            <span className={`w-3.5 shrink-0 text-center text-xs font-semibold ${s.cls}`}>{s.letter}</span>
+            <span
+              className="grid h-4 w-4 shrink-0 place-items-center rounded text-[10px] font-bold"
+              style={{ color: s.color, background: `color-mix(in oklab, ${s.color} 15%, transparent)` }}
+            >
+              {s.letter}
+            </span>
             <span className="min-w-0 flex-1 truncate">
               {dir && <span className="text-fg-subtle">{dir}</span>}
               <span className="text-fg">{name}</span>

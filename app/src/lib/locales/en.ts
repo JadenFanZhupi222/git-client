@@ -220,6 +220,7 @@ export const en: Record<MessageKey, string> = {
 
   // Commit details
   "commit.selectToView": "Select a commit to view details",
+  "commit.copySha": "Copy full SHA",
   "commit.sigGood": "Verified signature",
   "commit.sigBad": "Invalid signature",
   "commit.sigUnverified": "Signed · unverified",

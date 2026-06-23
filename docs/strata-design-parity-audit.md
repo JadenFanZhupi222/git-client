@@ -80,25 +80,25 @@
 - [x] 提交盒:textarea + footer 统一内盒(borderTop);"N 暂存"计数;提交按钮 `提交到 {branch}`
 - [ ] ~~文件行补 `+add / −del` 增删数~~ —— **跳过**:`FileEntryDto` 只有 `{path,state,staged}`,无行计数;补齐需后端每文件 diff-stat,留作独立增强(非视觉回归)
 
-### 步骤 3 — 历史图谱节点细节 + 提交详情面板
+### 步骤 3 — 历史图谱节点细节 + 提交详情面板 ✅ 完成
 
-**图谱几何与节点**(`CommitGraph.tsx`)
-- [ ] 行高 56(现 48);曲线控制点偏移 28(现 12);`cx` = `22 + lane*22`(现 `lane*16+8`)
-- [ ] 节点分级:选中 r=6 / 普通 r=5 / 合并 r=4.5
-- [ ] HEAD 加外环
-- [ ] 选中节点 `drop-shadow` 辉光
-- [ ] 合并节点空心环 `fill:canvas, stroke:lane`(当前空心环语义被挪用给"同步状态",需还原)
-- [ ] lane hover 暗化 opacity 0.7(现 0.2)
-- [ ] refs 徽章:`radius 5`(非 `rounded-full`);head 用 accent(现 success 绿);tag 用 tag-svg(现字符 `⌖`)
+**图谱几何与节点**(`CommitGraph.tsx` / `graphGeometry.ts`)
+- [x] 行高 56(ROW_H 48→56);LANE_W 16→22(更宽泳道,曲线控制点随 MID 自动到 14=半段)
+- [x] 节点分级:选中 r=6 / 普通 r=5 / 合并 r=4.5
+- [x] HEAD 加外环(r+3 淡环,stroke lane / opacity .5)
+- [x] 选中节点 `drop-shadow(0 0 6px lane)` 辉光
+- [x] 合并节点空心环 `fill:canvas, stroke:lane`;同步状态语义移交行首竖色条(不再占用节点形态)
+- [x] lane hover 暗化 opacity 0.6(原 0.2);非高亮线宽 1.8
+- [x] refs 徽章:`rounded-[5px]`;head/local 用 accent(原 success);tag 用 tag-svg(替换 `⌖`);remote 中性
 
 **提交行版式**(`CommitLines.tsx` / `HistoryView.tsx`)
-- [ ] 拆出右对齐独立列:time(62px)/ short SHA(54px,选中 accent),替换现"`short_id · 作者 · 时间`"单行 mono
+- [x] 拆出右对齐独立列:time(62px)/ short SHA(54px,选中 accent);消息列 summary(选中加粗,合并 fg-muted)+ 作者 mono
 
 **提交详情面板**(`CommitDetail.tsx`)
-- [ ] 顶部 sha 徽章 + 复制按钮(当前缺失)
-- [ ] 作者首字母方块 avatar(accent 底)+ `who@strata.dev · 时间` 排版(当前纯文本)
-- [ ] "变更文件"区补 `+170 −32` 汇总
-- [ ] stat 色块化(M=warning 非 accent)
+- [x] 顶部 sha 徽章 + 复制按钮(navigator.clipboard,复制后短暂显勾)
+- [x] 作者首字母方块 avatar(accent/16 底)+ `邮箱 · 时间` 排版
+- [x] "变更文件"区补 `+adds −dels` 汇总(History MidColumn 头,真实 diff-stat)
+- [x] stat 色块化(`CommitFileList` 16×16 color-mix;M=warning、R=accent)
 - [x] subject serif 25px/400(已到位)
 - [ ] (可选)宽度 388 与独立右栏 —— 当前是中列上半区可拖拽 288,属功能增强,**保留,不强制改**
 

@@ -551,9 +551,7 @@ function SearchList({
           >
             {on && <Spine />}
             <span className="h-2 w-2 shrink-0 rounded-full bg-fg-subtle" />
-            <div className="min-w-0 flex-1">
-              <CommitLines commit={c} />
-            </div>
+            <CommitLines commit={c} selected={on} />
           </div>
         );
       })}
@@ -639,7 +637,19 @@ function MidColumn({
         <div className="max-h-[45%] shrink-0 overflow-hidden border-b border-line">
           <CommitDetail repo={repo} commit={commit} />
         </div>
-        <ColumnHead icon={<FileDiffIcon width={13} height={13} />}>{t("history.changedFiles")}{commit && ` (${list.length})`}</ColumnHead>
+        <ColumnHead icon={<FileDiffIcon width={13} height={13} />}>
+          {t("history.changedFiles")}{commit && ` (${list.length})`}
+          {commit && list.length > 0 && (() => {
+            const add = list.reduce((s, f) => s + f.additions, 0);
+            const del = list.reduce((s, f) => s + f.deletions, 0);
+            return (
+              <span className="ml-auto flex shrink-0 items-center gap-1.5 font-mono text-[10px] normal-case tracking-normal">
+                {add > 0 && <span className="text-success">+{add}</span>}
+                {del > 0 && <span className="text-danger">−{del}</span>}
+              </span>
+            );
+          })()}
+        </ColumnHead>
         <div className="min-h-0 flex-1 overflow-hidden">
           {commit
             ? <CommitFileList files={list} selected={selectedFile} onSelect={onSelectFile} onFileHistory={onFileHistory} />

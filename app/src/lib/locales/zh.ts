@@ -220,6 +220,7 @@ export const zh = {
 
   // 提交详情
   "commit.selectToView": "选择一个提交查看详情",
+  "commit.copySha": "复制完整 SHA",
   "commit.sigGood": "已验证签名",
   "commit.sigBad": "签名无效",
   "commit.sigUnverified": "已签名 · 未验证",
