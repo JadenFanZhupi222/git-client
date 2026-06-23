@@ -237,7 +237,7 @@ function UnifiedLine({ hi, ref_, selected, toggle, lineStage }: { hi: number; re
   const l = ref_.line;
   const add = l.kind === "add";
   const del = l.kind === "del";
-  const rowBg = add ? "bg-success/10" : del ? "bg-danger/10" : "";
+  const rowBg = add ? "bg-add-bg" : del ? "bg-del-bg" : "";
   const sign = add ? "+" : del ? "-" : " ";
   const signCls = add ? "text-success" : del ? "text-danger" : "text-fg-subtle";
   const selectable = !!lineStage && (add || del);
@@ -299,7 +299,7 @@ function HalfCell({ hi, side, cell, border, selected, toggle, lineStage }: { hi:
   const l = cell.line;
   const add = l.kind === "add";
   const del = l.kind === "del";
-  const rowBg = add ? "bg-success/10" : del ? "bg-danger/10" : "";
+  const rowBg = add ? "bg-add-bg" : del ? "bg-del-bg" : "";
   const sign = add ? "+" : del ? "-" : " ";
   const signCls = add ? "text-success" : del ? "text-danger" : "text-fg-subtle";
   const selectable = !!lineStage && (add || del);
