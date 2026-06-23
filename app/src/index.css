@@ -6,28 +6,34 @@
    想换主题/调对比度,只改这里一处,所有组件跟着变。
    ──────────────────────────────────────────────────────────── */
 @theme {
-  /* 浅色:白底 + 青绿身份。靠渐深 + 细边框表达层次。 */
-  --color-canvas: #ffffff;
-  --color-elevated: #f3f6f9;
-  --color-overlay: #e7eef2;
+  /* 浅色 "Paper":纸白画布 + 近黑墨色 + 一点朱红强调。靠渐深 + 细边框表达层次。 */
+  --color-canvas: #f4f1ea;          /* 纸白画布 */
+  --color-elevated: #fbfaf5;        /* 抬升面(面板/按钮底) */
+  --color-overlay: #e9e4d8;         /* 悬停/凹陷 */
 
-  --color-line: #e3e8ee;
-  --color-line-strong: #ccd5dd;
+  --color-line: rgba(38, 28, 18, 0.12);
+  --color-line-strong: rgba(38, 28, 18, 0.20);
 
-  --color-fg: #16202c;
-  --color-fg-muted: #51606e;
-  --color-fg-subtle: #7b8794;
+  --color-fg: #1a160f;              /* 墨黑 */
+  --color-fg-muted: #6a6053;
+  --color-fg-subtle: #9a9082;
 
-  --color-accent: #0d9488;          /* 青绿(白底加深保 AA) */
-  --color-accent-emphasis: #0f766e;
-  --color-success: #0f9d6b;
-  --color-danger: #d64545;
-  --color-warning: #c2691c;
-  --color-done: #0d9488;            /* 提交按钮:青绿实心 + 白字 */
+  --color-accent: #d83a22;          /* 朱红(UI 强调;白底偏深保 AA) */
+  --color-accent-emphasis: #bb2f1a;
+  --color-success: #2f7d4f;         /* diff 新增 / 暂存 */
+  --color-danger: #bb2f1a;          /* diff 删除 / 危险(砖红,区别于 accent) */
+  --color-warning: #b5791f;         /* 修改 M / tag */
+  --color-done: #d83a22;            /* 提交按钮:朱红实心 + 白字 */
 
-  /* Geist 领衔拉丁/数字(开发者工具气质);CJK 无字形,逐字回退 YaHei/system。 */
-  --font-sans: "Geist Variable", ui-sans-serif, system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  /* diff 行底色(新增/删除) */
+  --color-add-bg: rgba(47, 125, 79, 0.10);
+  --color-del-bg: rgba(187, 47, 26, 0.08);
+
+  /* 三声部排版:Geist(UI)+ Geist Mono(数据)+ Instrument Serif(编辑性大字);
+     中文配 Noto Sans/Serif SC,逐字回退。 */
+  --font-sans: "Geist Variable", "Noto Sans SC", ui-sans-serif, system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  --font-serif: "Instrument Serif", "Noto Serif SC", ui-serif, Georgia, "Songti SC", serif;
 
   /* 圆角阶梯 */
   --radius-sm: 6px;
@@ -45,14 +51,15 @@
    为白底重新调校:比暗色版更深、更饱和,保证线条在浅背景上清晰可辨。 */
 :root {
   color-scheme: light;
-  --lane-0: #0d9488; /* 青绿 */
-  --lane-1: #2563eb; /* 蓝 */
-  --lane-2: #c2691c; /* 橙 */
-  --lane-3: #bf3989; /* 品红 */
-  --lane-4: #7c4dd6; /* 紫(仅 8 色之一) */
-  --lane-5: #d64545; /* 红 */
-  --lane-6: #15803d; /* 绿 */
-  --lane-7: #b08400; /* 琥珀 */
+  /* 图谱泳道(Paper):主干=朱红,分支用黛蓝/赭/黛紫,8 道沿同色相延展。 */
+  --lane-0: #d83a22; /* 朱红(主干) */
+  --lane-1: #3f6789; /* 黛蓝 */
+  --lane-2: #b5791f; /* 赭 */
+  --lane-3: #8a4a6b; /* 黛紫 */
+  --lane-4: #a8442b; /* 朱红偏深 */
+  --lane-5: #5b86a8; /* 黛蓝偏浅 */
+  --lane-6: #8a5a16; /* 赭偏深 */
+  --lane-7: #6d3a54; /* 黛紫偏深 */
 }
 
 /* ────────────────────────────────────────────────────────────
@@ -63,33 +70,37 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --color-canvas: #0a0f18;
-  --color-elevated: #121a28;
-  --color-overlay: #1a2333;
+  /* 暗色 "Ink":暖墨黑底 + 纸白字 + 更亮的朱红。同族反相,不走冷蓝。 */
+  --color-canvas: #16130f;          /* 暖墨黑 */
+  --color-elevated: #1e1a14;
+  --color-overlay: #2a241c;
 
-  --color-line: rgba(120, 140, 170, 0.14);
-  --color-line-strong: rgba(120, 140, 170, 0.28);
+  --color-line: rgba(232, 214, 184, 0.13);
+  --color-line-strong: rgba(232, 214, 184, 0.24);
 
-  --color-fg: #e6edf6;
-  --color-fg-muted: #8b9bb0;
-  --color-fg-subtle: #5f6e85;
+  --color-fg: #f1ebe0;              /* 纸白 */
+  --color-fg-muted: #a99e8d;
+  --color-fg-subtle: #6f6556;
 
-  --color-accent: #2dd4bf;
-  --color-accent-emphasis: #14b8a6;
-  --color-success: #34c78c;
-  --color-danger: #f46e6e;
-  --color-warning: #f0883e;
-  --color-done: #16b3a3;
+  --color-accent: #ff6a4d;          /* 亮朱红 */
+  --color-accent-emphasis: #e2452d;
+  --color-success: #5aa06a;
+  --color-danger: #ff7a5e;
+  --color-warning: #e0a94e;
+  --color-done: #ff6a4d;
 
-  /* 泳道:暗底用鲜亮一组,给图谱活力(紫仅作 8 色之一) */
-  --lane-0: #2dd4bf;
-  --lane-1: #5aa9ff;
-  --lane-2: #f0883e;
-  --lane-3: #bf3989;
-  --lane-4: #a371f7;
-  --lane-5: #f46e6e;
-  --lane-6: #4ade80;
-  --lane-7: #e3b341;
+  --color-add-bg: rgba(90, 160, 106, 0.13);
+  --color-del-bg: rgba(255, 122, 94, 0.12);
+
+  /* 泳道(Ink):主干=亮朱红,分支同色相提亮一组 */
+  --lane-0: #ff6a4d;
+  --lane-1: #6f9fc4;
+  --lane-2: #e0a94e;
+  --lane-3: #c98aa8;
+  --lane-4: #d8543a;
+  --lane-5: #93b8d6;
+  --lane-6: #c98f3a;
+  --lane-7: #a9708c;
 }
 
 /* 备用主题:暖石墨 + 琥珀。由 <html data-theme="amber-dark"> 激活。先实现,暂不进切换器。 */
@@ -140,6 +151,12 @@ body {
   text-rendering: optimizeLegibility;
   /* 数据密集型客户端:等宽数字,让计数/行号/SHA/领先落后角标对齐不抖动 */
   font-variant-numeric: tabular-nums;
+}
+
+/* 衬线工具:仅用于「编辑性时刻」(启动屏巨字、提交标题、视图标题、blame 文件名)。
+   等价于 Tailwind 的 font-serif(两者都解析到 --font-serif),供内联场景直接用 class。 */
+.serif {
+  font-family: var(--font-serif);
 }
 
 /* 细滚动条,跟随主题 token */
@@ -237,9 +254,13 @@ body {
 .launch-ambient {
   background-color: var(--color-canvas);
   background-image:
-    radial-gradient(58% 52% at 15% 8%, color-mix(in oklab, var(--color-accent) 24%, transparent), transparent 68%),
-    radial-gradient(54% 48% at 88% 94%, color-mix(in oklab, var(--color-accent-emphasis) 18%, transparent), transparent 70%),
-    radial-gradient(42% 40% at 64% 36%, color-mix(in oklab, var(--color-accent) 9%, transparent), transparent 80%);
+    radial-gradient(62% 56% at 84% 8%, color-mix(in oklab, var(--color-accent) 9%, transparent), transparent 60%),
+    radial-gradient(50% 50% at 6% 96%, rgba(40, 30, 20, 0.045), transparent 64%);
+}
+:root[data-theme="dark"] .launch-ambient {
+  background-image:
+    radial-gradient(62% 56% at 84% 8%, color-mix(in oklab, var(--color-accent) 16%, transparent), transparent 60%),
+    radial-gradient(50% 50% at 6% 96%, color-mix(in oklab, var(--color-warning) 10%, transparent), transparent 64%);
 }
 /* 细噪点叠层:绝对定位、不吃指针(性能护栏:只贴静止层,不随内容滚动)。 */
 .grain-overlay {
@@ -415,14 +436,15 @@ body {
 /* 液态玻璃:三档由 <html data-glass="..."> 控制(refract/blur/solid)。
    材质 = 强模糊/提亮/饱和(吃背后内容)+ 镜面亮边(::before 描边渐变,玻璃感的关键)。
    贴边外壳与浮层共用;镜面边是柔亮发丝,不会造成生硬暗边。 */
+/* 默认(Paper / 浅色):磨砂羊皮纸。暖白渐变 + 近全白发丝边 + 柔和暖投影。 */
 .glass {
   position: relative;
   isolation: isolate;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.10), rgba(255, 255, 255, 0.02) 50%, rgba(255, 255, 255, 0.06));
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  box-shadow: 0 1px 2px rgba(15, 30, 50, 0.05), 0 10px 30px rgba(15, 30, 50, 0.07);
+  background: linear-gradient(135deg, rgba(255, 253, 248, 0.74), rgba(250, 247, 240, 0.52));
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 0 1px 2px rgba(60, 44, 28, 0.05), 0 22px 50px -18px rgba(60, 44, 28, 0.22);
 }
-/* 镜面亮边:左上受光最亮 → 渐隐 → 右下淡回光。这道亮边是「玻璃」的招牌。 */
+/* 招牌高光发丝边:左上受光最亮 → 渐隐 → 右下淡回光。 */
 .glass::before {
   content: "";
   position: absolute;
@@ -430,25 +452,28 @@ body {
   border-radius: inherit;
   padding: 1px;
   pointer-events: none;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0) 38%, rgba(255, 255, 255, 0) 64%, rgba(255, 255, 255, 0.22));
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0) 42%, rgba(255, 255, 255, 0) 64%, rgba(255, 255, 255, 0.55));
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
 }
+/* 暗色(Ink):暖墨黑磨砂 + 暖米边 + 深投影。 */
 :root[data-theme="dark"] .glass {
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  background: linear-gradient(135deg, rgba(60, 50, 38, 0.55), rgba(28, 22, 16, 0.36));
+  border-color: rgba(230, 210, 180, 0.18);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 235, 210, 0.07);
 }
-/* refract(Chromium,含 WebView2):轻模糊 + SVG 位移折射 + 提亮饱和,吃背后内容产生「液态」感。
+/* refract(Chromium,含 WebView2):SVG 位移折射 + 磨砂饱和,吃背后内容产生「液态」感。
    注意:SVG url() 折射只在 Chromium 生效;Safari/WebKit 不支持(WebKit bug #245510),那条路由走 blur。
    ⚠️ 只有玻璃**背后有内容**时折射才看得见;贴边外壳(顶栏/侧栏)背后是纯色,看不出效果是预期。 */
 :root[data-glass="refract"] .glass {
-  -webkit-backdrop-filter: url(#lgWarp) blur(6px) saturate(180%) brightness(1.08);
-  backdrop-filter: url(#lgWarp) blur(6px) saturate(180%) brightness(1.08);
+  -webkit-backdrop-filter: url(#lgWarp) blur(8px) saturate(185%);
+  backdrop-filter: url(#lgWarp) blur(8px) saturate(185%);
 }
-/* blur 回退(非 Chromium / 折射不支持):强磨砂玻璃 */
+/* blur 回退(非 Chromium / 折射不支持):强磨砂羊皮纸玻璃 */
 :root[data-glass="blur"] .glass {
-  backdrop-filter: blur(18px) saturate(180%) brightness(1.06);
-  -webkit-backdrop-filter: blur(18px) saturate(180%) brightness(1.06);
+  backdrop-filter: blur(22px) saturate(185%);
+  -webkit-backdrop-filter: blur(22px) saturate(185%);
 }
 :root[data-glass="solid"] .glass {
   background: var(--color-elevated);
@@ -457,8 +482,3 @@ body {
   box-shadow: none;
 }
 :root[data-glass="solid"] .glass::before { display: none; }
-/* 浅色下玻璃较弱:略提白底透明度 + 保留镜面边 */
-:root:not([data-theme]):not([data-glass="solid"]) .glass {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.38));
-  border-color: rgba(255, 255, 255, 0.5);
-}

@@ -15,6 +15,7 @@ import { IconButton } from "./ui/IconButton";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useToast } from "./Toast";
 import { BranchIcon, CheckIcon, PlusIcon, TrashIcon, MergeIcon } from "./icons";
+import { useT } from "../lib/i18n";
 
 /**
  * 底栏分支切换器(VSCode 状态栏式):点当前分支名 → 向上弹出本地分支列表。
@@ -32,6 +33,7 @@ export function BranchSwitcher({
   /** 下拉弹出方向:底栏用 "up"(向上),顶栏用 "down"(向下)。 */
   direction?: "up" | "down";
 }) {
+  const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
   const [open, setOpen] = useState(false);
@@ -156,8 +158,8 @@ export function BranchSwitcher({
       invalidateWorktree(qc, repo);
       toast({
         kind: "success",
-        title: `已合并 ${name} 到当前分支`,
-        detail: res.fast_forward ? "快进合并" : res.summary?.split("\n")[0],
+        title: t("branch.merged", { name }),
+        detail: res.fast_forward ? t("branch.ff") : res.summary?.split("\n")[0],
       });
       close();
     } catch (e) {
@@ -167,7 +169,7 @@ export function BranchSwitcher({
         invalidate();
         invalidateWorktree(qc, repo);
         qc.invalidateQueries({ queryKey: ["repoState", repo] });
-        toast({ kind: "error", title: "合并有冲突", detail: "请到「更改」页解决冲突后提交" });
+        toast({ kind: "error", title: t("branch.mergeConflict"), detail: t("branch.mergeConflictDetail") });
         close();
       } else {
         setError(err.message ?? String(e));
@@ -183,7 +185,7 @@ export function BranchSwitcher({
     <div className="relative">
       <button
         onClick={() => (open ? close() : setOpen(true))}
-        title="切换分支"
+        title={t("branch.switch")}
         className="flex items-center gap-1 rounded px-1 text-accent transition-colors hover:bg-overlay"
       >
         <BranchIcon width={12} height={12} />
@@ -200,7 +202,7 @@ export function BranchSwitcher({
                 autoFocus
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                placeholder="筛选分支…"
+                placeholder={t("branch.filter")}
                 className="w-full rounded bg-canvas px-2 py-1 text-xs text-fg placeholder:text-fg-subtle field"
               />
             </div>
@@ -211,10 +213,10 @@ export function BranchSwitcher({
 
             <ul className="max-h-64 overflow-y-auto py-1">
               {loading ? (
-                <li className="px-2.5 py-1.5 text-xs text-fg-subtle">加载中…</li>
+                <li className="px-2.5 py-1.5 text-xs text-fg-subtle">{t("common.loading")}</li>
               ) : shown.length === 0 ? (
                 <li className="px-2.5 py-1.5 text-xs text-fg-subtle">
-                  {branches.length === 0 ? "没有本地分支" : "无匹配分支"}
+                  {branches.length === 0 ? t("branch.none") : t("branch.noMatch")}
                 </li>
               ) : (
                 shown.map((b) => {
@@ -237,10 +239,10 @@ export function BranchSwitcher({
                       {/* 非当前分支:合并进当前分支 + 删除(查影响→确认),悬浮显现 */}
                       {!current && (
                         <IconButton
-                          aria-label={`合并 ${b.name} 到当前分支`}
+                          aria-label={t("branch.mergeAria", { name: b.name })}
                           onClick={() => doMerge(b.name)}
                           disabled={busy !== null || checkingDelete !== null}
-                          title={`合并 ${b.name} 到当前分支${branch ? `(${branch})` : ""}`}
+                          title={t("branch.mergeTitle", { name: b.name, cur: branch ? `(${branch})` : "" })}
                           className="shrink-0 p-1 opacity-0 transition-opacity group-hover:opacity-100"
                         >
                           <MergeIcon width={12} height={12} />
@@ -248,11 +250,11 @@ export function BranchSwitcher({
                       )}
                       {!current && (
                         <IconButton
-                          aria-label={`删除分支 ${b.name}`}
+                          aria-label={t("branch.deleteAria", { name: b.name })}
                           tone="danger"
                           onClick={() => requestDelete(b.name)}
                           disabled={busy !== null || checkingDelete !== null}
-                          title="删除分支"
+                          title={t("branch.deleteTitle")}
                           className="shrink-0 p-1 opacity-0 transition-opacity group-hover:opacity-100"
                         >
                           <TrashIcon width={12} height={12} />
@@ -272,11 +274,11 @@ export function BranchSwitcher({
                     ref={newInputRef}
                     value={newName}
                     onChange={(e) => setNewName(e.target.value)}
-                    placeholder="新分支名(基于当前 HEAD)…"
+                    placeholder={t("branch.newPlaceholder")}
                     className="min-w-0 flex-1 rounded bg-canvas px-2 py-1 font-mono text-xs text-fg placeholder:text-fg-subtle field"
                   />
                   <Button type="submit" variant="commit" size="sm" disabled={!newName.trim() || busy !== null} className="shrink-0">
-                    创建
+                    {t("branch.create")}
                   </Button>
                 </form>
               ) : (
@@ -285,7 +287,7 @@ export function BranchSwitcher({
                   className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
                 >
                   <PlusIcon width={12} height={12} />
-                  新建分支
+                  {t("branch.new")}
                 </button>
               )}
             </div>
@@ -300,21 +302,17 @@ export function BranchSwitcher({
         return (
           <ConfirmDialog
             open
-            title={`删除分支 “${name}”?`}
+            title={t("branch.deleteTitleQ", { name })}
             message={
               impact === null
-                ? "无法确认该分支是否已并入别处，请谨慎删除。"
+                ? t("branch.deleteUnknown")
                 : unmerged > 0
                   ? undefined
-                  : "该分支的提交已并入别处，删除不会丢失工作。"
+                  : t("branch.deleteSafe")
             }
-            impactNote={
-              unmerged > 0
-                ? `该分支有 ${unmerged} 个提交未合并到任何其它分支，删除后将丢失。`
-                : undefined
-            }
+            impactNote={unmerged > 0 ? t("branch.deleteImpact", { n: unmerged }) : undefined}
             items={unmerged > 0 ? impact!.sample_summaries : undefined}
-            confirmLabel={danger ? "仍要删除" : "删除"}
+            confirmLabel={danger ? t("branch.deleteForce") : t("branch.delete")}
             busy={busy === name}
             onConfirm={() => doDelete(name)}
             onCancel={() => setPendingDelete(null)}

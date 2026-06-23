@@ -3,6 +3,7 @@ import { createTag, deleteTag, type CommitDto, type IpcError } from "../ipc";
 import { useToast } from "./Toast";
 import { Button } from "./ui/Button";
 import { CloseIcon } from "./icons";
+import { useT } from "../lib/i18n";
 
 /** 选中提交的标签管理:展示已有标签(可删,二次确认)+ 新建标签(名 + 可选附注信息)。
  *  挂在「提交详情」头。onChanged 让上层失效历史/图谱(refs 变了)。 */
@@ -14,6 +15,7 @@ export function TagManager({
   tags: string[];
   onChanged: () => void;
 }) {
+  const t = useT();
   const toast = useToast();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
@@ -27,11 +29,11 @@ export function TagManager({
     try {
       await createTag(repo, name.trim(), commit.id, msg);
       onChanged();
-      toast({ kind: "success", title: `已创建标签 ${name.trim()}` });
+      toast({ kind: "success", title: t("tag.created", { name: name.trim() }) });
       setName(""); setMsg(""); setAdding(false);
     } catch (e) {
       const err = e as IpcError;
-      toast({ kind: "error", title: err.code === "TAG_EXISTS" ? "标签已存在" : (err.message ?? String(e)) });
+      toast({ kind: "error", title: err.code === "TAG_EXISTS" ? t("tag.exists") : (err.message ?? String(e)) });
     } finally {
       setBusy(false);
     }
@@ -42,7 +44,7 @@ export function TagManager({
     try {
       await deleteTag(repo, n);
       onChanged();
-      toast({ kind: "success", title: `已删除标签 ${n}` });
+      toast({ kind: "success", title: t("tag.deleted", { name: n }) });
     } catch (e) {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
@@ -55,19 +57,19 @@ export function TagManager({
 
   return (
     <div className="flex flex-wrap items-center gap-1">
-      {tags.map((t) =>
-        confirmDel === t ? (
-          <span key={t} className={pill}>
-            删除 {t}?
-            <button onClick={() => doDelete(t)} disabled={busy} className="text-danger hover:underline">✓</button>
+      {tags.map((tg) =>
+        confirmDel === tg ? (
+          <span key={tg} className={pill}>
+            {t("tag.deleteConfirm", { name: tg })}
+            <button onClick={() => doDelete(tg)} disabled={busy} className="text-danger hover:underline">✓</button>
             <button onClick={() => setConfirmDel(null)} className="text-fg-muted hover:underline">✗</button>
           </span>
         ) : (
-          <span key={t} className={pill}>
-            ⌖ {t}
+          <span key={tg} className={pill}>
+            ⌖ {tg}
             <button
-              onClick={() => setConfirmDel(t)}
-              title="删除此标签"
+              onClick={() => setConfirmDel(tg)}
+              title={t("tag.deleteTitle")}
               className="text-warning/70 hover:text-danger"
             >
               <CloseIcon width={9} height={9} />
@@ -83,25 +85,25 @@ export function TagManager({
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") doCreate(); if (e.key === "Escape") setAdding(false); }}
-            placeholder="标签名"
+            placeholder={t("tag.namePlaceholder")}
             className="w-24 rounded border border-line-strong bg-canvas px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg field"
           />
           <input
             value={msg}
             onChange={(e) => setMsg(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") doCreate(); if (e.key === "Escape") setAdding(false); }}
-            placeholder="附注(可选)"
+            placeholder={t("tag.msgPlaceholder")}
             className="w-28 rounded border border-line-strong bg-canvas px-1.5 py-0.5 text-[11px] normal-case tracking-normal text-fg field"
           />
-          <button onClick={doCreate} disabled={busy || !name.trim()} className="text-[11px] text-accent hover:underline disabled:opacity-40">创建</button>
-          <button onClick={() => setAdding(false)} className="text-[11px] text-fg-muted hover:underline">取消</button>
+          <button onClick={doCreate} disabled={busy || !name.trim()} className="text-[11px] text-accent hover:underline disabled:opacity-40">{t("tag.create")}</button>
+          <button onClick={() => setAdding(false)} className="text-[11px] text-fg-muted hover:underline">{t("tag.cancel")}</button>
         </span>
       ) : (
         <Button
           variant="secondary"
           size="chip"
           onClick={() => setAdding(true)}
-          title="在此提交上打标签"
+          title={t("tag.addTitle")}
           className="normal-case tracking-normal"
         >
           + Tag

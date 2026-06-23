@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Button } from "./ui/Button";
 import { AlertIcon } from "./icons";
+import { useT } from "../lib/i18n";
 
 /**
  * 统一的破坏性操作二次确认弹窗(M2.2)。
@@ -15,7 +16,7 @@ export function ConfirmDialog({
   message,
   items,
   impactNote,
-  confirmLabel = "确认",
+  confirmLabel,
   busy = false,
   onConfirm,
   onCancel,
@@ -32,6 +33,7 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const t = useT();
   if (!open) return null;
   return (
     <div
@@ -72,10 +74,10 @@ export function ConfirmDialog({
 
         <div className="mt-4 flex justify-end gap-2 px-4 pb-4">
           <Button variant="ghost" size="md" disabled={busy} onClick={onCancel}>
-            取消
+            {t("confirm.cancel")}
           </Button>
           <Button variant="danger" size="md" disabled={busy} onClick={onConfirm}>
-            {busy ? "处理中…" : confirmLabel}
+            {busy ? t("confirm.busy") : confirmLabel ?? t("confirm.ok")}
           </Button>
         </div>
       </div>

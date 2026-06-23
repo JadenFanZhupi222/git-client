@@ -6,6 +6,7 @@ import { useToast } from "./Toast";
 import { IconButton } from "./ui/IconButton";
 import { Glass } from "./ui/Glass";
 import { CloseIcon, UndoIcon, RedoIcon } from "./icons";
+import { useT } from "../lib/i18n";
 
 /**
  * 操作日志面板:本工具本会话做过的写操作时间线(commit/reset/cherry-pick…)。
@@ -21,6 +22,7 @@ export function OpLogPanel({
   onClose: () => void;
   onJumped: () => void;
 }) {
+  const t = useT();
   const toast = useToast();
   const q = useOpLog(repo, true);
   const log = q.data;
@@ -32,8 +34,8 @@ export function OpLogPanel({
       const info = await opGoto(repo, index);
       toast({
         kind: "success",
-        title: `${dir === "back" ? "已回到" : "已前进到"}:${label}`,
-        detail: `HEAD → ${info.target_short},${info.worktree_restored ? "工作区已还原" : "改动回暂存区"}`,
+        title: dir === "back" ? t("oplog.jumpedBack", { label }) : t("oplog.jumpedFwd", { label }),
+        detail: t("oplog.detail", { short: info.target_short, effect: info.worktree_restored ? t("oplog.wtRestored") : t("oplog.wtToStage") }),
       });
       onJumped();
     } catch (e) {
@@ -53,19 +55,19 @@ export function OpLogPanel({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold text-fg">操作日志 · 本会话</h2>
-          <IconButton aria-label="关闭" onClick={onClose}><CloseIcon width={15} height={15} /></IconButton>
+          <h2 className="text-sm font-semibold text-fg">{t("oplog.title")}</h2>
+          <IconButton aria-label={t("toast.close")} onClick={onClose}><CloseIcon width={15} height={15} /></IconButton>
         </div>
 
         <p className="shrink-0 border-b border-line bg-accent/10 px-4 py-2 text-xs text-fg-muted">
-          本工具做过的写操作。点任意一项跳过去：撤销提交→改动回暂存区；撤销 reset/cherry-pick 等→忠实还原工作区(有未提交改动会先拦下，不丢活)。
+          {t("oplog.desc")}
         </p>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           {q.isLoading ? (
-            <div className="p-4 text-xs text-fg-subtle">加载中…</div>
+            <div className="p-4 text-xs text-fg-subtle">{t("common.loading")}</div>
           ) : rows.length === 0 ? (
-            <div className="p-4 text-xs text-fg-subtle">本会话还没有可记录的操作</div>
+            <div className="p-4 text-xs text-fg-subtle">{t("oplog.empty")}</div>
           ) : (
             rows.map(({ e, i }) => {
               const current = i === log!.current;
@@ -81,7 +83,7 @@ export function OpLogPanel({
                 >
                   <span className="grid w-5 shrink-0 place-items-center text-fg-subtle">
                     {current ? (
-                      <span className="h-2 w-2 rounded-full bg-accent" title="当前位置" />
+                      <span className="h-2 w-2 rounded-full bg-accent" title={t("oplog.currentPos")} />
                     ) : dir === "back" ? (
                       <UndoIcon width={13} height={13} />
                     ) : (
@@ -90,7 +92,7 @@ export function OpLogPanel({
                   </span>
                   <span className="min-w-0 flex-1 truncate text-[13px] text-fg" title={e.label}>
                     {e.label}
-                    {current && <span className="ml-2 text-[11px] text-accent">当前</span>}
+                    {current && <span className="ml-2 text-[11px] text-accent">{t("oplog.current")}</span>}
                   </span>
                   <span className="w-16 shrink-0 font-mono text-[11px] text-accent">{e.target_short}</span>
                   <span className="w-16 shrink-0 text-right text-[11px] text-fg-subtle">

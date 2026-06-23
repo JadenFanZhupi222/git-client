@@ -26,6 +26,8 @@ import { LaunchGraph } from "./components/LaunchGraph";
 import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, useBranches, useSubmodules, useWorktrees, useSparseCheckout, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
 import { applyTheme, applyGlassMode, getStoredTheme, type Theme } from "./lib/theme";
 import { getStoredGlassPref, setStoredGlassPref } from "./lib/transparency";
+import { useT, useLang, toggleLang, nextLangLabel } from "./lib/i18n";
+import { GlobeIcon } from "./components/icons";
 
 /** 把 git fetch 的原始摘要提炼成简洁细节:优先取 "->" 更新行。 */
 function fetchDetail(summary: string): string | undefined {
@@ -59,6 +61,8 @@ export default function App() {
   const [cloneOpen, setCloneOpen] = useState(false);
   const toast = useToast();
   const qc = useQueryClient();
+  const t = useT();
+  const lang = useLang();
 
   // 顶层读统一走 query;一处监听文件变化 → 失效(各 view 据此自动重取)
   useRepoWatch(repo);
@@ -95,7 +99,7 @@ export default function App() {
       // refs 变化会触发文件监听 → 各视图自动重载;这里只用 toast 反馈结果。
       toast({
         kind: "success",
-        title: r.summary === "已是最新" ? "已是最新" : "已拉取更新",
+        title: r.summary === "已是最新" ? t("toast.upToDate") : t("toast.fetched"),
         detail: fetchDetail(r.summary),
       });
     } catch (e) {
@@ -119,7 +123,7 @@ export default function App() {
       const r = await pullRemote(repo, rebase, selectedRemote ?? undefined);
       // 成功后工作区/HEAD 变化触发文件监听 → 图谱自动前进。
       const upToDate = /up to date|已是最新/i.test(r.summary);
-      toast({ kind: "success", title: upToDate ? "已是最新" : rebase ? "已拉取并变基" : "已拉取并合并" });
+      toast({ kind: "success", title: upToDate ? t("toast.upToDate") : rebase ? t("toast.pulledRebase") : t("toast.pulledMerge") });
     } catch (e) {
       // 冲突时工作区已留下冲突标记(rebase 会停在中途),可到「更改」页查看。
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
@@ -138,7 +142,7 @@ export default function App() {
       const upToDate = /up-to-date|up to date|已是最新/i.test(r.summary);
       toast({
         kind: "success",
-        title: upToDate ? "已是最新" : r.set_upstream ? "已推送并建立上游" : "已推送",
+        title: upToDate ? t("toast.upToDate") : r.set_upstream ? t("toast.pushedUpstream") : t("toast.pushed"),
       });
     } catch (e) {
       // 落后远程时会抛 PUSH_REJECTED:提示用户先 Pull 再推。
@@ -154,7 +158,7 @@ export default function App() {
     setUpMenu(false);
     try {
       await setUpstream(repo, upstream);
-      toast({ kind: "success", title: `已设置上游 ${upstream}` });
+      toast({ kind: "success", title: t("toast.upstreamSet", { name: upstream }) });
       qc.invalidateQueries({ queryKey: qk.aheadBehind(repo) });
     } catch (e) {
       // 远程跟踪分支不存在时会失败——提示用户先 Fetch/Push。
@@ -168,13 +172,12 @@ export default function App() {
     setUndoing(true);
     try {
       const info = await (dir === "undo" ? undo(repo) : redo(repo));
-      const where = dir === "undo" ? "回到" : "前进到";
       // soft(撤销提交)内容回暂存区;hard(撤销 reset 等)已忠实还原工作区。
-      const effect = info.worktree_restored ? "工作区已还原到该状态" : "改动回到暂存区";
+      const effect = info.worktree_restored ? t("toast.effectRestored") : t("toast.effectToStage");
       toast({
         kind: "success",
-        title: `${dir === "undo" ? "已撤销" : "已重做"}:${info.label}`,
-        detail: `HEAD ${where} ${info.target_short},${effect}`,
+        title: dir === "undo" ? t("toast.undone", { label: info.label }) : t("toast.redone", { label: info.label }),
+        detail: dir === "undo" ? t("toast.undoDetail", { short: info.target_short, effect }) : t("toast.redoDetail", { short: info.target_short, effect }),
       });
     } catch (e) {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
@@ -191,7 +194,7 @@ export default function App() {
     if (!repo) return;
     try {
       await checkoutBranch(repo, name);
-      toast({ kind: "success", title: `已切换到分支 ${name}` });
+      toast({ kind: "success", title: t("toast.checkedOut", { name }) });
       qc.invalidateQueries({ queryKey: ["branches", repo] });
       invalidateHistory(qc, repo);
       invalidateWorktree(qc, repo);
@@ -202,17 +205,17 @@ export default function App() {
   }
 
   async function pickRepo() {
-    const dir = await open({ directory: true, title: "选择一个 git 仓库" });
+    const dir = await open({ directory: true, title: t("dialog.pickRepo") });
     if (typeof dir === "string") setRepo(dir);
   }
 
   // 新建:选一个文件夹 → git init → 打开它。
   async function doInit() {
-    const dir = await open({ directory: true, title: "选择新仓库的文件夹" });
+    const dir = await open({ directory: true, title: t("dialog.initFolder") });
     if (typeof dir !== "string") return;
     try {
       await initRepo(dir);
-      toast({ kind: "success", title: "已初始化仓库", detail: dir });
+      toast({ kind: "success", title: t("toast.repoInit"), detail: dir });
       setRepo(dir);
     } catch (e) {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
@@ -249,38 +252,46 @@ export default function App() {
   // 避免 useMemo 漏依赖导致的陈旧闭包;十来条命令,重建成本可忽略。
   const commands: Command[] = [];
   const views: { id: Tab; label: string }[] = [
-    { id: "changes", label: "更改" },
-    { id: "history", label: "历史" },
-    { id: "compare", label: "比较" },
-    { id: "blame", label: "追溯" },
+    { id: "changes", label: t("nav.changes") },
+    { id: "history", label: t("nav.history") },
+    { id: "compare", label: t("nav.compare") },
+    { id: "blame", label: t("nav.blame") },
   ];
-  if (hasSubmodules) views.push({ id: "submodules", label: "子模块" });
-  if (hasWorktrees) views.push({ id: "worktrees", label: "工作树" });
-  if (hasSparse) views.push({ id: "sparse", label: "稀疏检出" });
+  if (hasSubmodules) views.push({ id: "submodules", label: t("nav.submodules") });
+  if (hasWorktrees) views.push({ id: "worktrees", label: t("nav.worktrees") });
+  if (hasSparse) views.push({ id: "sparse", label: t("nav.sparse") });
   for (const v of views) {
     commands.push({
       id: `view:${v.id}`,
-      title: `切换到「${v.label}」`,
-      group: "视图",
+      title: t("cmd.goToView", { name: v.label }),
+      group: t("group.views"),
       keywords: `view tab ${v.id} ${v.label}`,
       disabled: !repo || tab === v.id,
       run: () => setTab(v.id),
     });
   }
   commands.push({
+    id: "lang:toggle",
+    title: t("cmd.switchLang"),
+    subtitle: t("cmd.switchLang.sub"),
+    group: t("group.appearance"),
+    keywords: "language lang 语言 中文 english 切换",
+    run: toggleLang,
+  });
+  commands.push({
     id: "jump:branch",
-    title: "跳转到分支…",
-    subtitle: "切换",
-    group: "跳转",
+    title: t("cmd.jumpBranch"),
+    subtitle: t("cmd.jumpBranch.sub"),
+    group: t("group.jump"),
     keywords: "checkout switch branch 切换 分支 跳转",
     disabled: !repo || busy || branches.length === 0,
     run: () => {},
     jump: {
-      placeholder: "跳转到分支…",
+      placeholder: t("cmd.jumpBranch"),
       items: branches.map((b) => ({
         id: b.name,
         label: b.name,
-        hint: b.is_head ? "当前" : undefined,
+        hint: b.is_head ? t("cmd.jumpBranch.current") : undefined,
         run: () => {
           if (!b.is_head) doCheckout(b.name);
         },
@@ -289,38 +300,38 @@ export default function App() {
   });
   commands.push({
     id: "repo:pick",
-    title: repo ? "切换仓库" : "选择仓库",
-    group: "仓库",
+    title: repo ? t("cmd.switchRepo") : t("cmd.pickRepo"),
+    group: t("group.repo"),
     keywords: "open repo folder 打开 仓库 切换",
     run: pickRepo,
   });
   commands.push({
     id: "repo:clone",
-    title: "克隆仓库",
-    subtitle: "从 URL 克隆远程仓库",
-    group: "仓库",
+    title: t("cmd.clone"),
+    subtitle: t("cmd.clone.sub"),
+    group: t("group.repo"),
     keywords: "clone 克隆 远程 url git",
     run: () => setCloneOpen(true),
   });
   commands.push({
     id: "repo:init",
-    title: "新建仓库",
-    subtitle: "在某文件夹初始化空仓库",
-    group: "仓库",
+    title: t("cmd.init"),
+    subtitle: t("cmd.init.sub"),
+    group: t("group.repo"),
     keywords: "init 新建 初始化 仓库 create",
     run: doInit,
   });
   commands.push({
     id: "theme:toggle",
-    title: theme === "dark" ? "切换到浅色主题" : "切换到暗色主题",
-    group: "外观",
+    title: theme === "dark" ? t("action.toLight") : t("action.toDark"),
+    group: t("group.appearance"),
     keywords: "theme dark light 主题 暗色 浅色 切换",
     run: toggleTheme,
   });
   commands.push({
     id: "glass:toggle",
-    title: getStoredGlassPref() === "reduced" ? "开启玻璃透明效果" : "降低透明度(玻璃转实底)",
-    group: "外观",
+    title: getStoredGlassPref() === "reduced" ? t("cmd.glassOn") : t("cmd.glassReduce"),
+    group: t("group.appearance"),
     keywords: "glass transparency 玻璃 透明 实底 无障碍",
     run: () => {
       const next = getStoredGlassPref() === "reduced" ? "auto" : "reduced";
@@ -329,21 +340,21 @@ export default function App() {
     },
   });
   commands.push(
-    { id: "remote:fetch", title: "Fetch", subtitle: "从远程拉取更新", group: "远程", keywords: "拉取 远程 fetch", disabled: !repo || busy, run: doFetch },
-    { id: "remote:pull-merge", title: "Pull · 合并", group: "远程", keywords: "拉取 合并 merge pull", disabled: !repo || busy, run: () => doPull(false) },
-    { id: "remote:pull-rebase", title: "Pull · 变基", group: "远程", keywords: "拉取 变基 rebase pull", disabled: !repo || busy, run: () => doPull(true) },
-    { id: "remote:push", title: "Push", subtitle: "推送当前分支", group: "远程", keywords: "推送 push", disabled: !repo || busy, run: doPush },
-    { id: "remote:manage", title: "管理远程", subtitle: "添加 / 重命名 / 删除远程", group: "远程", keywords: "远程 remote 管理 添加 删除 重命名 add remove rename", disabled: !repo, run: () => setRemoteMgrOpen(true) },
+    { id: "remote:fetch", title: t("cmd.fetch"), subtitle: t("cmd.fetch.sub"), group: t("group.remote"), keywords: "拉取 远程 fetch", disabled: !repo || busy, run: doFetch },
+    { id: "remote:pull-merge", title: t("cmd.pullMerge"), group: t("group.remote"), keywords: "拉取 合并 merge pull", disabled: !repo || busy, run: () => doPull(false) },
+    { id: "remote:pull-rebase", title: t("cmd.pullRebase"), group: t("group.remote"), keywords: "拉取 变基 rebase pull", disabled: !repo || busy, run: () => doPull(true) },
+    { id: "remote:push", title: t("cmd.push"), subtitle: t("cmd.push.sub"), group: t("group.remote"), keywords: "推送 push", disabled: !repo || busy, run: doPush },
+    { id: "remote:manage", title: t("cmd.manageRemote"), subtitle: t("cmd.manageRemote.sub"), group: t("group.remote"), keywords: "远程 remote 管理 添加 删除 重命名 add remove rename", disabled: !repo, run: () => setRemoteMgrOpen(true) },
   );
   commands.push(
-    { id: "undo", title: canUndo ? `撤销：${canUndo.label}` : "撤销", group: "撤销", keywords: "undo 撤销 回退", disabled: !repo || busy || !canUndo, run: () => doNav("undo") },
-    { id: "redo", title: canRedo ? `重做：${canRedo.label}` : "重做", group: "撤销", keywords: "redo 重做 前进", disabled: !repo || busy || !canRedo, run: () => doNav("redo") },
+    { id: "undo", title: canUndo ? t("cmd.undoLabel", { label: canUndo.label }) : t("cmd.undo"), group: t("group.undo"), keywords: "undo 撤销 回退", disabled: !repo || busy || !canUndo, run: () => doNav("undo") },
+    { id: "redo", title: canRedo ? t("cmd.redoLabel", { label: canRedo.label }) : t("cmd.redo"), group: t("group.undo"), keywords: "redo 重做 前进", disabled: !repo || busy || !canRedo, run: () => doNav("redo") },
   );
   commands.push({
     id: "panel:oplog",
-    title: "操作日志",
-    subtitle: "本会话写操作时间线",
-    group: "面板",
+    title: t("cmd.opLog"),
+    subtitle: t("cmd.opLog.sub"),
+    group: t("group.panel"),
     keywords: "operation log history 操作 日志 时间线",
     disabled: !repo,
     run: () => setOpLogOpen(true),
@@ -362,7 +373,7 @@ export default function App() {
           {repo ? (
             <span className="max-w-[12rem] truncate font-mono text-sm font-medium text-fg" title={repo}>{repoName}</span>
           ) : (
-            <span className="text-sm font-semibold">Git 客户端</span>
+            <span className="text-sm font-semibold">{t("header.appName")}</span>
           )}
           {repo && (
             <div className="flex min-w-0 items-center gap-2 text-xs">
@@ -381,7 +392,7 @@ export default function App() {
                   <button
                     onClick={() => setRemoteMenu((o) => !o)}
                     disabled={busy}
-                    title="选择远程仓库"
+                    title={t("header.selectRemote")}
                     className="flex items-center gap-1 rounded-md border border-line-strong bg-elevated px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
                   >
                     <span className="max-w-[8rem] truncate font-mono">{selectedRemote ?? remotes[0]}</span>
@@ -416,8 +427,8 @@ export default function App() {
                   <button
                     onClick={() => doNav("undo")}
                     disabled={busy || !canUndo}
-                    aria-label={canUndo ? `撤销${canUndo.label}` : "撤销"}
-                    title={canUndo ? `撤销刚才的「${canUndo.label}」(回到 ${canUndo.target_short}；${canUndo.worktree_restored ? "还原工作区，有未提交改动会先拦下" : "改动回暂存区，不丢工作区"})` : "暂无可撤销的操作"}
+                    aria-label={canUndo ? t("undo.aria", { label: canUndo.label }) : t("action.undo")}
+                    title={canUndo ? t("undo.title", { label: canUndo.label, short: canUndo.target_short, effect: canUndo.worktree_restored ? t("undo.effectRestore") : t("undo.effectStage") }) : t("undo.none")}
                     className="grid h-7 w-7 place-items-center rounded-md text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-fg-muted"
                   >
                     <UndoIcon width={14} height={14} />
@@ -425,8 +436,8 @@ export default function App() {
                   <button
                     onClick={() => doNav("redo")}
                     disabled={busy || !canRedo}
-                    aria-label={canRedo ? `重做${canRedo.label}` : "重做"}
-                    title={canRedo ? `重做「${canRedo.label}」(前进到 ${canRedo.target_short})` : "暂无可重做的操作"}
+                    aria-label={canRedo ? t("redo.aria", { label: canRedo.label }) : t("action.redo")}
+                    title={canRedo ? t("redo.title", { label: canRedo.label, short: canRedo.target_short }) : t("redo.none")}
                     className="grid h-7 w-7 place-items-center rounded-md text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-fg-muted"
                   >
                     <RedoIcon width={14} height={14} />
@@ -439,7 +450,7 @@ export default function App() {
                 <button
                   onClick={doFetch}
                   disabled={busy}
-                  title="Fetch(从远程拉取更新，不改工作区)"
+                  title={t("tray.fetchTitle")}
                   className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay disabled:opacity-50"
                 >
                   {fetching ? (
@@ -453,13 +464,13 @@ export default function App() {
                   <button
                     onClick={() => doPull(pullRebase)}
                     disabled={busy}
-                    title={canPull ? `落后上游 ${sync!.behind} 个提交，建议 Pull` : `Pull(${pullRebase ? "变基" : "合并"}到当前分支)`}
+                    title={canPull ? t("tray.pullBehind", { n: sync!.behind }) : pullRebase ? t("tray.pullRebaseTitle") : t("tray.pullMergeTitle")}
                     className={`flex items-center gap-1.5 rounded-l-md px-2.5 py-1 text-xs transition-colors hover:bg-overlay disabled:opacity-50 ${
                       canPull ? "text-accent" : "text-fg"
                     }`}
                   >
                     {pulling ? <SpinnerIcon width={13} height={13} /> : <PullIcon width={13} height={13} />}
-                    {pulling ? "Pull…" : pullRebase ? "Pull · 变基" : "Pull"}
+                    {pulling ? "Pull…" : pullRebase ? t("cmd.pullRebase") : "Pull"}
                     {canPull && !pulling && (
                       <span className="rounded-full bg-accent/15 px-1 font-mono text-[10px] font-semibold text-accent">
                         ↓{sync!.behind}
@@ -469,7 +480,7 @@ export default function App() {
                   <button
                     onClick={() => setPullMenu((o) => !o)}
                     disabled={busy}
-                    title="选择拉取方式"
+                    title={t("pull.selectMode")}
                     className="grid place-items-center rounded-r-md px-1 text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
                   >
                     <ChevronDownIcon width={11} height={11} />
@@ -479,10 +490,10 @@ export default function App() {
                       <div className="fixed inset-0 z-40" onClick={() => setPullMenu(false)} />
                       <div className="absolute right-0 top-full z-50 mt-1.5 w-44 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs menu-in popover">
                         <PullModeItem active={!pullRebase} onClick={() => { setPullMode(false); doPull(false); }}>
-                          合并(merge)
+                          {t("pull.merge")}
                         </PullModeItem>
                         <PullModeItem active={pullRebase} onClick={() => { setPullMode(true); doPull(true); }}>
-                          变基(rebase)
+                          {t("pull.rebase")}
                         </PullModeItem>
                       </div>
                     </>
@@ -491,7 +502,7 @@ export default function App() {
                 <button
                   onClick={doPush}
                   disabled={busy}
-                  title={canPush ? `领先上游 ${sync!.ahead} 个提交，建议 Push` : "Push(把当前分支推到远程；首次自动建立上游)"}
+                  title={canPush ? t("tray.pushAhead", { n: sync!.ahead }) : t("tray.pushTitle")}
                   className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors hover:bg-overlay disabled:opacity-50 ${
                     canPush ? "text-success" : "text-fg"
                   }`}
@@ -514,20 +525,30 @@ export default function App() {
           )}
           <button
             onClick={() => setPaletteOpen(true)}
-            title="命令面板"
-            aria-label="命令面板"
+            title={t("action.commandPalette")}
+            aria-label={t("action.commandPalette")}
             className="hidden items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2 py-1 text-fg-subtle transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle sm:flex"
           >
             <SearchIcon width={13} height={13} />
             <kbd className="font-mono text-[10px]">{modLabel}</kbd>
           </button>
 
+          {/* 语言切换:中 / English(主题键旁,与命令面板「切换语言」同源) */}
+          <button
+            onClick={toggleLang}
+            title={t("action.langTitle")}
+            aria-label={t("action.langTitle")}
+            className="grid h-7 min-w-7 place-items-center rounded-md border border-line-strong bg-elevated px-1.5 font-mono text-[11px] font-semibold text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle"
+          >
+            {nextLangLabel(lang)}
+          </button>
+
           {/* 溢出菜单:次要外观/会话动作(操作日志 / 主题 / 玻璃)收纳于此,给顶栏减负。 */}
           <div className="relative">
             <button
               onClick={() => setMoreMenu((o) => !o)}
-              title="更多"
-              aria-label="更多"
+              title={t("action.more")}
+              aria-label={t("action.more")}
               className="grid h-7 w-7 place-items-center rounded-md border border-line-strong bg-elevated text-fg-muted transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle"
             >
               <MoreIcon width={15} height={15} />
@@ -538,19 +559,19 @@ export default function App() {
                 <div className="absolute right-0 top-full z-50 mt-1.5 w-48 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs menu-in popover">
                   {repo && (
                     <MoreItem icon={<HistoryIcon width={14} height={14} />} onClick={() => { setMoreMenu(false); setOpLogOpen(true); }}>
-                      操作日志
+                      {t("action.opLog")}
                     </MoreItem>
                   )}
                   {repo && (
                     <MoreItem icon={<CloudIcon width={14} height={14} />} onClick={() => { setMoreMenu(false); setRemoteMgrOpen(true); }}>
-                      管理远程
+                      {t("action.manageRemote")}
                     </MoreItem>
                   )}
                   <MoreItem
                     icon={theme === "dark" ? <SunIcon width={14} height={14} /> : <MoonIcon width={14} height={14} />}
                     onClick={() => { toggleTheme(); setMoreMenu(false); }}
                   >
-                    {theme === "dark" ? "切换到浅色主题" : "切换到暗色主题"}
+                    {theme === "dark" ? t("action.toLight") : t("action.toDark")}
                   </MoreItem>
                   <MoreItem
                     icon={<DropletIcon width={14} height={14} />}
@@ -561,7 +582,7 @@ export default function App() {
                       setMoreMenu(false);
                     }}
                   >
-                    {getStoredGlassPref() === "reduced" ? "开启玻璃效果" : "降低透明度"}
+                    {getStoredGlassPref() === "reduced" ? t("action.glassOn") : t("action.glassReduce")}
                   </MoreItem>
                 </div>
               </>
@@ -570,13 +591,13 @@ export default function App() {
 
           <button
             onClick={pickRepo}
-            title={repo ? "切换仓库" : "选择仓库"}
-            aria-label={repo ? "切换仓库" : "选择仓库"}
+            title={repo ? t("action.switchRepo") : t("action.pickRepo")}
+            aria-label={repo ? t("action.switchRepo") : t("action.pickRepo")}
             className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle"
           >
             <FolderIcon width={14} height={14} />
             {/* 窄屏(< lg)只留图标,免顶栏溢出;宽屏带文字 */}
-            <span className="hidden lg:inline">{repo ? "切换仓库" : "选择仓库"}</span>
+            <span className="hidden lg:inline">{repo ? t("action.switchRepo") : t("action.pickRepo")}</span>
           </button>
         </div>
       </Glass>
@@ -608,16 +629,16 @@ export default function App() {
             <div className="relative">
               <button
                 onClick={() => setUpMenu((o) => !o)}
-                title="为当前分支设置上游分支"
+                title={t("action.setUpstreamTitle")}
                 className="rounded px-1 text-fg-subtle transition-colors hover:bg-overlay hover:text-fg"
               >
-                设置上游
+                {t("action.setUpstream")}
               </button>
               {upMenu && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setUpMenu(false)} />
                   <div className="absolute bottom-full left-0 z-50 mb-1 w-48 overflow-hidden rounded-md border border-line-strong bg-elevated text-xs menu-in popover">
-                    <div className="border-b border-line px-2.5 py-1 text-[10px] uppercase tracking-wide text-fg-subtle">设为上游</div>
+                    <div className="border-b border-line px-2.5 py-1 text-[10px] uppercase tracking-wide text-fg-subtle">{t("action.setAsUpstream")}</div>
                     {remotes.map((r) => (
                       <button
                         key={r}
@@ -716,91 +737,111 @@ function BranchMark() {
   );
 }
 
-/** 没选仓库时的启动屏 —— 每次开 app 的第一印象。
- *  双层贝塞尔玻璃品牌牌折射背后的氛围光晕,大字标题 + 磁吸 CTA,逐元素电影级入场。 */
+/** 没选仓库时的启动屏 —— 编辑性封面(Paper & Ink)。
+ *  纸面左对齐单栏,Instrument Serif 巨字「Strata」+ 斜体朱红副题,右侧缓行书脊图谱,
+ *  逐元素电影级入场(hero-rise stagger),右上角语言切换。 */
 function EmptyState({ onPick, onClone, onInit, lastRepo, onResume }: { onPick: () => void; onClone: () => void; onInit: () => void; lastRepo: string | null; onResume: (r: string) => void }) {
+  const t = useT();
+  const lang = useLang();
   const lastName = lastRepo?.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? null;
+  const isMac = navigator.platform.toLowerCase().includes("mac");
   return (
-    <div className="relative flex flex-1 items-center justify-center overflow-hidden px-8">
-      {/* 签名背景:极淡缓行的「活的图谱」,垫在最底,呼应产品本体 */}
+    <div className="relative flex flex-1 items-center justify-start overflow-hidden px-[clamp(40px,8vw,128px)]">
+      {/* 签名背景:极淡缓行的「活的图谱」(书脊母题),垫在最底,呼应产品本体 */}
       <LaunchGraph />
-      {/* 细噪点叠层:给纯数字渐变一层物理颗粒感 */}
+      {/* 右侧竖直渐隐分隔线,把图谱栏与正文轻轻分开 */}
+      <div className="pointer-events-none absolute inset-y-0 right-[calc(6%+150px)] w-px bg-gradient-to-b from-line to-transparent" />
+      {/* 细噪点叠层:给纸面一层物理颗粒感 */}
       <div className="grain-overlay" />
 
-      <div className="relative z-10 flex w-full max-w-md flex-col items-center text-center">
-        {/* 品牌牌:外层贝塞尔托盘 + 内层液态玻璃芯,折射背后图谱与光晕(首个入场元素) */}
-        <div
-          className="hero-rise rounded-[28px] border border-line/70 bg-elevated/30 p-2"
-          style={{ animationDelay: "0ms" }}
-        >
-          <Glass className="grid h-20 w-20 place-items-center rounded-[20px] text-accent">
-            <svg width={34} height={34} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      {/* 右上角语言切换 */}
+      <button
+        onClick={toggleLang}
+        title={t("action.langTitle")}
+        className="absolute right-8 top-7 z-20 flex items-center gap-2 rounded-full border border-line-strong bg-elevated/50 px-3.5 py-1.5 font-mono text-xs font-semibold text-fg-muted transition-colors hover:bg-elevated hover:text-fg"
+      >
+        <GlobeIcon width={14} height={14} />
+        {nextLangLabel(lang)}
+      </button>
+
+      <div className="relative z-10 w-full max-w-[560px]">
+        {/* 眉签行:玻璃方牌(朱红 git-graph 标记)+ 朱红短横 + mono 眉签 */}
+        <div className="hero-rise flex items-center gap-3.5" style={{ animationDelay: "0ms" }}>
+          <Glass className="grid h-11 w-11 place-items-center rounded-[13px] text-accent">
+            <svg width={22} height={22} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
               <circle cx="4" cy="3.5" r="1.6" />
               <circle cx="4" cy="12.5" r="1.6" />
               <circle cx="12" cy="3.5" r="1.6" />
               <path d="M4 5.1v5.8M12 5.1v1.2a3 3 0 0 1-3 3H4" />
             </svg>
           </Glass>
+          <span className="h-px w-9 bg-accent" />
+          <span className="font-mono text-[11px] uppercase tracking-[0.22em] text-fg-subtle">{t("launch.eyebrow")}</span>
         </div>
 
-        {/* 大字标题(Geist,自信字号,紧字距,平衡换行) */}
-        <h1
-          className="hero-rise mt-7 text-[2.5rem] font-semibold leading-[1.05] tracking-[-0.03em] text-fg text-balance"
-          style={{ animationDelay: "150ms" }}
-        >
-          Git 客户端
+        {/* 巨字 Strata(Instrument Serif,品牌字,不翻译) */}
+        <h1 className="hero-rise serif mt-7 text-[108px] font-normal leading-[0.9] tracking-[-0.01em] text-fg" style={{ animationDelay: "120ms" }}>
+          Strata
         </h1>
 
-        {/* 磁吸 CTA:全圆角药丸 + 内嵌圆形箭头(button-in-button),按压回弹 */}
-        <button
-          onClick={onPick}
-          className="hero-rise group mt-8 flex items-center gap-3 rounded-full bg-done py-2.5 pl-6 pr-2.5 text-sm font-medium text-white shadow-[0_10px_30px_-8px_color-mix(in_oklab,var(--color-done)_60%,transparent)] transition-[transform,box-shadow,opacity] duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:opacity-95 active:scale-[0.98]"
-          style={{ animationDelay: "280ms" }}
-        >
-          选择仓库
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-0.5">
-            <svg width={15} height={15} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3.5 8h9M8.5 4l4 4-4 4" />
-            </svg>
-          </span>
-        </button>
+        {/* 斜体朱红副题 */}
+        <p className="hero-rise serif mt-2.5 text-[31px] italic leading-[1.12] text-accent" style={{ animationDelay: "180ms" }}>
+          {t("launch.sub")}
+        </p>
 
-        {/* 次要入口:克隆远程 / 新建本地仓库(onboarding 正门的另两扇门) */}
-        <div className="hero-rise mt-4 flex items-center gap-2" style={{ animationDelay: "320ms" }}>
+        {/* 正文 */}
+        <p className="hero-rise mt-5 max-w-[30rem] text-[15px] leading-[1.6] text-fg-muted text-pretty" style={{ animationDelay: "230ms" }}>
+          {t("launch.body")}
+        </p>
+
+        {/* CTA:朱红药丸(内嵌圆形箭头)+ 描边 克隆 / 新建 */}
+        <div className="hero-rise mt-9 flex flex-wrap items-center gap-2.5" style={{ animationDelay: "300ms" }}>
+          <button
+            onClick={onPick}
+            className="group flex items-center gap-3 rounded-full bg-accent py-3 pl-6 pr-3.5 text-sm font-semibold text-white shadow-[0_14px_38px_-12px_color-mix(in_oklab,var(--color-accent)_55%,transparent)] transition-[transform,opacity] duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:opacity-95 active:scale-[0.98]"
+          >
+            {t("launch.pick")}
+            <span className="grid h-[30px] w-[30px] place-items-center rounded-full bg-white/[0.18] transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-0.5">
+              <svg width={15} height={15} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3.5 8h9M8.5 4l4 4-4 4" />
+              </svg>
+            </span>
+          </button>
           <button
             onClick={onClone}
-            className="group flex items-center gap-1.5 rounded-full border border-line bg-elevated/50 py-1.5 pl-3 pr-3.5 text-xs text-fg-muted backdrop-blur-sm transition-[transform,color,background-color] duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-elevated hover:text-fg active:scale-[0.98]"
+            className="group flex items-center gap-1.5 rounded-full border border-line-strong bg-transparent px-4 py-2.5 text-[13px] text-fg-muted transition-colors hover:bg-elevated hover:text-fg"
           >
             <CloudIcon width={13} height={13} className="shrink-0 text-fg-subtle transition-colors group-hover:text-accent" />
-            克隆仓库
+            {t("launch.clone")}
           </button>
           <button
             onClick={onInit}
-            className="group flex items-center gap-1.5 rounded-full border border-line bg-elevated/50 py-1.5 pl-3 pr-3.5 text-xs text-fg-muted backdrop-blur-sm transition-[transform,color,background-color] duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-elevated hover:text-fg active:scale-[0.98]"
+            className="group flex items-center gap-1.5 rounded-full border border-line-strong bg-transparent px-4 py-2.5 text-[13px] text-fg-muted transition-colors hover:bg-elevated hover:text-fg"
           >
             <PlusIcon width={13} height={13} className="shrink-0 text-fg-subtle transition-colors group-hover:text-accent" />
-            新建仓库
+            {t("launch.init")}
           </button>
         </div>
 
-        {/* 继续上次:跳回上次打开的仓库(Linear/Things 式) */}
-        {lastRepo && lastName && (
-          <button
-            onClick={() => onResume(lastRepo)}
-            title={lastRepo}
-            className="hero-rise group mt-4 flex max-w-full items-center gap-2 rounded-full border border-line bg-elevated/50 py-1.5 pl-3.5 pr-4 text-xs text-fg-muted backdrop-blur-sm transition-[transform,color,background-color] duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-elevated hover:text-fg active:scale-[0.98]"
-            style={{ animationDelay: "330ms" }}
-          >
-            <HistoryIcon width={13} height={13} className="shrink-0 text-fg-subtle transition-colors group-hover:text-accent" />
-            <span className="shrink-0">继续上次</span>
-            <span className="truncate font-mono text-fg-subtle">{lastName}</span>
-          </button>
-        )}
-
-        {/* 键盘提示 */}
-        <p className="hero-rise mt-5 text-xs text-fg-subtle" style={{ animationDelay: "400ms" }}>
-          <kbd className="rounded border border-line-strong bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-fg-muted">⌘K</kbd> 打开命令面板
-        </p>
+        {/* 分隔线后:继续上次 + ⌘K 提示 */}
+        <div className="hero-rise mt-7 flex items-center gap-4 border-t border-line pt-[22px]" style={{ animationDelay: "360ms" }}>
+          {lastRepo && lastName ? (
+            <button
+              onClick={() => onResume(lastRepo)}
+              title={lastRepo}
+              className="group -ml-2 flex max-w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
+            >
+              <HistoryIcon width={13} height={13} className="shrink-0 text-fg-subtle transition-colors group-hover:text-accent" />
+              <span className="shrink-0">{t("launch.resume")}</span>
+              <span className="truncate font-mono text-fg-subtle">{lastName} →</span>
+            </button>
+          ) : (
+            <span className="text-xs text-fg-subtle">{t("launch.paletteHint")}</span>
+          )}
+          <span className="ml-auto text-xs text-fg-subtle">
+            <kbd className="rounded-md border border-line-strong bg-elevated/60 px-1.5 py-0.5 font-mono text-[11px] text-fg-muted">{isMac ? "⌘K" : "Ctrl K"}</kbd> {t("launch.paletteHint")}
+          </span>
+        </div>
       </div>
     </div>
   );

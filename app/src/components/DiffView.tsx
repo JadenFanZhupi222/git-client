@@ -4,6 +4,7 @@ import { readImage, type DiffLineDto, type FileDiffDto, type ImageRefDto } from 
 import { buildDiffRows, maxContentCols, type DiffRow, type LineRef, type SbsRow } from "../lib/diffRows";
 import { ChevronDownIcon, FileDiffIcon } from "./icons";
 import { EmptyHint } from "./ui/EmptyHint";
+import { useT } from "../lib/i18n";
 
 type Side = "old" | "new";
 
@@ -44,6 +45,7 @@ export function DiffView({
   const expand = (key: string) => setExpanded((prev) => new Set(prev).add(key));
   const [view, setView] = useState<ViewMode>(getStoredView);
   const setViewPersist = (v: ViewMode) => { setView(v); localStorage.setItem(VIEW_KEY, v); };
+  const t = useT();
   const toggle = (key: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -51,7 +53,7 @@ export function DiffView({
       return next;
     });
   if (!hasFile) {
-    return <EmptyHint icon={<FileDiffIcon width={24} height={24} />}>选择一个文件，在这里查看它的改动</EmptyHint>;
+    return <EmptyHint icon={<FileDiffIcon width={24} height={24} />}>{t("diff.empty")}</EmptyHint>;
   }
   if (loading) {
     return (
@@ -63,30 +65,30 @@ export function DiffView({
     );
   }
   if (!diff) {
-    return <Center>无法加载 diff</Center>;
+    return <Center>{t("diff.loadFailed")}</Center>;
   }
   if (diff.is_lfs_pointer) {
     const size = formatBytes(diff.lfs_size);
-    return <Center>Git LFS 文件{size ? `(${size})` : ""}，无法显示行级 diff</Center>;
+    return <Center>{t("diff.lfs", { size: size ? `(${size})` : "" })}</Center>;
   }
   if (diff.is_image) {
     // 图片是二进制的一种,但能并排预览新旧图(此分支须在 is_binary 之前)。
     if (!diff.old_image && !diff.new_image) {
-      return <Center>图片过大或无法读取，已跳过预览</Center>;
+      return <Center>{t("diff.imageSkipped")}</Center>;
     }
     if (!repo) {
-      return <Center>无法加载图片预览</Center>;
+      return <Center>{t("diff.imgPreviewFailed")}</Center>;
     }
     return <ImageDiff diff={diff} repo={repo} />;
   }
   if (diff.is_binary) {
-    return <Center>二进制文件，无法显示行级 diff</Center>;
+    return <Center>{t("diff.binary")}</Center>;
   }
   if (diff.too_large) {
-    return <Center>文件过大，已跳过逐行 diff(避免卡顿)</Center>;
+    return <Center>{t("diff.tooLarge")}</Center>;
   }
   if (diff.hunks.length === 0) {
-    return <Center>该文件在此提交中无文本改动</Center>;
+    return <Center>{t("diff.noTextChange")}</Center>;
   }
 
   return (
@@ -108,6 +110,7 @@ export function DiffView({
 
 /** 统一/并排切换条。 */
 function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode) => void }) {
+  const t = useT();
   const btn = (v: ViewMode, label: string) => (
     <button
       onClick={() => onChange(v)}
@@ -121,8 +124,8 @@ function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode
   return (
     <div className="flex shrink-0 select-none items-center justify-end border-b border-line bg-overlay px-3 py-1.5">
       <div className="flex items-center gap-0.5 rounded-md border border-line bg-elevated/60 p-0.5">
-        {btn("unified", "统一")}
-        {btn("split", "并排")}
+        {btn("unified", t("diff.unified"))}
+        {btn("split", t("diff.split"))}
       </div>
     </div>
   );
@@ -263,13 +266,14 @@ function UnifiedLine({ hi, ref_, selected, toggle, lineStage }: { hi: number; re
 
 /** 折叠条:替代一段被折叠的未改区,点击展开。统一/并排共用。标签左对齐(横向滚动时仍可见)。 */
 function FoldBar({ count, onExpand }: { count: number; onExpand: () => void }) {
+  const t = useT();
   return (
     <div
       onClick={onExpand}
       className="flex min-h-5 min-w-full cursor-pointer select-none items-center gap-1 border-y border-line/60 bg-overlay/40 pl-3 text-[11px] text-fg-subtle transition-colors hover:bg-overlay hover:text-accent"
     >
       <ChevronDownIcon className="h-3 w-3" />
-      展开 {count} 行
+      {t("diff.expand", { count })}
     </div>
   );
 }
@@ -334,6 +338,7 @@ function StageHeader({
   hi: number;
   selCount: number;
 } & Pick<StageProps, "selected" | "lineStage" | "hunkAction">) {
+  const t = useT();
   return (
     <div className="group flex min-h-5 min-w-full select-none items-center gap-2 bg-overlay px-3 text-[11px] text-accent/80">
       <span className="shrink-0">{h.header}</span>
@@ -348,7 +353,7 @@ function StageHeader({
               }}
               className="shrink-0 rounded border border-accent bg-accent/15 px-1.5 py-px text-[10px] text-accent transition-colors hover:bg-accent/25 disabled:opacity-40"
             >
-              暂存选中行 ({selCount})
+              {t("diff.stageSelected", { count: selCount })}
             </button>
           )}
           {hunkAction && (
@@ -422,6 +427,7 @@ function useImageUrl(repo: string, ref: ImageRefDto | null, path: string): Loade
 
 /** 图片 diff:新旧两版预览。两版都在时给「并排 / 滑块 / 洋葱皮」三种对比模式;只有一侧时直接显该侧。 */
 function ImageDiff({ diff, repo }: { diff: FileDiffDto; repo: string }) {
+  const t = useT();
   const oldImg = useImageUrl(repo, diff.old_image, diff.path);
   const newImg = useImageUrl(repo, diff.new_image, diff.path);
   const both = !!diff.old_image && !!diff.new_image;
@@ -432,8 +438,8 @@ function ImageDiff({ diff, repo }: { diff: FileDiffDto; repo: string }) {
     // 新增 → 单栏「新增」;删除 → 单栏「已删除」。
     return (
       <div className="fade-in flex flex-1 items-stretch gap-3 overflow-auto p-4">
-        {diff.old_image && <ImagePane img={oldImg} label="已删除" tone="danger" />}
-        {diff.new_image && <ImagePane img={newImg} label="新增" tone="success" />}
+        {diff.old_image && <ImagePane img={oldImg} label={t("diff.imgDeleted")} tone="danger" />}
+        {diff.new_image && <ImagePane img={newImg} label={t("diff.imgAdded")} tone="success" />}
       </div>
     );
   }
@@ -443,8 +449,8 @@ function ImageDiff({ diff, repo }: { diff: FileDiffDto; repo: string }) {
       <ImgModeBar mode={mode} onChange={setModePersist} />
       {mode === "side" ? (
         <div className="flex flex-1 items-stretch gap-3 overflow-auto p-4">
-          <ImagePane img={oldImg} label="旧" tone="danger" />
-          <ImagePane img={newImg} label="新" tone="success" />
+          <ImagePane img={oldImg} label={t("diff.imgOld")} tone="danger" />
+          <ImagePane img={newImg} label={t("diff.imgNew")} tone="success" />
         </div>
       ) : mode === "swipe" ? (
         <SwipeCompare oldImg={oldImg} newImg={newImg} />
@@ -457,6 +463,7 @@ function ImageDiff({ diff, repo }: { diff: FileDiffDto; repo: string }) {
 
 /** 对比模式切换条。 */
 function ImgModeBar({ mode, onChange }: { mode: ImgMode; onChange: (m: ImgMode) => void }) {
+  const t = useT();
   const btn = (m: ImgMode, label: string) => (
     <button
       onClick={() => onChange(m)}
@@ -469,24 +476,25 @@ function ImgModeBar({ mode, onChange }: { mode: ImgMode; onChange: (m: ImgMode) 
   );
   return (
     <div className="flex shrink-0 select-none items-center justify-end gap-1 border-b border-line bg-overlay px-3 py-1">
-      {btn("side", "并排")}
-      {btn("swipe", "滑块")}
-      {btn("onion", "洋葱皮")}
+      {btn("side", t("diff.modeSide"))}
+      {btn("swipe", t("diff.modeSwipe"))}
+      {btn("onion", t("diff.modeOnion"))}
     </div>
   );
 }
 
 /** 滑块对比:新图叠在旧图上,按滑块位置左右裁切,露出左侧新右侧旧。 */
 function SwipeCompare({ oldImg, newImg }: { oldImg: LoadedImage; newImg: LoadedImage }) {
+  const t = useT();
   const [pct, setPct] = useState(50);
   return (
     <div className="flex flex-1 flex-col gap-2 overflow-hidden p-4">
       <div className="checkerboard relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded border border-line bg-overlay">
-        {oldImg.url && <img src={oldImg.url} alt="旧" className="max-h-full max-w-full object-contain" />}
+        {oldImg.url && <img src={oldImg.url} alt={t("diff.imgOld")} className="max-h-full max-w-full object-contain" />}
         {newImg.url && (
           <img
             src={newImg.url}
-            alt="新"
+            alt={t("diff.imgNew")}
             className="absolute inset-0 m-auto max-h-full max-w-full object-contain"
             style={{ clipPath: `inset(0 ${100 - pct}% 0 0)` }}
           />
@@ -495,9 +503,9 @@ function SwipeCompare({ oldImg, newImg }: { oldImg: LoadedImage; newImg: LoadedI
         <div className="pointer-events-none absolute inset-y-0 w-px bg-accent" style={{ left: `${pct}%` }} />
       </div>
       <div className="flex shrink-0 items-center gap-2 text-[11px] text-fg-subtle">
-        <span className="text-danger">旧</span>
-        <input type="range" min={0} max={100} value={pct} onChange={(e) => setPct(Number(e.target.value))} className="flex-1 accent-accent" aria-label="滑块位置" />
-        <span className="text-success">新</span>
+        <span className="text-danger">{t("diff.imgOld")}</span>
+        <input type="range" min={0} max={100} value={pct} onChange={(e) => setPct(Number(e.target.value))} className="flex-1 accent-accent" aria-label={t("diff.swipePos")} />
+        <span className="text-success">{t("diff.imgNew")}</span>
       </div>
     </div>
   );
@@ -505,24 +513,25 @@ function SwipeCompare({ oldImg, newImg }: { oldImg: LoadedImage; newImg: LoadedI
 
 /** 洋葱皮对比:新图以可调不透明度叠在旧图上。 */
 function OnionCompare({ oldImg, newImg }: { oldImg: LoadedImage; newImg: LoadedImage }) {
+  const t = useT();
   const [opacity, setOpacity] = useState(50);
   return (
     <div className="flex flex-1 flex-col gap-2 overflow-hidden p-4">
       <div className="checkerboard relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded border border-line bg-overlay">
-        {oldImg.url && <img src={oldImg.url} alt="旧" className="max-h-full max-w-full object-contain" />}
+        {oldImg.url && <img src={oldImg.url} alt={t("diff.imgOld")} className="max-h-full max-w-full object-contain" />}
         {newImg.url && (
           <img
             src={newImg.url}
-            alt="新"
+            alt={t("diff.imgNew")}
             className="absolute inset-0 m-auto max-h-full max-w-full object-contain"
             style={{ opacity: opacity / 100 }}
           />
         )}
       </div>
       <div className="flex shrink-0 items-center gap-2 text-[11px] text-fg-subtle">
-        <span className="text-danger">旧</span>
-        <input type="range" min={0} max={100} value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} className="flex-1 accent-accent" aria-label="新图不透明度" />
-        <span className="text-success">新</span>
+        <span className="text-danger">{t("diff.imgOld")}</span>
+        <input type="range" min={0} max={100} value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} className="flex-1 accent-accent" aria-label={t("diff.onionOpacity")} />
+        <span className="text-success">{t("diff.imgNew")}</span>
       </div>
     </div>
   );
@@ -530,6 +539,7 @@ function OnionCompare({ oldImg, newImg }: { oldImg: LoadedImage; newImg: LoadedI
 
 /** 单侧图片面板:居中保持比例,棋盘格衬透明区,显尺寸 + 体积。 */
 function ImagePane({ img, label, tone }: { img: LoadedImage; label: string; tone: "danger" | "success" }) {
+  const t = useT();
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const toneCls = tone === "danger" ? "text-danger" : "text-success";
   return (
@@ -542,9 +552,9 @@ function ImagePane({ img, label, tone }: { img: LoadedImage; label: string; tone
       </div>
       <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto rounded border border-line bg-overlay p-3 checkerboard">
         {img.loading ? (
-          <span className="text-[11px] text-fg-subtle">加载中…</span>
+          <span className="text-[11px] text-fg-subtle">{t("common.loading")}</span>
         ) : img.error || !img.url ? (
-          <span className="text-[11px] text-danger">图片加载失败</span>
+          <span className="text-[11px] text-danger">{t("diff.imgLoadFailed")}</span>
         ) : (
           <img
             src={img.url}
