@@ -35,6 +35,7 @@ export const zh = {
   "action.setUpstreamTitle": "为当前分支设置上游分支",
   "action.setAsUpstream": "设为上游",
   "header.appName": "Git 客户端",
+  "header.home": "回到起始页",
   "header.selectRemote": "选择远程仓库",
   "pull.merge": "合并(merge)",
   "pull.rebase": "变基(rebase)",
@@ -102,6 +103,16 @@ export const zh = {
   "count.items": "项",
   "common.loading": "加载中…",
 
+  // 次级视图表格列头
+  "col.path": "路径",
+  "col.url": "URL",
+  "col.status": "状态",
+  "col.commit": "当前提交",
+  "col.branch": "分支",
+  "col.head": "HEAD",
+  "col.pattern": "模式",
+  "col.type": "类型",
+
   // 子模块
   "submodules.empty": "该仓库没有子模块",
   "submodules.init": "初始化",
@@ -120,6 +131,8 @@ export const zh = {
   "worktrees.detached": "分离头",
 
   // 稀疏检出
+  "sparse.include": "包含",
+  "sparse.exclude": "排除",
   "sparse.empty": "未开启稀疏检出",
   "sparse.desc": "稀疏检出已开启 —— 工作区只检出以下范围内的文件，其余路径不在磁盘上(更改/历史里看不到它们的工作区改动是正常的)。",
 
@@ -127,6 +140,9 @@ export const zh = {
   "compare.same": "选择两个不同的分支查看差异",
   "compare.vs": "相对",
   "compare.filesChanged": "文件改动",
+  "compare.from": "从",
+  "compare.to": "到",
+  "compare.swap": "交换两端",
 
   // 追溯 Blame:页边批注
   "blame.pick": "选择文件",
@@ -158,7 +174,10 @@ export const zh = {
   "file.historyAria": "查看文件历史",
 
   // 更改页
+  "changes.workingTree": "工作区更改",
   "changes.refresh": "刷新",
+  "changes.commitTo": "提交到 {branch}",
+  "changes.stagedCount": "{n} 暂存",
   "changes.sectionConflicts": "冲突",
   "changes.sectionStaged": "已暂存",
   "changes.sectionUnstaged": "未暂存",
@@ -217,6 +236,7 @@ export const zh = {
 
   // 提交详情
   "commit.selectToView": "选择一个提交查看详情",
+  "commit.copySha": "复制完整 SHA",
   "commit.sigGood": "已验证签名",
   "commit.sigBad": "签名无效",
   "commit.sigUnverified": "已签名 · 未验证",

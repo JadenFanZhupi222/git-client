@@ -5,30 +5,46 @@ import {
   getHeadCommit, resolveOurs, resolveTheirs,
   type FileEntryDto, type IpcError,
 } from "../ipc";
-import { useStatus, useWorkingDiff, useRepoState, invalidateWorktree, invalidateHistory, qk } from "../lib/queries";
+import { useStatus, useWorkingDiff, useRepoState, useCurrentBranch, invalidateWorktree, invalidateHistory, qk } from "../lib/queries";
 import { useListKeyboardNav, isTypingTarget } from "../lib/listNav";
-import { RefreshIcon, CheckIcon, FileDiffIcon, PlusIcon, MinusIcon } from "../components/icons";
+import { RefreshIcon, CheckIcon, FileDiffIcon } from "../components/icons";
 import { DiffView } from "../components/DiffView";
 import { ConflictEditor } from "../components/ConflictEditor";
 import { ConflictBanner } from "../components/ConflictBanner";
 import { Resizer, useResizableWidth } from "../components/Resizer";
 import { useToast } from "../components/Toast";
 import { Button } from "../components/ui/Button";
+import { FloatBar, FLOAT_BAR_INSET } from "../components/ui/FloatBar";
+import { Spine } from "../components/ui/Spine";
 import { useT } from "../lib/i18n";
 import type { MessageKey } from "../lib/locales/zh";
 
-/** 工作区状态 → 颜色 + 单字母徽章 + i18n key(tooltip) */
-const STATE_STYLE: Record<string, { letter: string; cls: string; key: MessageKey }> = {
-  new: { letter: "A", cls: "text-success", key: "file.new" },
-  added: { letter: "A", cls: "text-success", key: "file.new" },
-  modified: { letter: "M", cls: "text-accent", key: "file.modified" },
-  deleted: { letter: "D", cls: "text-danger", key: "file.deleted" },
-  renamed: { letter: "R", cls: "text-warning", key: "file.renamed" },
-  untracked: { letter: "U", cls: "text-success", key: "file.untracked" },
-  conflicted: { letter: "!", cls: "text-danger", key: "file.conflicted" },
+/** 工作区状态 → 语义色(CSS 变量,供 16×16 色块徽章 color-mix)+ 单字母 + i18n key(tooltip)。
+ *  对齐原型 statBadge:M=warning、A=success、D=danger、R=accent、冲突=danger。 */
+const STATE_STYLE: Record<string, { letter: string; color: string; key: MessageKey }> = {
+  new: { letter: "A", color: "var(--color-success)", key: "file.new" },
+  added: { letter: "A", color: "var(--color-success)", key: "file.new" },
+  modified: { letter: "M", color: "var(--color-warning)", key: "file.modified" },
+  deleted: { letter: "D", color: "var(--color-danger)", key: "file.deleted" },
+  renamed: { letter: "R", color: "var(--color-accent)", key: "file.renamed" },
+  untracked: { letter: "U", color: "var(--color-success)", key: "file.untracked" },
+  conflicted: { letter: "!", color: "var(--color-danger)", key: "file.conflicted" },
 };
-function styleFor(state: string): { letter: string; cls: string; key: MessageKey | null; raw?: string } {
-  return STATE_STYLE[state.toLowerCase()] ?? { letter: "?", cls: "text-fg-muted", key: null, raw: state };
+function styleFor(state: string): { letter: string; color: string; key: MessageKey | null; raw?: string } {
+  return STATE_STYLE[state.toLowerCase()] ?? { letter: "?", color: "var(--color-fg-subtle)", key: null, raw: state };
+}
+
+/** 16×16 圆角状态色块徽章(色 = 语义色,底 = 同色 15% color-mix)。原型 statBadge 复刻。 */
+function StatBadge({ color, letter, title }: { color: string; letter: string; title?: string }) {
+  return (
+    <span
+      title={title}
+      className="grid h-4 w-4 shrink-0 place-items-center rounded font-mono text-[10px] font-bold"
+      style={{ color, background: `color-mix(in oklab, ${color} 15%, transparent)` }}
+    >
+      {letter}
+    </span>
+  );
 }
 
 /** 文件路径拆成 目录(灰)+ 文件名(亮),便于扫读 */
@@ -43,6 +59,7 @@ export function ChangesView({ repo }: { repo: string }) {
   const statusQ = useStatus(repo);
   const status = statusQ.data;
   const repoState = useRepoState(repo).data ?? "clean";
+  const branch = useCurrentBranch(repo).data ?? "main";
   const [message, setMessage] = useState("");
   const [amend, setAmend] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -62,11 +79,11 @@ export function ChangesView({ repo }: { repo: string }) {
   const canCommit =
     !busy && conflicts.length === 0 && message.trim() !== "" && (amend || staged.length > 0);
 
-  // 扁平的可键盘选择列表(按显示顺序:冲突 → 已暂存 → 未暂存),供 j/k 导航与空格暂存。
+  // 扁平的可键盘选择列表(按显示顺序:冲突 → 未暂存 → 已暂存),供 j/k 导航与空格暂存。
   const flatList = [
     ...conflicts.map((e) => ({ path: e.path, staged: false, conflict: true })),
-    ...staged.map((e) => ({ path: e.path, staged: true, conflict: false })),
     ...unstaged.map((e) => ({ path: e.path, staged: false, conflict: false })),
+    ...staged.map((e) => ({ path: e.path, staged: true, conflict: false })),
   ];
   const flatIndex = sel ? flatList.findIndex((x) => x.path === sel.path && x.staged === sel.staged) : -1;
   useListKeyboardNav({
@@ -174,21 +191,24 @@ export function ChangesView({ repo }: { repo: string }) {
       <li
         data-fkey={`${entry.path}|${isStaged}`}
         onClick={() => setSel({ path: entry.path, staged: isStaged })}
-        className={`group flex cursor-pointer items-center gap-2 py-1 pl-3 pr-1.5 ${on ? "bg-overlay" : "hover:bg-elevated"}`}
+        className={`group relative flex cursor-pointer items-center gap-2.5 rounded-md px-3 py-1.5 ${on ? "bg-accent/10" : "hover:bg-elevated"}`}
       >
-        <span className={`w-3.5 shrink-0 text-center font-mono text-xs font-semibold ${s.cls}`} title={s.key ? t(s.key) : s.raw}>{s.letter}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[13px]" title={entry.path}>
-          {dir && <span className="text-fg-subtle">{dir}</span>}
-          <span className="text-fg">{name}</span>
-        </span>
+        {on && <Spine />}
+        {/* 暂存复选框:勾选 = 已暂存(accent 实心 + 白勾),空 = 未暂存。点击切换暂存态。 */}
         <button
           title={isStaged ? t("changes.unstage") : t("changes.stage")}
           disabled={busy}
           onClick={(e) => { e.stopPropagation(); run(() => (isStaged ? unstageFile(repo, entry.path) : stageFile(repo, entry.path))); }}
-          className="grid h-5 w-5 shrink-0 place-items-center rounded text-fg-subtle opacity-0 transition-colors hover:bg-overlay hover:text-fg group-hover:opacity-100 disabled:opacity-40"
+          className="grid h-[18px] w-[18px] shrink-0 place-items-center rounded-[5px] border border-line-strong text-white transition-colors disabled:opacity-40"
+          style={{ background: isStaged ? "var(--color-accent)" : "transparent" }}
         >
-          {isStaged ? <MinusIcon width={13} height={13} /> : <PlusIcon width={13} height={13} />}
+          {isStaged && <CheckIcon width={11} height={11} />}
         </button>
+        <StatBadge color={s.color} letter={s.letter} title={s.key ? t(s.key) : s.raw} />
+        <span className="min-w-0 flex-1 truncate font-mono text-[12.5px]" title={entry.path}>
+          {dir && <span className="text-fg-subtle">{dir}</span>}
+          <span className={on ? "text-fg" : "text-fg-muted"}>{name}</span>
+        </span>
       </li>
     );
   };
@@ -200,12 +220,13 @@ export function ChangesView({ repo }: { repo: string }) {
       <li
         data-fkey={`${entry.path}|false`}
         onClick={() => setSel({ path: entry.path, staged: false })}
-        className={`group flex cursor-pointer items-center gap-2 py-1 pl-3 pr-1.5 ${on ? "bg-overlay" : "hover:bg-elevated"}`}
+        className={`group relative flex cursor-pointer items-center gap-2.5 rounded-md px-3 py-1.5 ${on ? "bg-accent/10" : "hover:bg-elevated"}`}
       >
-        <span className="w-3.5 shrink-0 text-center font-mono text-xs font-semibold text-danger" title={t("file.conflicted")}>!</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[13px]" title={entry.path}>
+        {on && <Spine />}
+        <StatBadge color="var(--color-danger)" letter="!" title={t("file.conflicted")} />
+        <span className="min-w-0 flex-1 truncate font-mono text-[12.5px]" title={entry.path}>
           {dir && <span className="text-fg-subtle">{dir}</span>}
-          <span className="text-fg">{name}</span>
+          <span className={on ? "text-fg" : "text-fg-muted"}>{name}</span>
         </span>
         <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
           <button onClick={(e) => { e.stopPropagation(); useOurs(entry.path); }} disabled={busy}
@@ -219,23 +240,23 @@ export function ChangesView({ repo }: { repo: string }) {
     );
   };
 
-  const Section = ({ title, count, accent, onBulk, bulkLabel, bulkIcon, children }: {
-    title: string; count: number; accent?: boolean;
-    onBulk?: () => void; bulkLabel?: string; bulkIcon?: React.ReactNode;
+  const Section = ({ title, count, onBulk, bulkLabel, children }: {
+    title: string; count: number;
+    onBulk?: () => void; bulkLabel?: string;
     children: React.ReactNode;
   }) => (
     <div>
-      <div className="group sticky top-0 z-10 flex items-center gap-2 border-b border-line bg-canvas px-3 py-1.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-fg-muted">{title}</span>
-        <span className={`rounded-full px-1.5 text-[11px] tabular-nums ${accent ? "bg-done/20 text-success" : "bg-elevated text-fg-muted"}`}>{count}</span>
+      <div className="flex items-center gap-2 px-3 pb-1.5 pt-2.5">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.04em] text-fg-subtle">{title}</span>
+        <span className="rounded-full bg-fg/[0.08] px-1.5 text-[10px] tabular-nums text-fg-subtle">{count}</span>
         {count > 0 && onBulk && (
           <button
             onClick={onBulk}
             disabled={busy}
             title={bulkLabel}
-            className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-fg-subtle opacity-0 transition-colors hover:bg-overlay hover:text-fg group-hover:opacity-100 disabled:opacity-40"
+            className="ml-auto rounded-md px-2 py-0.5 text-[11px] text-accent transition-colors hover:bg-accent/10 disabled:opacity-40"
           >
-            {bulkIcon}{bulkLabel}
+            {bulkLabel}
           </button>
         )}
       </div>
@@ -250,21 +271,23 @@ export function ChangesView({ repo }: { repo: string }) {
       )}
       <div className="flex min-h-0 flex-1">
       {/* 左列:文件列表 + 提交框 */}
-      <div className="flex shrink-0 flex-col overflow-hidden" style={{ width: listCol.w }}>
-        {/* 工具栏 */}
-        <div className="flex shrink-0 items-center gap-3 border-b border-line px-3 py-1.5">
-          <Button
-            variant="ghost"
-            size="sm"
+      <div className="relative flex shrink-0 flex-col overflow-hidden" style={{ width: listCol.w }}>
+        {/* 浮动液态玻璃工具栏:标题 + 刷新;文件区从其下穿过显折射。 */}
+        <FloatBar>
+          <span className="flex-1 text-[12.5px] font-semibold text-fg">{t("changes.workingTree")}</span>
+          <button
             onClick={() => qc.invalidateQueries({ queryKey: qk.status(repo) })}
             disabled={busy || statusQ.isFetching}
+            title={t("changes.refresh")}
+            aria-label={t("changes.refresh")}
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-line text-fg-muted transition-colors hover:text-fg disabled:opacity-40"
           >
-            <RefreshIcon width={13} height={13} className={busy || statusQ.isFetching ? "animate-spin" : ""} /> {t("changes.refresh")}
-          </Button>
-        </div>
+            <RefreshIcon width={13} height={13} className={busy || statusQ.isFetching ? "animate-spin" : ""} />
+          </button>
+        </FloatBar>
 
-        {/* 文件区(滚动) */}
-        <div ref={listScrollRef} className="min-h-0 flex-1 overflow-y-auto">
+        {/* 文件区(滚动):未暂存 → 已暂存,贴近底部提交框。 */}
+        <div ref={listScrollRef} className="min-h-0 flex-1 overflow-y-auto px-2 pb-3" style={{ paddingTop: FLOAT_BAR_INSET }}>
           {conflicts.length > 0 && (
             <Section title={t("changes.sectionConflicts")} count={conflicts.length}>
               <ul>
@@ -273,57 +296,58 @@ export function ChangesView({ repo }: { repo: string }) {
             </Section>
           )}
           <Section
-            title={t("changes.sectionStaged")} count={staged.length} accent
-            onBulk={() => unstageAll(staged.map((e) => e.path))}
-            bulkLabel={t("changes.unstageAll")}
-            bulkIcon={<MinusIcon width={12} height={12} />}
-          >
-            <ul>
-              {staged.map((e) => <Row key={e.path} entry={e} isStaged />)}
-              {staged.length === 0 && <li className="px-3 py-2 text-xs text-fg-subtle">{t("changes.noStaged")}</li>}
-            </ul>
-          </Section>
-          <Section
             title={t("changes.sectionUnstaged")} count={unstaged.length}
             onBulk={() => stageAll(unstaged.map((e) => e.path))}
             bulkLabel={t("changes.stageAll")}
-            bulkIcon={<PlusIcon width={12} height={12} />}
           >
             <ul>
               {unstaged.map((e) => <Row key={e.path} entry={e} isStaged={false} />)}
               {unstaged.length === 0 && <li className="px-3 py-2 text-xs text-fg-subtle">{t("changes.clean")}</li>}
             </ul>
           </Section>
+          <Section
+            title={t("changes.sectionStaged")} count={staged.length}
+            onBulk={() => unstageAll(staged.map((e) => e.path))}
+            bulkLabel={t("changes.unstageAll")}
+          >
+            <ul>
+              {staged.map((e) => <Row key={e.path} entry={e} isStaged />)}
+              {staged.length === 0 && <li className="px-3 py-2 text-xs text-fg-subtle">{t("changes.noStaged")}</li>}
+            </ul>
+          </Section>
         </div>
 
-        {/* 提交框(固定底部) */}
+        {/* 提交框(固定底部):textarea + footer 统一内盒(borderTop 分隔)。 */}
         <div className="shrink-0 border-t border-line p-3">
-          <textarea
-            className="field w-full resize-none rounded-md border border-line bg-canvas p-2.5 text-sm text-fg placeholder:text-fg-subtle"
-            rows={3}
-            placeholder={t("changes.commitPlaceholder")}
-            value={message}
-            onChange={(e) => setMessage(e.target.value)}
-            onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canCommit) {
-                e.preventDefault();
-                doCommit();
-              }
-            }}
-          />
-          <div className="mt-2 flex items-center justify-between">
-            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-fg-muted" title={t("changes.amendTitle")}>
-              <input
-                type="checkbox"
-                checked={amend}
-                onChange={(e) => toggleAmend(e.target.checked)}
-                className="accent-accent"
-              />
-              {t("changes.amend")}
-            </label>
-            <Button variant="commit" size="md" disabled={!canCommit} onClick={doCommit}>
-              <CheckIcon width={14} height={14} /> {amend ? t("changes.amendCommit") : t("changes.commit")}
-            </Button>
+          <div className="overflow-hidden rounded-md border border-line bg-elevated/50">
+            <textarea
+              className="w-full resize-none border-none bg-transparent p-2.5 text-[13px] text-fg placeholder:text-fg-subtle focus:outline-none"
+              rows={3}
+              placeholder={t("changes.commitPlaceholder")}
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canCommit) {
+                  e.preventDefault();
+                  doCommit();
+                }
+              }}
+            />
+            <div className="flex items-center gap-2 border-t border-line px-2.5 py-2">
+              <label className="flex cursor-pointer items-center gap-1.5 text-[11.5px] text-fg-muted" title={t("changes.amendTitle")}>
+                <input
+                  type="checkbox"
+                  checked={amend}
+                  onChange={(e) => toggleAmend(e.target.checked)}
+                  className="accent-accent"
+                />
+                {t("changes.amend")}
+              </label>
+              <span className="font-mono text-[10.5px] tabular-nums text-fg-subtle">{t("changes.stagedCount", { n: staged.length })}</span>
+              <Button variant="commit" size="md" disabled={!canCommit} onClick={doCommit} className="ml-auto">
+                <CheckIcon width={13} height={13} /> {amend ? t("changes.amendCommit") : t("changes.commitTo", { branch })}
+              </Button>
+            </div>
           </div>
         </div>
       </div>

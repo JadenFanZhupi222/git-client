@@ -5,6 +5,7 @@ import { updateSubmodule, type IpcError, type SubmoduleInfoDto, type SubmoduleSt
 import { SubmoduleIcon, SpinnerIcon, PullIcon, RefreshIcon } from "../components/icons";
 import { Button } from "../components/ui/Button";
 import { EmptyHint } from "../components/ui/EmptyHint";
+import { SecondaryHeader, CardTable, CardRow, Cell } from "../components/ui/CardTable";
 import { useToast } from "../components/Toast";
 import { useT } from "../lib/i18n";
 
@@ -26,21 +27,22 @@ export function SubmodulesView({ repo }: { repo: string }) {
   if (queryErr) return <Center>{queryErr}</Center>;
 
   return (
-    <div className="fade-in h-full overflow-auto px-6 py-7">
-      {/* 居中卡片栏(max 860):杂志级版式 —— 衬线标题 + mono 计数,内容居中成一栏。 */}
+    <div className="fade-in h-full overflow-auto px-7 py-8">
+      {/* 居中卡片表格(max 860):杂志级版式 —— 图标瓦片 + 衬线标题 + mono 计数 + 列头表格。 */}
       <div className="mx-auto max-w-[860px]">
-        <div className="mb-5 flex items-baseline gap-3">
-          <h1 className="serif text-[27px] font-normal leading-none text-fg">{t("title.submodules")}</h1>
-          {subs.length > 0 && <span className="font-mono text-xs text-fg-subtle">{subs.length} {t("count.items")}</span>}
-        </div>
+        <SecondaryHeader
+          icon={<SubmoduleIcon width={17} height={17} />}
+          title={t("title.submodules")}
+          count={subs.length > 0 ? `${subs.length} ${t("count.items")}` : undefined}
+        />
         {subs.length === 0 ? (
           <EmptyHint icon={<SubmoduleIcon width={24} height={24} />}>{t("submodules.empty")}</EmptyHint>
         ) : (
-          <div className="flex flex-col gap-2">
+          <CardTable cols={[t("col.path"), t("col.url"), t("col.status"), t("col.commit")]}>
             {subs.map((s) => (
               <SubmoduleRow key={s.path} repo={repo} sub={s} />
             ))}
-          </div>
+          </CardTable>
         )}
       </div>
     </div>
@@ -76,34 +78,27 @@ function SubmoduleRow({ repo, sub }: { repo: string; sub: SubmoduleInfoDto }) {
   }
 
   return (
-    <div className="flex items-center gap-3 rounded-md border border-line bg-elevated px-3 py-2">
-      <SubmoduleIcon width={16} height={16} className="shrink-0 text-fg-subtle" />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate font-mono text-[13px] text-fg" title={sub.path}>
-            {sub.path}
-          </span>
-          <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] ${meta.cls}`}>
-            {t(meta.key)}
-          </span>
-        </div>
-        <div className="mt-0.5 flex items-center gap-2 font-mono text-[11px] text-fg-subtle">
-          {sub.short_sha && <span title={sub.head_sha}>{sub.short_sha}</span>}
-          {sub.describe && <span className="truncate">({sub.describe})</span>}
-          {sub.url && (
-            <span className="truncate text-fg-muted" title={sub.url}>
-              {sub.url}
-            </span>
-          )}
-        </div>
-      </div>
-      {action && (
-        <Button variant="secondary" size="sm" onClick={doUpdate} disabled={busy} className="shrink-0">
+    <CardRow
+      trailing={action ? (
+        <Button variant="secondary" size="sm" onClick={doUpdate} disabled={busy} className="ml-2 shrink-0">
           {busy ? <SpinnerIcon width={13} height={13} /> : <action.Icon width={13} height={13} />}
           {action.label}
         </Button>
-      )}
-    </div>
+      ) : undefined}
+    >
+      <Cell first className="text-fg" >
+        <span className="truncate" title={sub.path}>{sub.path}</span>
+      </Cell>
+      <Cell className="!font-sans" >
+        <span className="truncate" title={sub.url || undefined}>{sub.url || "—"}</span>
+      </Cell>
+      <Cell>
+        <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] ${meta.cls}`}>{t(meta.key)}</span>
+      </Cell>
+      <Cell last>
+        <span className="truncate" title={sub.describe ? `${sub.head_sha} (${sub.describe})` : sub.head_sha}>{sub.short_sha || "—"}</span>
+      </Cell>
+    </CardRow>
   );
 }
 

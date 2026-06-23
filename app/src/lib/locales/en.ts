@@ -35,6 +35,7 @@ export const en: Record<MessageKey, string> = {
   "action.setUpstreamTitle": "Set an upstream branch for the current branch",
   "action.setAsUpstream": "Set as upstream",
   "header.appName": "Git Client",
+  "header.home": "Back to start",
   "header.selectRemote": "Select remote",
   "pull.merge": "Merge",
   "pull.rebase": "Rebase",
@@ -102,6 +103,16 @@ export const en: Record<MessageKey, string> = {
   "count.items": "items",
   "common.loading": "Loading…",
 
+  // Secondary view table columns
+  "col.path": "Path",
+  "col.url": "URL",
+  "col.status": "Status",
+  "col.commit": "Commit",
+  "col.branch": "Branch",
+  "col.head": "HEAD",
+  "col.pattern": "Pattern",
+  "col.type": "Type",
+
   // Submodules
   "submodules.empty": "No submodules in this repository",
   "submodules.init": "Initialize",
@@ -120,6 +131,8 @@ export const en: Record<MessageKey, string> = {
   "worktrees.detached": "Detached HEAD",
 
   // Sparse checkout
+  "sparse.include": "Include",
+  "sparse.exclude": "Exclude",
   "sparse.empty": "Sparse checkout is off",
   "sparse.desc": "Sparse checkout is on — the working tree only contains files within the patterns below; other paths aren't on disk (it's normal not to see their working-tree changes in Changes/History).",
 
@@ -127,6 +140,9 @@ export const en: Record<MessageKey, string> = {
   "compare.same": "Pick two different refs to see the diff",
   "compare.vs": "vs",
   "compare.filesChanged": "files changed",
+  "compare.from": "Base",
+  "compare.to": "Head",
+  "compare.swap": "Swap sides",
 
   // Blame: margin notes
   "blame.pick": "Choose file",
@@ -158,7 +174,10 @@ export const en: Record<MessageKey, string> = {
   "file.historyAria": "View file history",
 
   // Changes view
+  "changes.workingTree": "Working tree",
   "changes.refresh": "Refresh",
+  "changes.commitTo": "Commit to {branch}",
+  "changes.stagedCount": "{n} staged",
   "changes.sectionConflicts": "Conflicts",
   "changes.sectionStaged": "Staged",
   "changes.sectionUnstaged": "Unstaged",
@@ -217,6 +236,7 @@ export const en: Record<MessageKey, string> = {
 
   // Commit details
   "commit.selectToView": "Select a commit to view details",
+  "commit.copySha": "Copy full SHA",
   "commit.sigGood": "Verified signature",
   "commit.sigBad": "Invalid signature",
   "commit.sigUnverified": "Signed · unverified",

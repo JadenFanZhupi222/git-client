@@ -6,10 +6,14 @@
  * 命令本身在 App.tsx 组装(那里握有 repo / 各操作 handler)。
  */
 
+import type { ReactNode } from "react";
+
 /** 一条可执行命令。run() 触发动作;disabled 时灰显且不可执行(如未开仓库)。 */
 export interface Command {
   /** 稳定唯一 id(用作 React key)。 */
   id: string;
+  /** 行首图标(对齐原型命令面板)。 */
+  icon?: ReactNode;
   /** 显示名,也是主要的搜索目标,如 "Fetch"、"切换到历史"。 */
   title: string;
   /** 右侧灰色说明,如快捷键或补充。 */

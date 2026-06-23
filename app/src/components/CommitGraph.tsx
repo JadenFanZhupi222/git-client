@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { type CommitDto, type GraphRowDto, type RefDto } from "../ipc";
 import { CommitLines } from "./CommitLines";
+import { Spine } from "./ui/Spine";
 import { ROW_H, cx, gutterWidth, topPath, botPath } from "../lib/graphGeometry";
 import { useT } from "../lib/i18n";
 
@@ -16,27 +17,32 @@ function RefBadges({ refs }: { refs: RefDto[] }) {
   const locals = refs.filter((r) => r.kind === "local" && r.name !== head?.name);
   const remotes = refs.filter((r) => r.kind === "remote");
   const tags = refs.filter((r) => r.kind === "tag");
-  const pill = "shrink-0 rounded-full px-1.5 text-[10px] font-mono not-italic leading-[1.4]";
+  // 徽章圆角 5(对齐原型,非全圆);HEAD/本地 = 朱红家族,远程 = 中性,标签 = warning + tag 图标。
+  const pill = "inline-flex shrink-0 items-center gap-1 rounded-[5px] px-1.5 text-[10px] font-mono font-semibold not-italic leading-[1.4]";
   return (
     <>
       {head && (
-        <span className={`${pill} border border-success/40 bg-success/10 text-success`}>
+        <span className={`${pill} bg-accent/[0.16] text-accent`}>
           {head.name === "HEAD" ? "HEAD" : `HEAD → ${head.name}`}
         </span>
       )}
       {locals.map((r) => (
-        <span key={`l-${r.name}`} className={`${pill} border border-accent/40 bg-accent/10 text-accent`}>
+        <span key={`l-${r.name}`} className={`${pill} bg-accent/10 text-accent`}>
           {r.name}
         </span>
       ))}
       {remotes.map((r) => (
-        <span key={`r-${r.name}`} className={`${pill} border border-line-strong bg-elevated text-fg-muted`}>
+        <span key={`r-${r.name}`} className={`${pill} bg-fg/[0.08] text-fg-muted`}>
           {r.name}
         </span>
       ))}
       {tags.map((r) => (
-        <span key={`t-${r.name}`} className={`${pill} border border-warning/40 bg-warning/10 text-warning`}>
-          ⌖ {r.name}
+        <span key={`t-${r.name}`} className={`${pill} bg-warning/[0.16] text-warning`}>
+          <svg width={9} height={9} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={1.8}>
+            <path d="M2 7 7 2h5v5l-5 5z" />
+            <circle cx={9.5} cy={5.5} r={0.6} fill="currentColor" />
+          </svg>
+          {r.name}
         </span>
       ))}
     </>
@@ -163,9 +169,11 @@ export function CommitGraph({
         {selIdx >= 0 && (
           <div
             aria-hidden
-            className="pointer-events-none absolute left-0 top-0 w-full border-l-2 border-accent-emphasis bg-overlay"
+            className="pointer-events-none absolute left-0 top-0 w-full bg-accent/10"
             style={{ height: ROW_H, transform: `translateY(${topInset + selIdx * ROW_H}px)`, transition: "transform 0.18s cubic-bezier(0.22,1,0.36,1)" }}
-          />
+          >
+            <Spine />
+          </div>
         )}
         {virtualizer.getVirtualItems().map((vrow) => {
           const r = rows[vrow.index];
@@ -174,6 +182,9 @@ export function CommitGraph({
           const on = selectedId === r.commit.id;
           const cmp = !on && compareId === r.commit.id;
           const isHead = r.refs.some((x) => x.kind === "head");
+          const isMerge = r.commit.parents.length > 1;
+          // 节点半径:选中放大到 6,合并 4.5,普通 5(对齐原型)。
+          const nodeR = on ? 6 : isMerge ? 4.5 : 5;
           // 拖放 cherry-pick:被拖的行半透明;HEAD 行(非被拖那条)在拖拽时变投放区。
           const isDragged = dragId === r.commit.id;
           const isDropTarget = dragId !== null && isHead && !isDragged && !!onCherryPick && !draggedInBranch;
@@ -200,11 +211,10 @@ export function CommitGraph({
               onClick={(e) => onSelect(r.commit, { compare: e.metaKey || e.ctrlKey })}
               onContextMenu={(e) => { if (onContext) { e.preventDefault(); onSelect(r.commit); onContext(r.commit, e.clientX, e.clientY); } }}
               title={syncTip}
-              className={`flex items-stretch border-l-2 transition-colors ${onCherryPick ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"} ${isNew ? "commit-enter" : ""} ${isDragged ? "opacity-40" : ""} ${
+              className={`flex items-stretch transition-colors ${onCherryPick ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"} ${isNew ? "commit-enter" : ""} ${isDragged ? "opacity-40" : ""} ${
                 isDropTarget ? "bg-accent/10 ring-2 ring-inset ring-accent"
-                : on ? "border-transparent"
-                : cmp ? "border-accent bg-accent/10"
-                : "border-transparent hover:bg-elevated"
+                : cmp ? "border-l-2 border-accent bg-accent/10"
+                : "hover:bg-elevated"
               }`}
               style={{
                 position: "absolute",
@@ -226,31 +236,41 @@ export function CommitGraph({
                   const hl = hoverColor === null || s.color === hoverColor;
                   return (
                     <path key={`t${j}`} className="lane-path" d={topPath(s.from, s.to)} fill="none"
-                      stroke={laneColor(s.color)} strokeWidth={hl ? 2.4 : 2} strokeOpacity={hl ? 1 : 0.2} strokeLinecap="round" />
+                      stroke={laneColor(s.color)} strokeWidth={hl ? 2.4 : 1.8} strokeOpacity={hl ? 1 : 0.6} strokeLinecap="round" />
                   );
                 })}
                 {r.bottom.map((s, j) => {
                   const hl = hoverColor === null || s.color === hoverColor;
                   return (
                     <path key={`b${j}`} className="lane-path" d={botPath(s.from, s.to)} fill="none"
-                      stroke={laneColor(s.color)} strokeWidth={hl ? 2.4 : 2} strokeOpacity={hl ? 1 : 0.2} strokeLinecap="round" />
+                      stroke={laneColor(s.color)} strokeWidth={hl ? 2.4 : 1.8} strokeOpacity={hl ? 1 : 0.6} strokeLinecap="round" />
                   );
                 })}
-                {/* 光晕:用画布色描边把节点背后的泳道线「挖空」,圆点更干净 */}
-                <circle cx={cx(r.column)} cy={ROW_H / 2} r={6.5} fill="var(--color-canvas)" />
-                {/* 节点:已同步=实心(泳道色);未 push/未 pull=空心环(同步色),仿 JetBrains。
-                    新提交时 node-pop 弹入(SVG scale,transform-box:fill-box 以圆心为原点)。 */}
-                <circle cx={cx(r.column)} cy={ROW_H / 2} r={4.5}
-                  className={isNew ? "node-pop" : undefined}
-                  style={{ opacity: nodeDim ? 0.3 : 1, transition: "opacity 0.16s ease" }}
-                  fill={syncColor ? "var(--color-canvas)" : laneColor(r.color)}
-                  stroke={syncColor ?? (isHead ? "var(--color-accent)" : "transparent")}
-                  strokeWidth={syncColor ? 2.5 : isHead ? 2.5 : 0} />
+                {/* 节点(对齐 Strata 原型):合并=空心环(画布填充 + 泳道描边);普通=实心泳道色 +
+                    画布描边把背后泳道挖干净;选中放大到 r6 + 泳道色辉光;HEAD 外加一圈淡环。
+                    同步状态(未 push/pull)不再改节点形态,改由行首竖色条表达,避免与「合并空心」语义撞。
+                    新提交时 node-pop 弹入(transform-box:fill-box 以圆心为原点)。 */}
+                {isMerge ? (
+                  <circle cx={cx(r.column)} cy={ROW_H / 2} r={nodeR}
+                    className={isNew ? "node-pop" : undefined}
+                    style={{ opacity: nodeDim ? 0.3 : 1, transition: "opacity 0.16s ease" }}
+                    fill="var(--color-canvas)" stroke={laneColor(r.color)} strokeWidth={2} />
+                ) : (
+                  <circle cx={cx(r.column)} cy={ROW_H / 2} r={nodeR}
+                    className={isNew ? "node-pop" : undefined}
+                    style={{ opacity: nodeDim ? 0.3 : 1, transition: "opacity 0.16s ease", filter: on ? `drop-shadow(0 0 6px ${laneColor(r.color)})` : undefined }}
+                    fill={laneColor(r.color)} stroke="var(--color-canvas)" strokeWidth={2} />
+                )}
+                {isHead && (
+                  <circle cx={cx(r.column)} cy={ROW_H / 2} r={nodeR + 3}
+                    fill="none" stroke={laneColor(r.color)} strokeWidth={1.4} strokeOpacity={0.5}
+                    style={{ opacity: nodeDim ? 0.3 : 1 }} />
+                )}
               </svg>
 
               {/* 提交信息 */}
-              <div className="flex min-w-0 flex-1 flex-col justify-center pr-3">
-                <CommitLines commit={r.commit} badges={<RefBadges refs={r.refs} />} />
+              <div className="flex min-w-0 flex-1 items-center pr-3">
+                <CommitLines commit={r.commit} badges={<RefBadges refs={r.refs} />} selected={on} />
               </div>
 
               {/* 投放区提示:拖到当前分支(HEAD)行时显示「松开 → 拣选」 */}
