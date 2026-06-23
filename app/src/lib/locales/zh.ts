@@ -127,6 +127,9 @@ export const zh = {
   "compare.same": "选择两个不同的分支查看差异",
   "compare.vs": "相对",
   "compare.filesChanged": "文件改动",
+  "compare.from": "从",
+  "compare.to": "到",
+  "compare.swap": "交换两端",
 
   // 追溯 Blame:页边批注
   "blame.pick": "选择文件",

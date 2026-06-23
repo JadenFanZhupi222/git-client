@@ -127,6 +127,9 @@ export const en: Record<MessageKey, string> = {
   "compare.same": "Pick two different refs to see the diff",
   "compare.vs": "vs",
   "compare.filesChanged": "files changed",
+  "compare.from": "Base",
+  "compare.to": "Head",
+  "compare.swap": "Swap sides",
 
   // Blame: margin notes
   "blame.pick": "Choose file",
