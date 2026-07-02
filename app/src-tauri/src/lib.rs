@@ -83,6 +83,195 @@ fn join_panic(e: tokio::task::JoinError) -> IpcError {
 /// - 仓库上下文从 `RepoRegistry`(Tauri State)取,不再每次 `RepoService::new` +
 ///   重建后端。`registry.context()` 只在查表那一瞬持锁,返回的 `Arc<RepoContext>`
 ///   move 进阻塞线程后才跑 git,绝不持锁做阻塞操作。
+const GITHUB_TOKEN_SERVICE: &str = "com.gitclient.desktop";
+const GITHUB_TOKEN_USER: &str = "github-token";
+const GITLAB_TOKEN_USER: &str = "gitlab-token";
+
+fn normalize_github_token(token: String) -> Result<String, IpcError> {
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        return Err(IpcError {
+            code: "GITHUB_TOKEN_EMPTY".into(),
+            message: "GitHub token 不能为空".into(),
+            recoverable: false,
+        });
+    }
+    Ok(token)
+}
+
+fn normalize_gitlab_token(token: String) -> Result<String, IpcError> {
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        return Err(IpcError {
+            code: "GITLAB_TOKEN_EMPTY".into(),
+            message: "GitLab token 不能为空".into(),
+            recoverable: false,
+        });
+    }
+    Ok(token)
+}
+
+fn github_token_missing_error() -> IpcError {
+    IpcError {
+        code: "GITHUB_TOKEN_MISSING".into(),
+        message: "尚未设置 GitHub token".into(),
+        recoverable: true,
+    }
+}
+
+fn gitlab_token_missing_error() -> IpcError {
+    IpcError {
+        code: "GITLAB_TOKEN_MISSING".into(),
+        message: "尚未设置 GitLab token".into(),
+        recoverable: true,
+    }
+}
+
+fn keyring_error(error: keyring::Error) -> IpcError {
+    IpcError {
+        code: "KEYRING".into(),
+        message: error.to_string(),
+        recoverable: true,
+    }
+}
+
+fn github_token_entry() -> Result<keyring::Entry, IpcError> {
+    keyring::Entry::new(GITHUB_TOKEN_SERVICE, GITHUB_TOKEN_USER).map_err(keyring_error)
+}
+
+fn gitlab_token_entry() -> Result<keyring::Entry, IpcError> {
+    keyring::Entry::new(GITHUB_TOKEN_SERVICE, GITLAB_TOKEN_USER).map_err(keyring_error)
+}
+
+#[tauri::command]
+async fn set_github_token(token: String) -> Result<(), IpcError> {
+    let token = normalize_github_token(token)?;
+    tokio::task::spawn_blocking(move || {
+        github_token_entry()?
+            .set_password(&token)
+            .map_err(keyring_error)
+    })
+    .await
+    .map_err(join_panic)?
+}
+
+#[tauri::command]
+async fn has_github_token() -> Result<bool, IpcError> {
+    tokio::task::spawn_blocking(move || match github_token_entry()?.get_password() {
+        Ok(_) => Ok(true),
+        Err(keyring::Error::NoEntry) => Ok(false),
+        Err(error) => Err(keyring_error(error)),
+    })
+    .await
+    .map_err(join_panic)?
+}
+
+#[tauri::command]
+async fn get_github_token() -> Result<String, IpcError> {
+    tokio::task::spawn_blocking(move || match github_token_entry()?.get_password() {
+        Ok(token) => Ok(token),
+        Err(keyring::Error::NoEntry) => Err(github_token_missing_error()),
+        Err(error) => Err(keyring_error(error)),
+    })
+    .await
+    .map_err(join_panic)?
+}
+
+#[tauri::command]
+async fn clear_github_token() -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || match github_token_entry()?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(keyring_error(error)),
+    })
+    .await
+    .map_err(join_panic)?
+}
+
+#[tauri::command]
+async fn set_gitlab_token(token: String) -> Result<(), IpcError> {
+    let token = normalize_gitlab_token(token)?;
+    tokio::task::spawn_blocking(move || {
+        gitlab_token_entry()?
+            .set_password(&token)
+            .map_err(keyring_error)
+    })
+    .await
+    .map_err(join_panic)?
+}
+
+#[tauri::command]
+async fn has_gitlab_token() -> Result<bool, IpcError> {
+    tokio::task::spawn_blocking(move || match gitlab_token_entry()?.get_password() {
+        Ok(_) => Ok(true),
+        Err(keyring::Error::NoEntry) => Ok(false),
+        Err(error) => Err(keyring_error(error)),
+    })
+    .await
+    .map_err(join_panic)?
+}
+
+#[tauri::command]
+async fn get_gitlab_token() -> Result<String, IpcError> {
+    tokio::task::spawn_blocking(move || match gitlab_token_entry()?.get_password() {
+        Ok(token) => Ok(token),
+        Err(keyring::Error::NoEntry) => Err(gitlab_token_missing_error()),
+        Err(error) => Err(keyring_error(error)),
+    })
+    .await
+    .map_err(join_panic)?
+}
+
+#[tauri::command]
+async fn clear_gitlab_token() -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || match gitlab_token_entry()?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(keyring_error(error)),
+    })
+    .await
+    .map_err(join_panic)?
+}
+
+#[cfg(test)]
+mod github_token_tests {
+    use super::*;
+
+    #[test]
+    fn normalize_github_token_trims_non_empty_tokens() {
+        assert_eq!(
+            normalize_github_token("  ghp_secret  ".to_string()).unwrap(),
+            "ghp_secret"
+        );
+    }
+
+    #[test]
+    fn normalize_github_token_rejects_empty_tokens() {
+        let err = normalize_github_token("   ".to_string()).unwrap_err();
+        assert_eq!(err.code, "GITHUB_TOKEN_EMPTY");
+        assert!(!err.recoverable);
+    }
+
+    #[test]
+    fn normalize_gitlab_token_rejects_empty_tokens() {
+        let err = normalize_gitlab_token("   ".to_string()).unwrap_err();
+        assert_eq!(err.code, "GITLAB_TOKEN_EMPTY");
+        assert!(!err.recoverable);
+    }
+
+    #[test]
+    fn github_token_missing_error_is_recoverable() {
+        let err = github_token_missing_error();
+        assert_eq!(err.code, "GITHUB_TOKEN_MISSING");
+        assert!(err.recoverable);
+    }
+
+    #[test]
+    fn gitlab_token_missing_error_is_recoverable() {
+        let err = gitlab_token_missing_error();
+        assert_eq!(err.code, "GITLAB_TOKEN_MISSING");
+        assert!(err.recoverable);
+    }
+}
+
 #[tauri::command]
 async fn get_head_commit(
     registry: tauri::State<'_, RepoRegistry>,
@@ -1155,12 +1344,19 @@ fn watch_repo(
 pub fn run() {
     // 整个应用一个共享后端,启动时建一次;按仓库路由的长驻上下文由 RepoRegistry 管理。
     let registry = RepoRegistry::new(Arc::new(CompositeBackend::default()));
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init()) // 选目录对话框用
         .manage(registry)
         .manage(WatcherState::default())
-        .manage(SearchGen::default())
+        .manage(SearchGen::default());
+
+    #[cfg(feature = "e2e")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+
+    builder
         .invoke_handler(tauri::generate_handler![
             init_repo,
             clone_repo,
@@ -1234,6 +1430,14 @@ pub fn run() {
             stash_apply,
             stash_pop,
             stash_drop,
+            set_github_token,
+            has_github_token,
+            get_github_token,
+            clear_github_token,
+            set_gitlab_token,
+            has_gitlab_token,
+            get_gitlab_token,
+            clear_gitlab_token,
             watch_repo
         ])
         .run(tauri::generate_context!())

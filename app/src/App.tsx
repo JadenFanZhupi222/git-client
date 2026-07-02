@@ -1,5 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check } from "@tauri-apps/plugin-updater";
 import type { Tab } from "./components/TabBar";
 import { Sidebar } from "./components/Sidebar";
 import { ChangesView } from "./views/ChangesView";
@@ -13,6 +16,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, checkoutBranch, initRepo, type IpcError } from "./ipc";
 import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon, MoreIcon, DropletIcon, CloudIcon, PlusIcon, FileDiffIcon, BlameIcon, SubmoduleIcon, WorktreeIcon, BranchIcon } from "./components/icons";
 import { RemoteManager } from "./components/RemoteManager";
+import { GithubCreatePrDialog } from "./components/GithubCreatePrDialog";
+import { GitHubTokenDialog } from "./components/GitHubTokenDialog";
+import { GitLabTokenDialog } from "./components/GitLabTokenDialog";
+import { GithubPrPanel } from "./components/GithubPrPanel";
+import { GitlabMrPanel } from "./components/GitlabMrPanel";
 import { CloneDialog } from "./components/CloneDialog";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
@@ -23,11 +31,13 @@ import type { Command } from "./lib/commands";
 import { useToast } from "./components/Toast";
 import { Glass } from "./components/ui/Glass";
 import { LaunchGraph } from "./components/LaunchGraph";
-import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useUndoState, useBranches, useSubmodules, useWorktrees, useSparseCheckout, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
+import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useRemoteList, useUndoState, useBranches, useSubmodules, useWorktrees, useSparseCheckout, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
 import { applyTheme, applyGlassMode, getStoredTheme, type Theme } from "./lib/theme";
 import { getStoredGlassPref, setStoredGlassPref } from "./lib/transparency";
 import { useT, useLang, toggleLang, nextLangLabel } from "./lib/i18n";
 import { GlobeIcon } from "./components/icons";
+import { checkForAppUpdate } from "./lib/updater";
+import { buildCreateChangeRequestUrl, buildFindChangeRequestUrl } from "./lib/hosting";
 
 /** 把 git fetch 的原始摘要提炼成简洁细节:优先取 "->" 更新行。 */
 function fetchDetail(summary: string): string | undefined {
@@ -58,7 +68,13 @@ export default function App() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [moreMenu, setMoreMenu] = useState(false);
   const [remoteMgrOpen, setRemoteMgrOpen] = useState(false);
+  const [githubCreatePrOpen, setGithubCreatePrOpen] = useState(false);
+  const [githubTokenOpen, setGithubTokenOpen] = useState(false);
+  const [githubPrOpen, setGithubPrOpen] = useState(false);
+  const [gitlabTokenOpen, setGitlabTokenOpen] = useState(false);
+  const [gitlabMrOpen, setGitlabMrOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const toast = useToast();
   const qc = useQueryClient();
   const t = useT();
@@ -69,6 +85,7 @@ export default function App() {
   const branch = useCurrentBranch(repo ?? "").data ?? null;
   const sync = useAheadBehind(repo ?? "").data ?? null;
   const remotes = useRemotes(repo ?? "").data ?? [];
+  const remoteInfos = useRemoteList(repo ?? "", !!repo).data ?? [];
   const undoState = useUndoState(repo ?? "").data ?? null;
   const canUndo = undoState?.can_undo ?? null;
   const canRedo = undoState?.can_redo ?? null;
@@ -223,6 +240,54 @@ export default function App() {
   }
 
   // 切仓库时重置远程选择(回到默认)
+  async function doCheckUpdate() {
+    if (checkingUpdate) return;
+    setCheckingUpdate(true);
+    try {
+      await checkForAppUpdate({ check, relaunch, toast });
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
+
+  async function openCreateChangeRequest() {
+    const link = buildCreateChangeRequestUrl(remoteInfos, branch, selectedRemote);
+    if (!link) {
+      toast({
+        kind: "error",
+        title: "无法打开 PR/MR 页面",
+        detail: branch ? "当前仓库没有可识别的 GitHub/GitLab/Bitbucket 远程地址" : "当前仓库还没有本地分支",
+      });
+      return;
+    }
+
+    try {
+      await openUrl(link.url);
+      toast({ kind: "success", title: `已打开 ${link.provider} 创建页面`, detail: `远程: ${link.remoteName}` });
+    } catch (e) {
+      toast({ kind: "error", title: (e as Error).message ?? String(e) });
+    }
+  }
+
+  async function openExistingChangeRequests() {
+    const link = buildFindChangeRequestUrl(remoteInfos, branch, selectedRemote);
+    if (!link) {
+      toast({
+        kind: "error",
+        title: "无法查找已有 PR",
+        detail: branch ? "当前版本只支持 GitHub 远程仓库" : "当前仓库还没有本地分支",
+      });
+      return;
+    }
+
+    try {
+      await openUrl(link.url);
+      toast({ kind: "success", title: "已打开 GitHub PR 搜索", detail: `远程: ${link.remoteName}` });
+    } catch (e) {
+      toast({ kind: "error", title: (e as Error).message ?? String(e) });
+    }
+  }
+
   useEffect(() => { setSelectedRemote(null); }, [repo]);
 
   // 记住当前仓库,供下次启动屏「继续上次」用。
@@ -356,6 +421,16 @@ export default function App() {
       applyGlassMode();
     },
   });
+  commands.push({
+    id: "app:update",
+    icon: <CloudIcon width={15} height={15} />,
+    title: checkingUpdate ? "正在检查更新..." : "检查更新",
+    subtitle: "下载并安装新版本",
+    group: "应用",
+    keywords: "update updater upgrade release 更新 升级 版本",
+    disabled: checkingUpdate,
+    run: doCheckUpdate,
+  });
   commands.push(
     { id: "remote:fetch", icon: <FetchIcon width={15} height={15} />, title: t("cmd.fetch"), subtitle: t("cmd.fetch.sub"), group: t("group.remote"), keywords: "拉取 远程 fetch", disabled: !repo || busy, run: doFetch },
     { id: "remote:pull-merge", icon: <PullIcon width={15} height={15} />, title: t("cmd.pullMerge"), group: t("group.remote"), keywords: "拉取 合并 merge pull", disabled: !repo || busy, run: () => doPull(false) },
@@ -366,6 +441,15 @@ export default function App() {
   commands.push(
     { id: "undo", icon: <UndoIcon width={15} height={15} />, title: canUndo ? t("cmd.undoLabel", { label: canUndo.label }) : t("cmd.undo"), group: t("group.undo"), keywords: "undo 撤销 回退", disabled: !repo || busy || !canUndo, run: () => doNav("undo") },
     { id: "redo", icon: <RedoIcon width={15} height={15} />, title: canRedo ? t("cmd.redoLabel", { label: canRedo.label }) : t("cmd.redo"), group: t("group.undo"), keywords: "redo 重做 前进", disabled: !repo || busy || !canRedo, run: () => doNav("redo") },
+  );
+  commands.push(
+    { id: "remote:create-pr", icon: <PlusIcon width={15} height={15} />, title: "打开 PR/MR 页面", subtitle: "基于当前分支创建 Pull Request / Merge Request", group: "协作", keywords: "pull request merge request pr mr github gitlab bitbucket 协作 评审 合并请求", disabled: !repo || !branch || busy, run: openCreateChangeRequest },
+    { id: "remote:find-pr", icon: <SearchIcon width={15} height={15} />, title: "查找当前分支 PR", subtitle: "在 GitHub 打开当前分支的 open PR 搜索", group: "协作", keywords: "find pull request existing pr github current branch 查找 已有 当前分支", disabled: !repo || !branch || busy, run: openExistingChangeRequests },
+    { id: "github:list-prs", icon: <CloudIcon width={15} height={15} />, title: "查看当前分支 GitHub PR", subtitle: "在客户端内查看 PR、review 和状态检查", group: "协作", keywords: "github pull request pr review status checks api 查看 评审", disabled: !repo || !branch || busy, run: () => setGithubPrOpen(true) },
+    { id: "github:create-pr", icon: <PlusIcon width={15} height={15} />, title: "创建 GitHub PR", subtitle: "在客户端内通过 GitHub API 创建 Pull Request", group: "协作", keywords: "github api create pull request pr new draft token 创建 新建", disabled: !repo || !branch || busy, run: () => setGithubCreatePrOpen(true) },
+    { id: "github:token", icon: <CloudIcon width={15} height={15} />, title: "设置 GitHub Token", subtitle: "保存到系统凭据库，用于访问私有仓库和提高 API 限额", group: "协作", keywords: "github token pat auth credential 凭据 认证", run: () => setGithubTokenOpen(true) },
+    { id: "gitlab:list-mrs", icon: <CloudIcon width={15} height={15} />, title: "查看当前分支 GitLab MR", subtitle: "在客户端内查看 open Merge Request", group: "协作", keywords: "gitlab merge request mr api 查看 合并请求", disabled: !repo || !branch || busy, run: () => setGitlabMrOpen(true) },
+    { id: "gitlab:token", icon: <CloudIcon width={15} height={15} />, title: "设置 GitLab Token", subtitle: "保存到系统凭据库，用于访问私有仓库和提高 API 限额", group: "协作", keywords: "gitlab token pat auth credential 凭据 认证", run: () => setGitlabTokenOpen(true) },
   );
   commands.push({
     id: "panel:oplog",
@@ -692,6 +776,53 @@ export default function App() {
 
       {repo && remoteMgrOpen && (
         <RemoteManager repo={repo} onClose={() => setRemoteMgrOpen(false)} />
+      )}
+
+      {githubTokenOpen && (
+        <GitHubTokenDialog onClose={() => setGithubTokenOpen(false)} />
+      )}
+
+      {gitlabTokenOpen && (
+        <GitLabTokenDialog onClose={() => setGitlabTokenOpen(false)} />
+      )}
+
+      {githubCreatePrOpen && (
+        <GithubCreatePrDialog
+          remotes={remoteInfos}
+          branch={branch}
+          preferredRemote={selectedRemote}
+          onClose={() => setGithubCreatePrOpen(false)}
+          onConfigureToken={() => {
+            setGithubCreatePrOpen(false);
+            setGithubTokenOpen(true);
+          }}
+        />
+      )}
+
+      {githubPrOpen && (
+        <GithubPrPanel
+          remotes={remoteInfos}
+          branch={branch}
+          preferredRemote={selectedRemote}
+          onClose={() => setGithubPrOpen(false)}
+          onConfigureToken={() => {
+            setGithubPrOpen(false);
+            setGithubTokenOpen(true);
+          }}
+        />
+      )}
+
+      {gitlabMrOpen && (
+        <GitlabMrPanel
+          remotes={remoteInfos}
+          branch={branch}
+          preferredRemote={selectedRemote}
+          onClose={() => setGitlabMrOpen(false)}
+          onConfigureToken={() => {
+            setGitlabMrOpen(false);
+            setGitlabTokenOpen(true);
+          }}
+        />
       )}
 
       {cloneOpen && (

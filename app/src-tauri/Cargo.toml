@@ -24,10 +24,18 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt"] }
+keyring = "4.1.2"
 
 # 接入我们的分层 crate:命令层 → app-service → git-engine
 app-service = { path = "../../crates/app-service" }
 ipc-types   = { path = "../../crates/ipc-types" }
 git-engine  = { path = "../../crates/git-engine" }
 git-core    = { path = "../../crates/git-core" }
+tauri-plugin-process = "2"
+tauri-plugin-wdio-webdriver = { version = "1.2.0", optional = true }
 
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+
+[features]
+e2e = ["dep:tauri-plugin-wdio-webdriver"]
