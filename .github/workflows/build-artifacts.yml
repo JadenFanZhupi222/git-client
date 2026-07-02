@@ -223,7 +223,6 @@ jobs:
           releaseBody: Cross-platform Git Client bundles. Signed update artifacts are included when updater secrets are configured.
           prerelease: true
           uploadUpdaterJson: ${{ steps.updater.outputs.has-updater-artifacts }}
-          uploadWorkflowArtifacts: true
-          workflowArtifactNamePattern: ${{ matrix.artifact-name }}
+          uploadWorkflowArtifacts: false
           updaterJsonPreferNsis: true
           args: --ci ${{ steps.signing.outputs.build-args }} ${{ steps.updater.outputs.build-args }}
