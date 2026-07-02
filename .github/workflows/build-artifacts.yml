@@ -34,10 +34,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+          if gh release view "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             echo "Release ${GITHUB_REF_NAME} already exists; artifacts will be replaced."
           else
-            gh release create "${GITHUB_REF_NAME}" \
+            gh release create "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" \
               --title "Git Client ${GITHUB_REF_NAME#app-v}" \
               --notes "Cross-platform Git Client bundles. Code signing, notarization, and updater metadata are included when the required secrets are configured." \
               --prerelease
