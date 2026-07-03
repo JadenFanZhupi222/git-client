@@ -164,6 +164,13 @@ export function buildGitlabMergeRequestNotesApiUrl(
   return `${buildGitlabMergeRequestApiUrl(remote, iid)}/notes?${params.toString()}`;
 }
 
+export function buildGitlabMergeRequestNoteCreateApiUrl(
+  remote: HostingRemote,
+  iid: number,
+): string {
+  return `${buildGitlabMergeRequestApiUrl(remote, iid)}/notes`;
+}
+
 export function buildGitlabMergeRequestApproveApiUrl(
   remote: HostingRemote,
   iid: number,
@@ -282,6 +289,38 @@ export async function fetchGitlabMergeRequestDetails(
     approvals,
     notes,
   };
+}
+
+export async function createGitlabMergeRequestNote(
+  remote: HostingRemote,
+  iid: number,
+  body: string,
+  token: string | null,
+  fetcher: typeof fetch = fetch,
+): Promise<GitlabMergeRequestNote> {
+  const trimmedBody = body.trim();
+  if (!trimmedBody) throw new Error("MR note cannot be empty");
+  const trimmedToken = token?.trim();
+  if (!trimmedToken) throw new Error("GitLab token is required");
+
+  const response = await fetcher(
+    buildGitlabMergeRequestNoteCreateApiUrl(remote, iid),
+    {
+      method: "POST",
+      headers: {
+        ...gitlabHeaders(trimmedToken),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ body: trimmedBody }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(gitlabApiErrorMessage(response.status));
+  }
+
+  return toMergeRequestNote(
+    (await response.json()) as GitlabMergeRequestNoteResponse,
+  );
 }
 
 export async function approveGitlabMergeRequest(

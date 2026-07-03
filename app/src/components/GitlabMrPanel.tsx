@@ -3,6 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getGitlabToken, hasGitlabToken, type IpcError } from "../ipc";
 import {
   approveGitlabMergeRequest,
+  createGitlabMergeRequestNote,
   fetchGitlabMergeRequestDetails,
   fetchGitlabMergeRequests,
   type GitlabMergeRequestDetails,
@@ -40,6 +41,7 @@ export function GitlabMrPanel({
     iid: number;
     type: "approve" | "unapprove";
   } | null>(null);
+  const [creatingNote, setCreatingNote] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -180,6 +182,43 @@ export function GitlabMrPanel({
     }
   }
 
+  async function createMrNote(
+    detail: GitlabMergeRequestDetails,
+    body: string,
+  ): Promise<boolean> {
+    if (!remote || creatingNote === detail.iid) return false;
+    setCreatingNote(detail.iid);
+    try {
+      const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
+      if (!token?.trim()) {
+        toast({ kind: "error", title: "GitLab token is required" });
+        onConfigureToken();
+        return false;
+      }
+      const note = await createGitlabMergeRequestNote(
+        remote,
+        detail.iid,
+        body,
+        token,
+      );
+      setDetailByIid((current) => ({
+        ...current,
+        [detail.iid]: {
+          ...detail,
+          userNotesCount: detail.userNotesCount + 1,
+          notes: [note, ...detail.notes],
+        },
+      }));
+      toast({ kind: "success", title: `Commented on MR !${detail.iid}` });
+      return true;
+    } catch (e) {
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+      return false;
+    } finally {
+      setCreatingNote(null);
+    }
+  }
+
   return (
     <div
       className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
@@ -276,6 +315,8 @@ export function GitlabMrPanel({
                       }
                       onApprove={approveMr}
                       onUnapprove={unapproveMr}
+                      creatingNote={creatingNote === mr.iid}
+                      onCreateNote={createMrNote}
                     />
                   )}
                 </li>
@@ -317,12 +358,28 @@ function MergeRequestDetailsView({
   approvalAction,
   onApprove,
   onUnapprove,
+  creatingNote,
+  onCreateNote,
 }: {
   detail: GitlabMergeRequestDetails;
   approvalAction: "approve" | "unapprove" | null;
   onApprove: (detail: GitlabMergeRequestDetails) => void;
   onUnapprove: (detail: GitlabMergeRequestDetails) => void;
+  creatingNote: boolean;
+  onCreateNote: (
+    detail: GitlabMergeRequestDetails,
+    body: string,
+  ) => Promise<boolean>;
 }) {
+  const [noteBody, setNoteBody] = useState("");
+  const trimmedNoteBody = noteBody.trim();
+
+  async function submitNote() {
+    if (!trimmedNoteBody || creatingNote) return;
+    const created = await onCreateNote(detail, trimmedNoteBody);
+    if (created) setNoteBody("");
+  }
+
   return (
     <div className="mt-3 grid gap-2 rounded-md border border-line bg-canvas/60 p-3 text-xs">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
@@ -392,6 +449,28 @@ function MergeRequestDetailsView({
           ))}
         </div>
       )}
+      <div className="grid gap-1.5 border-t border-line pt-2">
+        <label className="sr-only" htmlFor={`gitlab-mr-note-${detail.iid}`}>
+          New merge request note
+        </label>
+        <textarea
+          id={`gitlab-mr-note-${detail.iid}`}
+          value={noteBody}
+          onChange={(event) => setNoteBody(event.currentTarget.value)}
+          rows={2}
+          className="min-h-14 resize-y rounded-md border border-line bg-elevated px-2 py-1.5 text-xs text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
+          placeholder="Write a comment"
+        />
+        <div className="flex justify-end">
+          <button
+            onClick={submitNote}
+            disabled={!trimmedNoteBody || creatingNote}
+            className="rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
+          >
+            {creatingNote ? "Commenting" : "Comment"}
+          </button>
+        </div>
+      </div>
       {detail.latestPipeline && (
         <div className="flex flex-wrap gap-1.5">
           <span className="rounded border border-line bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-fg-muted">

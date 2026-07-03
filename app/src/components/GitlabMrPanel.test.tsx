@@ -116,6 +116,20 @@ describe("GitlabMrPanel", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
+            id: 503,
+            body: "Please re-run the failed job.",
+            author: { username: "me" },
+            created_at: "2026-07-02T10:00:00.000Z",
+            updated_at: "2026-07-02T10:00:00.000Z",
+            system: false,
+            internal: false,
+          }),
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
             approvals_required: 2,
             approvals_left: 0,
             approved: true,
@@ -178,6 +192,29 @@ describe("GitlabMrPanel", () => {
     expect(screen.getAllByText("reviewer-a").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Notes")).toBeInTheDocument();
     expect(screen.getByText("Looks good after the pipeline fix.")).toBeInTheDocument();
+
+    await userEvent.type(
+      screen.getByLabelText("New merge request note"),
+      "Please re-run the failed job.",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Comment" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://gitlab.com/api/v4/projects/team%2Fproject/merge_requests/7/notes",
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "PRIVATE-TOKEN": "glpat_secret",
+          },
+          body: JSON.stringify({ body: "Please re-run the failed job." }),
+        },
+      );
+    });
+    expect(await screen.findByText("Please re-run the failed job.")).toBeInTheDocument();
+    expect(screen.getByLabelText("New merge request note")).toHaveValue("");
 
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
 

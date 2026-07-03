@@ -5,11 +5,13 @@ import {
   buildGitlabMergeRequestApproveApiUrl,
   buildGitlabMergeRequestApprovalsApiUrl,
   buildGitlabMergeRequestApiUrl,
+  buildGitlabMergeRequestNoteCreateApiUrl,
   buildGitlabMergeRequestNotesApiUrl,
   buildGitlabMergeRequestPipelinesApiUrl,
   buildGitlabMergeRequestUnapproveApiUrl,
   buildGitlabMergeRequestsApiUrl,
   createGitlabMergeRequest,
+  createGitlabMergeRequestNote,
   fetchGitlabMergeRequestDetails,
   fetchGitlabMergeRequests,
   gitlabApiErrorMessage,
@@ -64,12 +66,79 @@ describe("GitLab merge request detail URLs", () => {
     expect(buildGitlabMergeRequestNotesApiUrl(gitlabRemote, 18)).toBe(
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/notes?sort=desc&order_by=updated_at&per_page=5",
     );
+    expect(buildGitlabMergeRequestNoteCreateApiUrl(gitlabRemote, 18)).toBe(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/notes",
+    );
     expect(buildGitlabMergeRequestApproveApiUrl(gitlabRemote, 18)).toBe(
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/approve",
     );
     expect(buildGitlabMergeRequestUnapproveApiUrl(gitlabRemote, 18)).toBe(
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/unapprove",
     );
+  });
+});
+
+describe("createGitlabMergeRequestNote", () => {
+  it("posts a merge request note and maps the created note", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 503,
+          body: "Please re-run the failed job.",
+          author: { username: "me" },
+          created_at: "2026-07-02T10:00:00.000Z",
+          updated_at: "2026-07-02T10:00:00.000Z",
+          system: false,
+          internal: false,
+        }),
+        { status: 201 },
+      ),
+    );
+
+    const note = await createGitlabMergeRequestNote(
+      gitlabRemote,
+      18,
+      " Please re-run the failed job. ",
+      "glpat_secret",
+      fetchMock,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/notes",
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "PRIVATE-TOKEN": "glpat_secret",
+        },
+        body: JSON.stringify({ body: "Please re-run the failed job." }),
+      },
+    );
+    expect(note).toEqual({
+      id: 503,
+      body: "Please re-run the failed job.",
+      author: "me",
+      createdAt: "2026-07-02T10:00:00.000Z",
+      updatedAt: "2026-07-02T10:00:00.000Z",
+      system: false,
+      internal: false,
+    });
+  });
+
+  it("requires body and token", async () => {
+    await expect(
+      createGitlabMergeRequestNote(gitlabRemote, 18, " ", "glpat_secret"),
+    ).rejects.toThrow("MR note cannot be empty");
+
+    await expect(
+      createGitlabMergeRequestNote(
+        gitlabRemote,
+        18,
+        "Please re-run the failed job.",
+        " ",
+      ),
+    ).rejects.toThrow("GitLab token is required");
   });
 });
 
