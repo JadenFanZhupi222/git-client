@@ -96,6 +96,22 @@ describe("GitlabMrPanel", () => {
           }),
           { status: 200 },
         ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            approvals_required: 2,
+            approvals_left: 0,
+            approved: true,
+            approved_by: [
+              { user: { username: "reviewer-a" } },
+              { user: { username: "me" } },
+            ],
+            user_has_approved: true,
+            user_can_approve: false,
+          }),
+          { status: 201 },
+        ),
       );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -131,6 +147,23 @@ describe("GitlabMrPanel", () => {
     expect(screen.getByText("Approvals")).toBeInTheDocument();
     expect(screen.getByText("1/2 approved")).toBeInTheDocument();
     expect(screen.getByText("reviewer-a")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://gitlab.com/api/v4/projects/team%2Fproject/merge_requests/7/approve",
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "PRIVATE-TOKEN": "glpat_secret",
+          },
+        },
+      );
+    });
+    expect(await screen.findByText("2/2 approved")).toBeInTheDocument();
+    expect(screen.getByText("reviewer-a, me")).toBeInTheDocument();
   });
 
   it("refreshes merge request results", async () => {

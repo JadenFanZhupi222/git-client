@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getGitlabToken, hasGitlabToken, type IpcError } from "../ipc";
 import {
+  approveGitlabMergeRequest,
   fetchGitlabMergeRequestDetails,
   fetchGitlabMergeRequests,
   type GitlabMergeRequestDetails,
@@ -34,6 +35,7 @@ export function GitlabMrPanel({
     Record<number, GitlabMergeRequestDetails>
   >({});
   const [detailLoading, setDetailLoading] = useState<number | null>(null);
+  const [approving, setApproving] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -111,6 +113,36 @@ export function GitlabMrPanel({
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
       setDetailLoading(null);
+    }
+  }
+
+  async function approveMr(detail: GitlabMergeRequestDetails) {
+    if (!remote || approving === detail.iid) return;
+    setApproving(detail.iid);
+    try {
+      const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
+      if (!token?.trim()) {
+        toast({ kind: "error", title: "GitLab token is required" });
+        onConfigureToken();
+        return;
+      }
+      const approvals = await approveGitlabMergeRequest(
+        remote,
+        detail.iid,
+        token,
+      );
+      setDetailByIid((current) => ({
+        ...current,
+        [detail.iid]: {
+          ...detail,
+          approvals,
+        },
+      }));
+      toast({ kind: "success", title: `Approved MR !${detail.iid}` });
+    } catch (e) {
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+    } finally {
+      setApproving(null);
     }
   }
 
@@ -201,7 +233,11 @@ export function GitlabMrPanel({
                     </button>
                   </div>
                   {detailByIid[mr.iid] && (
-                    <MergeRequestDetailsView detail={detailByIid[mr.iid]} />
+                    <MergeRequestDetailsView
+                      detail={detailByIid[mr.iid]}
+                      approving={approving === mr.iid}
+                      onApprove={approveMr}
+                    />
                   )}
                 </li>
               ))}
@@ -239,8 +275,12 @@ export function GitlabMrPanel({
 
 function MergeRequestDetailsView({
   detail,
+  approving,
+  onApprove,
 }: {
   detail: GitlabMergeRequestDetails;
+  approving: boolean;
+  onApprove: (detail: GitlabMergeRequestDetails) => void;
 }) {
   return (
     <div className="mt-3 grid gap-2 rounded-md border border-line bg-canvas/60 p-3 text-xs">
@@ -268,6 +308,17 @@ function MergeRequestDetailsView({
           <span>you can approve</span>
         )}
       </div>
+      {detail.approvals?.userCanApprove && !detail.approvals.userHasApproved && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => onApprove(detail)}
+            disabled={approving}
+            className="rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
+          >
+            {approving ? "Approving" : "Approve"}
+          </button>
+        </div>
+      )}
       {detail.latestPipeline && (
         <div className="flex flex-wrap gap-1.5">
           <span className="rounded border border-line bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-fg-muted">

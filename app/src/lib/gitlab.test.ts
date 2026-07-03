@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  approveGitlabMergeRequest,
   buildGitlabCreateMergeRequestApiUrl,
+  buildGitlabMergeRequestApproveApiUrl,
   buildGitlabMergeRequestApprovalsApiUrl,
   buildGitlabMergeRequestApiUrl,
   buildGitlabMergeRequestPipelinesApiUrl,
@@ -56,6 +58,56 @@ describe("GitLab merge request detail URLs", () => {
     expect(buildGitlabMergeRequestApprovalsApiUrl(gitlabRemote, 18)).toBe(
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/approvals",
     );
+    expect(buildGitlabMergeRequestApproveApiUrl(gitlabRemote, 18)).toBe(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/approve",
+    );
+  });
+});
+
+describe("approveGitlabMergeRequest", () => {
+  it("posts an approval and maps the updated approval summary", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          approvals_required: 2,
+          approvals_left: 0,
+          approved: true,
+          approved_by: [
+            { user: { username: "reviewer-a" } },
+            { user: { username: "me" } },
+          ],
+          user_has_approved: true,
+          user_can_approve: false,
+        }),
+        { status: 201 },
+      ),
+    );
+
+    const approval = await approveGitlabMergeRequest(
+      gitlabRemote,
+      18,
+      "glpat_secret",
+      fetchMock,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/approve",
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "PRIVATE-TOKEN": "glpat_secret",
+        },
+      },
+    );
+    expect(approval).toEqual({
+      approvalsRequired: 2,
+      approvalsLeft: 0,
+      approved: true,
+      approvedBy: ["reviewer-a", "me"],
+      userHasApproved: true,
+      userCanApprove: false,
+    });
   });
 });
 
