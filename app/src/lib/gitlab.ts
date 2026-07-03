@@ -220,6 +220,14 @@ export function buildGitlabPipelineJobsApiUrl(
   return `https://gitlab.com/api/v4/projects/${encodeURIComponent(projectPath)}/pipelines/${pipelineId}/jobs?${params.toString()}`;
 }
 
+export function buildGitlabRetryJobApiUrl(
+  remote: HostingRemote,
+  jobId: number,
+): string {
+  const projectPath = `${remote.owner}/${remote.repo}`;
+  return `https://gitlab.com/api/v4/projects/${encodeURIComponent(projectPath)}/jobs/${jobId}/retry`;
+}
+
 export function buildGitlabMergeRequestApprovalsApiUrl(
   remote: HostingRemote,
   iid: number,
@@ -443,6 +451,28 @@ export async function mergeGitlabMergeRequest(
 
   return toMergeRequestSummary(
     (await response.json()) as GitlabMergeRequestResponse,
+  );
+}
+
+export async function retryGitlabJob(
+  remote: HostingRemote,
+  jobId: number,
+  token: string | null,
+  fetcher: typeof fetch = fetch,
+): Promise<GitlabPipelineJobSummary> {
+  const trimmedToken = token?.trim();
+  if (!trimmedToken) throw new Error("GitLab token is required");
+
+  const response = await fetcher(buildGitlabRetryJobApiUrl(remote, jobId), {
+    method: "POST",
+    headers: gitlabHeaders(trimmedToken),
+  });
+  if (!response.ok) {
+    throw new Error(gitlabApiErrorMessage(response.status));
+  }
+
+  return toPipelineJobSummary(
+    (await response.json()) as GitlabPipelineJobResponse,
   );
 }
 

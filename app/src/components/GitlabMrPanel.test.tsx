@@ -173,6 +173,21 @@ describe("GitlabMrPanel", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
+            id: 802,
+            name: "test-windows",
+            stage: "test",
+            status: "pending",
+            duration: null,
+            web_url: "https://gitlab.com/team/project/-/jobs/802",
+            started_at: null,
+            finished_at: null,
+          }),
+          { status: 201 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
             id: 503,
             body: "Please re-run the failed job.",
             author: { username: "me" },
@@ -244,6 +259,23 @@ describe("GitlabMrPanel", () => {
     expect(screen.getByText("build-linux")).toBeInTheDocument();
     expect(screen.getByText("test-windows")).toBeInTheDocument();
     expect(screen.getByText("failed")).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Retry test-windows" }),
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://gitlab.com/api/v4/projects/team%2Fproject/jobs/802/retry",
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "PRIVATE-TOKEN": "glpat_secret",
+          },
+        },
+      );
+    });
+    expect(await screen.findByText("pending")).toBeInTheDocument();
     expect(screen.getByText("mergeable")).toBeInTheDocument();
     expect(screen.getByText("8 changes")).toBeInTheDocument();
     expect(screen.getByText("3 notes")).toBeInTheDocument();

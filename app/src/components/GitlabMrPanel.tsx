@@ -7,7 +7,9 @@ import {
   fetchGitlabMergeRequestDetails,
   fetchGitlabMergeRequests,
   mergeGitlabMergeRequest,
+  retryGitlabJob,
   type GitlabMergeRequestDetails,
+  type GitlabPipelineJobSummary,
   type GitlabMergeRequestSummary,
   unapproveGitlabMergeRequest,
 } from "../lib/gitlab";
@@ -44,6 +46,7 @@ export function GitlabMrPanel({
   } | null>(null);
   const [creatingNote, setCreatingNote] = useState<number | null>(null);
   const [mergingMr, setMergingMr] = useState<number | null>(null);
+  const [retryingJobId, setRetryingJobId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -253,6 +256,37 @@ export function GitlabMrPanel({
     }
   }
 
+  async function retryJob(
+    detail: GitlabMergeRequestDetails,
+    job: GitlabPipelineJobSummary,
+  ) {
+    if (!remote || retryingJobId === job.id) return;
+    setRetryingJobId(job.id);
+    try {
+      const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
+      if (!token?.trim()) {
+        toast({ kind: "error", title: "GitLab token is required" });
+        onConfigureToken();
+        return;
+      }
+      const updatedJob = await retryGitlabJob(remote, job.id, token);
+      setDetailByIid((current) => ({
+        ...current,
+        [detail.iid]: {
+          ...detail,
+          pipelineJobs: detail.pipelineJobs.map((currentJob) =>
+            currentJob.id === job.id ? updatedJob : currentJob,
+          ),
+        },
+      }));
+      toast({ kind: "success", title: `Retried job ${job.name}` });
+    } catch (e) {
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+    } finally {
+      setRetryingJobId(null);
+    }
+  }
+
   return (
     <div
       className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
@@ -353,6 +387,8 @@ export function GitlabMrPanel({
                       onCreateNote={createMrNote}
                       mergingMr={mergingMr === mr.iid}
                       onMerge={mergeMr}
+                      retryingJobId={retryingJobId}
+                      onRetryJob={retryJob}
                     />
                   )}
                 </li>
@@ -398,6 +434,8 @@ function MergeRequestDetailsView({
   onCreateNote,
   mergingMr,
   onMerge,
+  retryingJobId,
+  onRetryJob,
 }: {
   detail: GitlabMergeRequestDetails;
   approvalAction: "approve" | "unapprove" | null;
@@ -410,6 +448,11 @@ function MergeRequestDetailsView({
   ) => Promise<boolean>;
   mergingMr: boolean;
   onMerge: (detail: GitlabMergeRequestDetails, squash: boolean) => void;
+  retryingJobId: number | null;
+  onRetryJob: (
+    detail: GitlabMergeRequestDetails,
+    job: GitlabPipelineJobSummary,
+  ) => void;
 }) {
   const [noteBody, setNoteBody] = useState("");
   const [squash, setSquash] = useState(false);
@@ -477,30 +520,46 @@ function MergeRequestDetailsView({
           </div>
           <div className="grid gap-1.5">
             {detail.pipelineJobs.slice(0, 6).map((job) => (
-              <a
+              <div
                 key={job.id}
-                href={job.url ?? ""}
-                onClick={(event) => {
-                  event.preventDefault();
-                  if (job.url) void openUrl(job.url);
-                }}
                 className="rounded border border-line bg-elevated/60 px-2 py-1.5 text-left transition-colors hover:border-line-strong hover:bg-overlay"
               >
-                <div className="flex items-center justify-between gap-2">
+                <a
+                  href={job.url ?? ""}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    if (job.url) void openUrl(job.url);
+                  }}
+                  className="flex items-center justify-between gap-2"
+                >
                   <span className="truncate font-medium text-fg">
                     {job.name || "unnamed job"}
                   </span>
                   <span className="shrink-0 font-mono text-[10px] text-fg-muted">
                     {job.status}
                   </span>
-                </div>
+                </a>
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-fg-subtle">
                   {job.stage && <span>{job.stage}</span>}
                   {job.duration !== null && (
                     <span>{formatJobDuration(job.duration)}</span>
                   )}
+                  {isRetryableGitlabJob(job.status) && (
+                    <button
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onRetryJob(detail, job);
+                      }}
+                      aria-label={`Retry ${job.name || "unnamed job"}`}
+                      disabled={retryingJobId === job.id}
+                      className="ml-auto rounded border border-line-strong px-1.5 py-0.5 text-[10px] text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
+                    >
+                      {retryingJobId === job.id ? "Retrying" : "Retry"}
+                    </button>
+                  )}
                 </div>
-              </a>
+              </div>
             ))}
           </div>
         </div>
@@ -677,6 +736,10 @@ function formatJobDuration(value: number): string {
   const minutes = Math.floor(value / 60);
   const seconds = Math.round(value % 60);
   return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+function isRetryableGitlabJob(status: string): boolean {
+  return ["failed", "canceled"].includes(status);
 }
 
 function gitlabDiscussionLocation(

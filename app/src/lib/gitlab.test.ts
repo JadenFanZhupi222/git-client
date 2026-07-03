@@ -8,6 +8,7 @@ import {
   buildGitlabMergeRequestNoteCreateApiUrl,
   buildGitlabMergeRequestNotesApiUrl,
   buildGitlabPipelineJobsApiUrl,
+  buildGitlabRetryJobApiUrl,
   buildGitlabMergeRequestPipelinesApiUrl,
   buildGitlabMergeRequestDiscussionsApiUrl,
   buildGitlabMergeRequestMergeApiUrl,
@@ -19,6 +20,7 @@ import {
   fetchGitlabMergeRequests,
   gitlabApiErrorMessage,
   mergeGitlabMergeRequest,
+  retryGitlabJob,
   unapproveGitlabMergeRequest,
 } from "./gitlab";
 import type { HostingRemote } from "./hosting";
@@ -67,6 +69,9 @@ describe("GitLab merge request detail URLs", () => {
     expect(buildGitlabPipelineJobsApiUrl(gitlabRemote, 99)).toBe(
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/pipelines/99/jobs?per_page=20",
     );
+    expect(buildGitlabRetryJobApiUrl(gitlabRemote, 802)).toBe(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/jobs/802/retry",
+    );
     expect(buildGitlabMergeRequestApprovalsApiUrl(gitlabRemote, 18)).toBe(
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/approvals",
     );
@@ -88,6 +93,60 @@ describe("GitLab merge request detail URLs", () => {
     expect(buildGitlabMergeRequestMergeApiUrl(gitlabRemote, 18)).toBe(
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/merge",
     );
+  });
+});
+
+describe("retryGitlabJob", () => {
+  it("retries a GitLab job and maps the updated job", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 802,
+          name: "test-windows",
+          stage: "test",
+          status: "pending",
+          duration: null,
+          web_url: "https://gitlab.com/team/subgroup/project/-/jobs/802",
+          started_at: null,
+          finished_at: null,
+        }),
+        { status: 201 },
+      ),
+    );
+
+    const job = await retryGitlabJob(
+      gitlabRemote,
+      802,
+      "glpat_secret",
+      fetchMock,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/jobs/802/retry",
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "PRIVATE-TOKEN": "glpat_secret",
+        },
+      },
+    );
+    expect(job).toEqual({
+      id: 802,
+      name: "test-windows",
+      stage: "test",
+      status: "pending",
+      duration: null,
+      url: "https://gitlab.com/team/subgroup/project/-/jobs/802",
+      startedAt: "",
+      finishedAt: "",
+    });
+  });
+
+  it("requires a GitLab token before retrying a job", async () => {
+    await expect(
+      retryGitlabJob(gitlabRemote, 802, " "),
+    ).rejects.toThrow("GitLab token is required");
   });
 });
 
