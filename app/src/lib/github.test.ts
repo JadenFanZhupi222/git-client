@@ -270,7 +270,7 @@ describe("fetchGithubPullRequests", () => {
 });
 
 describe("fetchGithubPullRequestDetails", () => {
-  it("loads pull request summary, reviews, and combined status", async () => {
+  it("loads pull request summary, reviews, combined status, and recent comments", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -320,6 +320,21 @@ describe("fetchGithubPullRequestDetails", () => {
           }),
           { status: 200 },
         ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              id: 301,
+              body: "Please re-run the failed check.",
+              html_url: "https://github.com/acme/project/pull/7#issuecomment-301",
+              user: { login: "reviewer-a" },
+              created_at: "2026-07-03T10:00:00Z",
+              updated_at: "2026-07-03T10:01:00Z",
+            },
+          ]),
+          { status: 200 },
+        ),
       );
 
     const detail = await fetchGithubPullRequestDetails(
@@ -342,6 +357,11 @@ describe("fetchGithubPullRequestDetails", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
       "https://api.github.com/repos/acme/project/commits/abc123/status",
+      expect.any(Object),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "https://api.github.com/repos/acme/project/issues/7/comments?per_page=20",
       expect.any(Object),
     );
     expect(detail).toEqual({
@@ -373,6 +393,16 @@ describe("fetchGithubPullRequestDetails", () => {
           { context: "lint", state: "failure", targetUrl: null },
         ],
       },
+      recentComments: [
+        {
+          id: 301,
+          body: "Please re-run the failed check.",
+          url: "https://github.com/acme/project/pull/7#issuecomment-301",
+          author: "reviewer-a",
+          createdAt: "2026-07-03T10:00:00Z",
+          updatedAt: "2026-07-03T10:01:00Z",
+        },
+      ],
     });
   });
 });

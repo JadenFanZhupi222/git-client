@@ -129,7 +129,7 @@ export function GithubPrPanel({
         onConfigureToken();
         return false;
       }
-      await createGithubPullRequestComment(
+      const comment = await createGithubPullRequestComment(
         remote,
         detail.number,
         body,
@@ -140,6 +140,7 @@ export function GithubPrPanel({
         [detail.number]: {
           ...detail,
           comments: detail.comments + 1,
+          recentComments: [...detail.recentComments, comment].slice(-20),
         },
       }));
       toast({ kind: "success", title: `Commented on PR #${detail.number}` });
@@ -334,6 +335,36 @@ function PullRequestDetailsView({
           ))}
         </div>
       )}
+      {detail.recentComments.length > 0 && (
+        <div className="grid gap-1.5 border-t border-line pt-2">
+          <div className="text-[10px] uppercase tracking-wide text-fg-subtle">
+            Recent comments
+          </div>
+          <div className="grid gap-1.5">
+            {detail.recentComments.slice(-3).map((comment) => (
+              <a
+                key={comment.id}
+                href={comment.url}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void openUrl(comment.url);
+                }}
+                className="rounded border border-line bg-elevated/60 px-2 py-1.5 text-left transition-colors hover:border-line-strong hover:bg-overlay"
+              >
+                <div className="flex items-center justify-between gap-2 text-[11px] text-fg-subtle">
+                  <span className="truncate">{comment.author ?? "unknown"}</span>
+                  <span className="shrink-0 font-mono">
+                    {formatCommentTime(comment.createdAt)}
+                  </span>
+                </div>
+                <p className="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-xs text-fg">
+                  {comment.body || "(empty comment)"}
+                </p>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="grid gap-1.5 border-t border-line pt-2">
         <label className="sr-only" htmlFor={`github-pr-comment-${detail.number}`}>
           New pull request comment
@@ -385,6 +416,16 @@ function reviewSummary(counts: Record<string, number>): string {
   if (approved || changes) return `${approved} approved / ${changes} changes`;
   const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
   return total ? `${total} reviews` : "none";
+}
+
+function formatCommentTime(value: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
 }
 
 function findGithubRemote(

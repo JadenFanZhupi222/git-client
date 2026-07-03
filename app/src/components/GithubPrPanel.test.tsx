@@ -93,6 +93,21 @@ describe("GithubPrPanel", () => {
       )
       .mockResolvedValueOnce(
         new Response(
+          JSON.stringify([
+            {
+              id: 201,
+              body: "Looks good after the retry.",
+              html_url: "https://github.com/team/project/pull/7#issuecomment-201",
+              user: { login: "reviewer-a" },
+              created_at: "2026-07-03T09:00:00Z",
+              updated_at: "2026-07-03T09:00:00Z",
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
           JSON.stringify({
             id: 301,
             body: "Please re-run the failed check.",
@@ -124,6 +139,8 @@ describe("GithubPrPanel", () => {
 
     expect(await screen.findByText("mergeable")).toBeInTheDocument();
     expect(screen.getByText("success")).toBeInTheDocument();
+    expect(screen.getByText("Looks good after the retry.")).toBeInTheDocument();
+    expect(screen.getByText("reviewer-a")).toBeInTheDocument();
 
     await userEvent.type(
       screen.getByLabelText("New pull request comment"),

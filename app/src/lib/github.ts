@@ -46,6 +46,7 @@ export interface GithubPullRequestDetails extends GithubPullRequestSummary {
   deletions: number;
   reviews: GithubPullReviewSummary[];
   combinedStatus: GithubCombinedStatusSummary | null;
+  recentComments: GithubPullRequestComment[];
 }
 
 export interface CreateGithubPullRequestInput {
@@ -140,8 +141,10 @@ export function buildGithubCombinedStatusApiUrl(
 export function buildGithubIssueCommentsApiUrl(
   remote: HostingRemote,
   issueNumber: number,
+  perPage?: number,
 ): string {
-  return `${githubRepoApiBase(remote)}/issues/${issueNumber}/comments`;
+  const url = `${githubRepoApiBase(remote)}/issues/${issueNumber}/comments`;
+  return perPage ? `${url}?per_page=${perPage}` : url;
 }
 
 export async function fetchGithubPullRequests(
@@ -266,6 +269,17 @@ export async function fetchGithubPullRequestDetails(
     );
   }
 
+  const commentsResponse = await fetcher(
+    buildGithubIssueCommentsApiUrl(remote, pullNumber, 20),
+    { headers: githubHeaders(token) },
+  );
+  if (!commentsResponse.ok) {
+    throw new Error(githubApiErrorMessage(commentsResponse.status));
+  }
+  const recentComments = (
+    (await commentsResponse.json()) as GithubIssueCommentResponse[]
+  ).map(toPullRequestComment);
+
   return {
     ...toPullRequestSummary(pull),
     mergeable: pull.mergeable ?? null,
@@ -281,6 +295,7 @@ export async function fetchGithubPullRequestDetails(
       author: review.user?.login ?? null,
     })),
     combinedStatus,
+    recentComments,
   };
 }
 
