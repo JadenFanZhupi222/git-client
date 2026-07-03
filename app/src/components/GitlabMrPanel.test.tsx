@@ -340,4 +340,133 @@ describe("GitlabMrPanel", () => {
     expect(await screen.findByText("!7 Updated MR title")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("merges a ready merge request with squash enabled", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              iid: 9,
+              title: "Merge GitLab branch",
+              web_url: "https://gitlab.com/team/project/-/merge_requests/9",
+              author: { username: "dev-a" },
+              source_branch: "feature/merge",
+              target_branch: "main",
+              detailed_merge_status: "mergeable",
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            iid: 9,
+            title: "Merge GitLab branch",
+            web_url: "https://gitlab.com/team/project/-/merge_requests/9",
+            author: { username: "dev-a" },
+            source_branch: "feature/merge",
+            target_branch: "main",
+            merge_status: "can_be_merged",
+            detailed_merge_status: "mergeable",
+            changes_count: "2",
+            user_notes_count: 0,
+            blocking_discussions_resolved: true,
+            has_conflicts: false,
+            upvotes: 0,
+            downvotes: 0,
+            sha: "def456",
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              id: 77,
+              status: "success",
+              ref: "refs/merge-requests/9/head",
+              sha: "def456",
+              web_url: "https://gitlab.com/team/project/-/pipelines/77",
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            approvals_required: 1,
+            approvals_left: 0,
+            approved: true,
+            approved_by: [{ user: { username: "reviewer-a" } }],
+            user_has_approved: false,
+            user_can_approve: false,
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            iid: 9,
+            title: "Merge GitLab branch",
+            web_url: "https://gitlab.com/team/project/-/merge_requests/9",
+            author: { username: "dev-a" },
+            source_branch: "feature/merge",
+            target_branch: "main",
+            merge_status: "can_be_merged",
+            detailed_merge_status: "not_open",
+          }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ToastProvider>
+        <GitlabMrPanel
+          remotes={remotes}
+          branch="feature/merge"
+          preferredRemote="origin"
+          onClose={vi.fn()}
+          onConfigureToken={vi.fn()}
+        />
+      </ToastProvider>,
+    );
+
+    expect(await screen.findByText("!9 Merge GitLab branch")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Details" }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText("mergeable").length).toBeGreaterThanOrEqual(1);
+    });
+
+    await userEvent.click(screen.getByLabelText("Squash commits"));
+    await userEvent.click(screen.getByRole("button", { name: "Merge" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://gitlab.com/api/v4/projects/team%2Fproject/merge_requests/9/merge",
+        {
+          method: "PUT",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            "PRIVATE-TOKEN": "glpat_secret",
+          },
+          body: JSON.stringify({
+            sha: "def456",
+            squash: true,
+          }),
+        },
+      );
+    });
+  });
 });

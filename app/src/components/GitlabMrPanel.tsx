@@ -6,6 +6,7 @@ import {
   createGitlabMergeRequestNote,
   fetchGitlabMergeRequestDetails,
   fetchGitlabMergeRequests,
+  mergeGitlabMergeRequest,
   type GitlabMergeRequestDetails,
   type GitlabMergeRequestSummary,
   unapproveGitlabMergeRequest,
@@ -42,6 +43,7 @@ export function GitlabMrPanel({
     type: "approve" | "unapprove";
   } | null>(null);
   const [creatingNote, setCreatingNote] = useState<number | null>(null);
+  const [mergingMr, setMergingMr] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -219,6 +221,38 @@ export function GitlabMrPanel({
     }
   }
 
+  async function mergeMr(detail: GitlabMergeRequestDetails, squash: boolean) {
+    if (!remote || mergingMr === detail.iid) return;
+    setMergingMr(detail.iid);
+    try {
+      const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
+      if (!token?.trim()) {
+        toast({ kind: "error", title: "GitLab token is required" });
+        onConfigureToken();
+        return;
+      }
+      const merged = await mergeGitlabMergeRequest(
+        remote,
+        detail.iid,
+        { squash, headSha: detail.headSha },
+        token,
+      );
+      setMrs((current) =>
+        current.filter((mr) => mr.iid !== detail.iid),
+      );
+      setDetailByIid((current) => {
+        const next = { ...current };
+        delete next[detail.iid];
+        return next;
+      });
+      toast({ kind: "success", title: `Merged MR !${merged.iid}` });
+    } catch (e) {
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+    } finally {
+      setMergingMr(null);
+    }
+  }
+
   return (
     <div
       className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
@@ -317,6 +351,8 @@ export function GitlabMrPanel({
                       onUnapprove={unapproveMr}
                       creatingNote={creatingNote === mr.iid}
                       onCreateNote={createMrNote}
+                      mergingMr={mergingMr === mr.iid}
+                      onMerge={mergeMr}
                     />
                   )}
                 </li>
@@ -360,6 +396,8 @@ function MergeRequestDetailsView({
   onUnapprove,
   creatingNote,
   onCreateNote,
+  mergingMr,
+  onMerge,
 }: {
   detail: GitlabMergeRequestDetails;
   approvalAction: "approve" | "unapprove" | null;
@@ -370,8 +408,11 @@ function MergeRequestDetailsView({
     detail: GitlabMergeRequestDetails,
     body: string,
   ) => Promise<boolean>;
+  mergingMr: boolean;
+  onMerge: (detail: GitlabMergeRequestDetails, squash: boolean) => void;
 }) {
   const [noteBody, setNoteBody] = useState("");
+  const [squash, setSquash] = useState(false);
   const trimmedNoteBody = noteBody.trim();
 
   async function submitNote() {
@@ -379,6 +420,8 @@ function MergeRequestDetailsView({
     const created = await onCreateNote(detail, trimmedNoteBody);
     if (created) setNoteBody("");
   }
+
+  const mergeBlockedReason = gitlabMergeBlockedReason(detail);
 
   return (
     <div className="mt-3 grid gap-2 rounded-md border border-line bg-canvas/60 p-3 text-xs">
@@ -427,6 +470,35 @@ function MergeRequestDetailsView({
           ) : null}
         </div>
       )}
+      <div className="grid gap-1.5 border-t border-line pt-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <label
+            className="inline-flex items-center gap-1.5 text-xs text-fg-muted"
+            htmlFor={`gitlab-mr-squash-${detail.iid}`}
+          >
+            <input
+              id={`gitlab-mr-squash-${detail.iid}`}
+              type="checkbox"
+              checked={squash}
+              onChange={(event) => setSquash(event.currentTarget.checked)}
+              className="h-3.5 w-3.5 accent-accent"
+            />
+            Squash commits
+          </label>
+          <button
+            onClick={() => onMerge(detail, squash)}
+            disabled={Boolean(mergeBlockedReason) || mergingMr}
+            className="rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
+          >
+            {mergingMr ? "Merging" : "Merge"}
+          </button>
+          {mergeBlockedReason && (
+            <span className="text-[11px] text-fg-subtle">
+              {mergeBlockedReason}
+            </span>
+          )}
+        </div>
+      </div>
       {detail.notes.length > 0 && (
         <div className="grid gap-1.5 border-t border-line pt-2">
           <div className="text-[10px] uppercase tracking-wide text-fg-subtle">
@@ -536,6 +608,25 @@ function approvalLabel(detail: GitlabMergeRequestDetails): string {
     0,
   );
   return `${approvedCount}/${approvals.approvalsRequired} approved`;
+}
+
+function gitlabMergeBlockedReason(
+  detail: GitlabMergeRequestDetails,
+): string | null {
+  if (!detail.headSha) return "missing head SHA";
+  if (detail.hasConflicts) return "conflicts";
+  if (detail.blockingDiscussionsResolved === false) return "discussions blocked";
+  if (detail.latestPipeline && detail.latestPipeline.status !== "success") {
+    return `pipeline ${detail.latestPipeline.status}`;
+  }
+  if (detail.approvals && detail.approvals.approvalsLeft > 0) {
+    return `${detail.approvals.approvalsLeft} approvals left`;
+  }
+  const mergeStatus = detail.detailedMergeStatus || detail.mergeStatus;
+  if (!["mergeable", "can_be_merged"].includes(mergeStatus)) {
+    return mergeStatus || "not mergeable";
+  }
+  return null;
 }
 
 function formatGitlabDate(value: string): string {

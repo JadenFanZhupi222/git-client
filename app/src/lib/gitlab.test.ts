@@ -9,6 +9,7 @@ import {
   buildGitlabMergeRequestNotesApiUrl,
   buildGitlabMergeRequestPipelinesApiUrl,
   buildGitlabMergeRequestDiscussionsApiUrl,
+  buildGitlabMergeRequestMergeApiUrl,
   buildGitlabMergeRequestUnapproveApiUrl,
   buildGitlabMergeRequestsApiUrl,
   createGitlabMergeRequest,
@@ -16,6 +17,7 @@ import {
   fetchGitlabMergeRequestDetails,
   fetchGitlabMergeRequests,
   gitlabApiErrorMessage,
+  mergeGitlabMergeRequest,
   unapproveGitlabMergeRequest,
 } from "./gitlab";
 import type { HostingRemote } from "./hosting";
@@ -79,6 +81,86 @@ describe("GitLab merge request detail URLs", () => {
     expect(buildGitlabMergeRequestUnapproveApiUrl(gitlabRemote, 18)).toBe(
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/unapprove",
     );
+    expect(buildGitlabMergeRequestMergeApiUrl(gitlabRemote, 18)).toBe(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/merge",
+    );
+  });
+});
+
+describe("mergeGitlabMergeRequest", () => {
+  it("merges a merge request with squash and the expected source sha", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          iid: 18,
+          title: "Add GitLab merge",
+          web_url:
+            "https://gitlab.com/team/subgroup/project/-/merge_requests/18",
+          state: "merged",
+          author: { username: "dev-a" },
+          source_branch: "feature/gitlab-merge",
+          target_branch: "main",
+          merge_status: "can_be_merged",
+          detailed_merge_status: "not_open",
+          sha: "def456",
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await mergeGitlabMergeRequest(
+      gitlabRemote,
+      18,
+      { squash: true, headSha: "def456" },
+      "glpat_secret",
+      fetchMock,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/merge",
+      {
+        method: "PUT",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "PRIVATE-TOKEN": "glpat_secret",
+        },
+        body: JSON.stringify({
+          sha: "def456",
+          squash: true,
+        }),
+      },
+    );
+    expect(result).toEqual({
+      iid: 18,
+      title: "Add GitLab merge",
+      url: "https://gitlab.com/team/subgroup/project/-/merge_requests/18",
+      draft: false,
+      author: "dev-a",
+      sourceBranch: "feature/gitlab-merge",
+      targetBranch: "main",
+      mergeStatus: "can_be_merged",
+      detailedMergeStatus: "not_open",
+    });
+  });
+
+  it("requires token and head sha before merging", async () => {
+    await expect(
+      mergeGitlabMergeRequest(
+        gitlabRemote,
+        18,
+        { squash: false, headSha: "def456" },
+        " ",
+      ),
+    ).rejects.toThrow("GitLab token is required");
+    await expect(
+      mergeGitlabMergeRequest(
+        gitlabRemote,
+        18,
+        { squash: false, headSha: " " },
+        "glpat_secret",
+      ),
+    ).rejects.toThrow("MR head SHA is required");
   });
 });
 
@@ -260,6 +342,7 @@ describe("fetchGitlabMergeRequestDetails", () => {
             has_conflicts: false,
             upvotes: 2,
             downvotes: 1,
+            sha: "def456",
           }),
           { status: 200 },
         ),
@@ -420,6 +503,7 @@ describe("fetchGitlabMergeRequestDetails", () => {
       targetBranch: "main",
       mergeStatus: "can_be_merged",
       detailedMergeStatus: "mergeable",
+      headSha: "def456",
       changesCount: "12",
       userNotesCount: 5,
       blockingDiscussionsResolved: false,

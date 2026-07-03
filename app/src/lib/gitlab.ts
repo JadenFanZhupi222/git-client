@@ -52,6 +52,7 @@ export interface GitlabMergeRequestDiscussion {
 
 export interface GitlabMergeRequestDetails
   extends GitlabMergeRequestSummary {
+  headSha: string;
   changesCount: string;
   userNotesCount: number;
   blockingDiscussionsResolved: boolean | null;
@@ -72,6 +73,11 @@ export interface CreateGitlabMergeRequestInput {
   draft: boolean;
 }
 
+export interface MergeGitlabMergeRequestInput {
+  squash: boolean;
+  headSha: string;
+}
+
 interface GitlabMergeRequestResponse {
   iid: number;
   title: string;
@@ -89,6 +95,7 @@ interface GitlabMergeRequestResponse {
   has_conflicts?: boolean | null;
   upvotes?: number | null;
   downvotes?: number | null;
+  sha?: string | null;
 }
 
 interface GitlabPipelineResponse {
@@ -229,6 +236,13 @@ export function buildGitlabMergeRequestUnapproveApiUrl(
   return `${buildGitlabMergeRequestApiUrl(remote, iid)}/unapprove`;
 }
 
+export function buildGitlabMergeRequestMergeApiUrl(
+  remote: HostingRemote,
+  iid: number,
+): string {
+  return `${buildGitlabMergeRequestApiUrl(remote, iid)}/merge`;
+}
+
 export async function fetchGitlabMergeRequests(
   remote: HostingRemote,
   branch: string | null,
@@ -335,6 +349,7 @@ export async function fetchGitlabMergeRequestDetails(
 
   return {
     ...toMergeRequestSummary(detail),
+    headSha: detail.sha ?? "",
     changesCount: detail.changes_count ?? "",
     userNotesCount: detail.user_notes_count ?? 0,
     blockingDiscussionsResolved:
@@ -347,6 +362,41 @@ export async function fetchGitlabMergeRequestDetails(
     notes,
     discussions,
   };
+}
+
+export async function mergeGitlabMergeRequest(
+  remote: HostingRemote,
+  iid: number,
+  input: MergeGitlabMergeRequestInput,
+  token: string | null,
+  fetcher: typeof fetch = fetch,
+): Promise<GitlabMergeRequestSummary> {
+  const trimmedToken = token?.trim();
+  if (!trimmedToken) throw new Error("GitLab token is required");
+  const headSha = input.headSha.trim();
+  if (!headSha) throw new Error("MR head SHA is required");
+
+  const response = await fetcher(
+    buildGitlabMergeRequestMergeApiUrl(remote, iid),
+    {
+      method: "PUT",
+      headers: {
+        ...gitlabHeaders(trimmedToken),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sha: headSha,
+        squash: input.squash,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(gitlabApiErrorMessage(response.status));
+  }
+
+  return toMergeRequestSummary(
+    (await response.json()) as GitlabMergeRequestResponse,
+  );
 }
 
 export async function createGitlabMergeRequestNote(
