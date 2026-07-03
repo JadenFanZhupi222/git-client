@@ -20,6 +20,17 @@ export interface GitlabPipelineSummary {
   url: string | null;
 }
 
+export interface GitlabPipelineJobSummary {
+  id: number;
+  name: string;
+  stage: string;
+  status: string;
+  duration: number | null;
+  url: string | null;
+  startedAt: string;
+  finishedAt: string;
+}
+
 export interface GitlabApprovalSummary {
   approvalsRequired: number;
   approvalsLeft: number;
@@ -60,6 +71,7 @@ export interface GitlabMergeRequestDetails
   upvotes: number;
   downvotes: number;
   latestPipeline: GitlabPipelineSummary | null;
+  pipelineJobs: GitlabPipelineJobSummary[];
   approvals: GitlabApprovalSummary | null;
   notes: GitlabMergeRequestNote[];
   discussions: GitlabMergeRequestDiscussion[];
@@ -104,6 +116,17 @@ interface GitlabPipelineResponse {
   ref?: string | null;
   sha?: string | null;
   web_url?: string | null;
+}
+
+interface GitlabPipelineJobResponse {
+  id: number;
+  name?: string | null;
+  stage?: string | null;
+  status?: string | null;
+  duration?: number | null;
+  web_url?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
 }
 
 interface GitlabApprovalsResponse {
@@ -186,6 +209,15 @@ export function buildGitlabMergeRequestPipelinesApiUrl(
 ): string {
   const params = new URLSearchParams({ per_page: "1" });
   return `${buildGitlabMergeRequestApiUrl(remote, iid)}/pipelines?${params.toString()}`;
+}
+
+export function buildGitlabPipelineJobsApiUrl(
+  remote: HostingRemote,
+  pipelineId: number,
+): string {
+  const projectPath = `${remote.owner}/${remote.repo}`;
+  const params = new URLSearchParams({ per_page: "20" });
+  return `https://gitlab.com/api/v4/projects/${encodeURIComponent(projectPath)}/pipelines/${pipelineId}/jobs?${params.toString()}`;
 }
 
 export function buildGitlabMergeRequestApprovalsApiUrl(
@@ -311,6 +343,20 @@ export async function fetchGitlabMergeRequestDetails(
     throw new Error(gitlabApiErrorMessage(pipelinesResponse.status));
   }
   const pipelines = (await pipelinesResponse.json()) as GitlabPipelineResponse[];
+  const latestPipeline = pipelines[0] ? toPipelineSummary(pipelines[0]) : null;
+
+  let pipelineJobs: GitlabPipelineJobSummary[] = [];
+  if (latestPipeline) {
+    const jobsResponse = await fetcher(
+      buildGitlabPipelineJobsApiUrl(remote, latestPipeline.id),
+      { headers: gitlabHeaders(token) },
+    );
+    if (jobsResponse.ok) {
+      pipelineJobs = ((await jobsResponse.json()) as GitlabPipelineJobResponse[]).map(
+        toPipelineJobSummary,
+      );
+    }
+  }
 
   let approvals: GitlabApprovalSummary | null = null;
   const approvalsResponse = await fetcher(
@@ -357,7 +403,8 @@ export async function fetchGitlabMergeRequestDetails(
     hasConflicts: detail.has_conflicts ?? false,
     upvotes: detail.upvotes ?? 0,
     downvotes: detail.downvotes ?? 0,
-    latestPipeline: pipelines[0] ? toPipelineSummary(pipelines[0]) : null,
+    latestPipeline,
+    pipelineJobs,
     approvals,
     notes,
     discussions,
@@ -548,6 +595,21 @@ function toPipelineSummary(
     ref: pipeline.ref ?? "",
     sha: pipeline.sha ?? "",
     url: pipeline.web_url ?? null,
+  };
+}
+
+function toPipelineJobSummary(
+  job: GitlabPipelineJobResponse,
+): GitlabPipelineJobSummary {
+  return {
+    id: job.id,
+    name: job.name ?? "",
+    stage: job.stage ?? "",
+    status: job.status ?? "",
+    duration: job.duration ?? null,
+    url: job.web_url ?? null,
+    startedAt: job.started_at ?? "",
+    finishedAt: job.finished_at ?? "",
   };
 }
 

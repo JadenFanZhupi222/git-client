@@ -470,6 +470,41 @@ function MergeRequestDetailsView({
           ) : null}
         </div>
       )}
+      {detail.pipelineJobs.length > 0 && (
+        <div className="grid gap-1.5 border-t border-line pt-2">
+          <div className="text-[10px] uppercase tracking-wide text-fg-subtle">
+            Pipeline jobs
+          </div>
+          <div className="grid gap-1.5">
+            {detail.pipelineJobs.slice(0, 6).map((job) => (
+              <a
+                key={job.id}
+                href={job.url ?? ""}
+                onClick={(event) => {
+                  event.preventDefault();
+                  if (job.url) void openUrl(job.url);
+                }}
+                className="rounded border border-line bg-elevated/60 px-2 py-1.5 text-left transition-colors hover:border-line-strong hover:bg-overlay"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-medium text-fg">
+                    {job.name || "unnamed job"}
+                  </span>
+                  <span className="shrink-0 font-mono text-[10px] text-fg-muted">
+                    {job.status}
+                  </span>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-fg-subtle">
+                  {job.stage && <span>{job.stage}</span>}
+                  {job.duration !== null && (
+                    <span>{formatJobDuration(job.duration)}</span>
+                  )}
+                </div>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="grid gap-1.5 border-t border-line pt-2">
         <div className="flex flex-wrap items-center gap-2">
           <label
@@ -634,6 +669,14 @@ function formatGitlabDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
+}
+
+function formatJobDuration(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return "";
+  if (value < 60) return `${Math.round(value)}s`;
+  const minutes = Math.floor(value / 60);
+  const seconds = Math.round(value % 60);
+  return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
 function gitlabDiscussionLocation(

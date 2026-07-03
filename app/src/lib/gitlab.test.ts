@@ -7,6 +7,7 @@ import {
   buildGitlabMergeRequestApiUrl,
   buildGitlabMergeRequestNoteCreateApiUrl,
   buildGitlabMergeRequestNotesApiUrl,
+  buildGitlabPipelineJobsApiUrl,
   buildGitlabMergeRequestPipelinesApiUrl,
   buildGitlabMergeRequestDiscussionsApiUrl,
   buildGitlabMergeRequestMergeApiUrl,
@@ -62,6 +63,9 @@ describe("GitLab merge request detail URLs", () => {
     );
     expect(buildGitlabMergeRequestPipelinesApiUrl(gitlabRemote, 18)).toBe(
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/pipelines?per_page=1",
+    );
+    expect(buildGitlabPipelineJobsApiUrl(gitlabRemote, 99)).toBe(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/pipelines/99/jobs?per_page=20",
     );
     expect(buildGitlabMergeRequestApprovalsApiUrl(gitlabRemote, 18)).toBe(
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/approvals",
@@ -363,6 +367,35 @@ describe("fetchGitlabMergeRequestDetails", () => {
       )
       .mockResolvedValueOnce(
         new Response(
+          JSON.stringify([
+            {
+              id: 801,
+              name: "build-linux",
+              stage: "build",
+              status: "success",
+              duration: 125.4,
+              web_url:
+                "https://gitlab.com/team/subgroup/project/-/jobs/801",
+              started_at: "2026-07-03T10:00:00.000Z",
+              finished_at: "2026-07-03T10:02:05.000Z",
+            },
+            {
+              id: 802,
+              name: "test-windows",
+              stage: "test",
+              status: "failed",
+              duration: 89,
+              web_url:
+                "https://gitlab.com/team/subgroup/project/-/jobs/802",
+              started_at: "2026-07-03T10:01:00.000Z",
+              finished_at: "2026-07-03T10:02:29.000Z",
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
           JSON.stringify({
             approvals_required: 2,
             approvals_left: 1,
@@ -465,7 +498,7 @@ describe("fetchGitlabMergeRequestDetails", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       3,
-      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/approvals",
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/pipelines/99/jobs?per_page=20",
       {
         headers: {
           Accept: "application/json",
@@ -475,7 +508,7 @@ describe("fetchGitlabMergeRequestDetails", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       4,
-      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/notes?sort=desc&order_by=updated_at&per_page=5",
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/approvals",
       {
         headers: {
           Accept: "application/json",
@@ -485,6 +518,16 @@ describe("fetchGitlabMergeRequestDetails", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       5,
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/notes?sort=desc&order_by=updated_at&per_page=5",
+      {
+        headers: {
+          Accept: "application/json",
+          "PRIVATE-TOKEN": "glpat_secret",
+        },
+      },
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      6,
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/discussions?per_page=20",
       {
         headers: {
@@ -517,6 +560,28 @@ describe("fetchGitlabMergeRequestDetails", () => {
         sha: "abc123",
         url: "https://gitlab.com/team/subgroup/project/-/pipelines/99",
       },
+      pipelineJobs: [
+        {
+          id: 801,
+          name: "build-linux",
+          stage: "build",
+          status: "success",
+          duration: 125.4,
+          url: "https://gitlab.com/team/subgroup/project/-/jobs/801",
+          startedAt: "2026-07-03T10:00:00.000Z",
+          finishedAt: "2026-07-03T10:02:05.000Z",
+        },
+        {
+          id: 802,
+          name: "test-windows",
+          stage: "test",
+          status: "failed",
+          duration: 89,
+          url: "https://gitlab.com/team/subgroup/project/-/jobs/802",
+          startedAt: "2026-07-03T10:01:00.000Z",
+          finishedAt: "2026-07-03T10:02:29.000Z",
+        },
+      ],
       approvals: {
         approvalsRequired: 2,
         approvalsLeft: 1,

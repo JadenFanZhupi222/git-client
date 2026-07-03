@@ -86,6 +86,33 @@ describe("GitlabMrPanel", () => {
       )
       .mockResolvedValueOnce(
         new Response(
+          JSON.stringify([
+            {
+              id: 801,
+              name: "build-linux",
+              stage: "build",
+              status: "success",
+              duration: 125.4,
+              web_url: "https://gitlab.com/team/project/-/jobs/801",
+              started_at: "2026-07-03T10:00:00.000Z",
+              finished_at: "2026-07-03T10:02:05.000Z",
+            },
+            {
+              id: 802,
+              name: "test-windows",
+              stage: "test",
+              status: "failed",
+              duration: 89,
+              web_url: "https://gitlab.com/team/project/-/jobs/802",
+              started_at: "2026-07-03T10:01:00.000Z",
+              finished_at: "2026-07-03T10:02:29.000Z",
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
           JSON.stringify({
             approvals_required: 2,
             approvals_left: 1,
@@ -213,7 +240,10 @@ describe("GitlabMrPanel", () => {
     expect(
       await screen.findByText("Pipeline"),
     ).toBeInTheDocument();
-    expect(screen.getByText("success")).toBeInTheDocument();
+    expect(screen.getAllByText("success").length).toBeGreaterThan(0);
+    expect(screen.getByText("build-linux")).toBeInTheDocument();
+    expect(screen.getByText("test-windows")).toBeInTheDocument();
+    expect(screen.getByText("failed")).toBeInTheDocument();
     expect(screen.getByText("mergeable")).toBeInTheDocument();
     expect(screen.getByText("8 changes")).toBeInTheDocument();
     expect(screen.getByText("3 notes")).toBeInTheDocument();
@@ -396,6 +426,7 @@ describe("GitlabMrPanel", () => {
           { status: 200 },
         ),
       )
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
