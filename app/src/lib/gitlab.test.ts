@@ -6,11 +6,13 @@ import {
   buildGitlabMergeRequestApprovalsApiUrl,
   buildGitlabMergeRequestApiUrl,
   buildGitlabMergeRequestPipelinesApiUrl,
+  buildGitlabMergeRequestUnapproveApiUrl,
   buildGitlabMergeRequestsApiUrl,
   createGitlabMergeRequest,
   fetchGitlabMergeRequestDetails,
   fetchGitlabMergeRequests,
   gitlabApiErrorMessage,
+  unapproveGitlabMergeRequest,
 } from "./gitlab";
 import type { HostingRemote } from "./hosting";
 
@@ -61,6 +63,9 @@ describe("GitLab merge request detail URLs", () => {
     expect(buildGitlabMergeRequestApproveApiUrl(gitlabRemote, 18)).toBe(
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/approve",
     );
+    expect(buildGitlabMergeRequestUnapproveApiUrl(gitlabRemote, 18)).toBe(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/unapprove",
+    );
   });
 });
 
@@ -107,6 +112,50 @@ describe("approveGitlabMergeRequest", () => {
       approvedBy: ["reviewer-a", "me"],
       userHasApproved: true,
       userCanApprove: false,
+    });
+  });
+});
+
+describe("unapproveGitlabMergeRequest", () => {
+  it("posts an unapproval and maps the updated approval summary", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          approvals_required: 2,
+          approvals_left: 1,
+          approved: false,
+          approved_by: [{ user: { username: "reviewer-a" } }],
+          user_has_approved: false,
+          user_can_approve: true,
+        }),
+        { status: 201 },
+      ),
+    );
+
+    const approval = await unapproveGitlabMergeRequest(
+      gitlabRemote,
+      18,
+      "glpat_secret",
+      fetchMock,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/unapprove",
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "PRIVATE-TOKEN": "glpat_secret",
+        },
+      },
+    );
+    expect(approval).toEqual({
+      approvalsRequired: 2,
+      approvalsLeft: 1,
+      approved: false,
+      approvedBy: ["reviewer-a"],
+      userHasApproved: false,
+      userCanApprove: true,
     });
   });
 });

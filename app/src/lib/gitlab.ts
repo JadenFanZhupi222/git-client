@@ -138,6 +138,13 @@ export function buildGitlabMergeRequestApproveApiUrl(
   return `${buildGitlabMergeRequestApiUrl(remote, iid)}/approve`;
 }
 
+export function buildGitlabMergeRequestUnapproveApiUrl(
+  remote: HostingRemote,
+  iid: number,
+): string {
+  return `${buildGitlabMergeRequestApiUrl(remote, iid)}/unapprove`;
+}
+
 export async function fetchGitlabMergeRequests(
   remote: HostingRemote,
   branch: string | null,
@@ -243,6 +250,29 @@ export async function approveGitlabMergeRequest(
 
   const response = await fetcher(
     buildGitlabMergeRequestApproveApiUrl(remote, iid),
+    {
+      method: "POST",
+      headers: gitlabHeaders(trimmedToken),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(gitlabApiErrorMessage(response.status));
+  }
+
+  return toApprovalSummary((await response.json()) as GitlabApprovalsResponse);
+}
+
+export async function unapproveGitlabMergeRequest(
+  remote: HostingRemote,
+  iid: number,
+  token: string | null,
+  fetcher: typeof fetch = fetch,
+): Promise<GitlabApprovalSummary> {
+  const trimmedToken = token?.trim();
+  if (!trimmedToken) throw new Error("GitLab token is required");
+
+  const response = await fetcher(
+    buildGitlabMergeRequestUnapproveApiUrl(remote, iid),
     {
       method: "POST",
       headers: gitlabHeaders(trimmedToken),

@@ -7,6 +7,7 @@ import {
   fetchGitlabMergeRequests,
   type GitlabMergeRequestDetails,
   type GitlabMergeRequestSummary,
+  unapproveGitlabMergeRequest,
 } from "../lib/gitlab";
 import {
   detectHostingRemote,
@@ -35,7 +36,10 @@ export function GitlabMrPanel({
     Record<number, GitlabMergeRequestDetails>
   >({});
   const [detailLoading, setDetailLoading] = useState<number | null>(null);
-  const [approving, setApproving] = useState<number | null>(null);
+  const [approvalAction, setApprovalAction] = useState<{
+    iid: number;
+    type: "approve" | "unapprove";
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -117,8 +121,8 @@ export function GitlabMrPanel({
   }
 
   async function approveMr(detail: GitlabMergeRequestDetails) {
-    if (!remote || approving === detail.iid) return;
-    setApproving(detail.iid);
+    if (!remote || approvalAction?.iid === detail.iid) return;
+    setApprovalAction({ iid: detail.iid, type: "approve" });
     try {
       const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
       if (!token?.trim()) {
@@ -142,7 +146,37 @@ export function GitlabMrPanel({
     } catch (e) {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
-      setApproving(null);
+      setApprovalAction(null);
+    }
+  }
+
+  async function unapproveMr(detail: GitlabMergeRequestDetails) {
+    if (!remote || approvalAction?.iid === detail.iid) return;
+    setApprovalAction({ iid: detail.iid, type: "unapprove" });
+    try {
+      const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
+      if (!token?.trim()) {
+        toast({ kind: "error", title: "GitLab token is required" });
+        onConfigureToken();
+        return;
+      }
+      const approvals = await unapproveGitlabMergeRequest(
+        remote,
+        detail.iid,
+        token,
+      );
+      setDetailByIid((current) => ({
+        ...current,
+        [detail.iid]: {
+          ...detail,
+          approvals,
+        },
+      }));
+      toast({ kind: "success", title: `Unapproved MR !${detail.iid}` });
+    } catch (e) {
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+    } finally {
+      setApprovalAction(null);
     }
   }
 
@@ -235,8 +269,13 @@ export function GitlabMrPanel({
                   {detailByIid[mr.iid] && (
                     <MergeRequestDetailsView
                       detail={detailByIid[mr.iid]}
-                      approving={approving === mr.iid}
+                      approvalAction={
+                        approvalAction?.iid === mr.iid
+                          ? approvalAction.type
+                          : null
+                      }
                       onApprove={approveMr}
+                      onUnapprove={unapproveMr}
                     />
                   )}
                 </li>
@@ -275,12 +314,14 @@ export function GitlabMrPanel({
 
 function MergeRequestDetailsView({
   detail,
-  approving,
+  approvalAction,
   onApprove,
+  onUnapprove,
 }: {
   detail: GitlabMergeRequestDetails;
-  approving: boolean;
+  approvalAction: "approve" | "unapprove" | null;
   onApprove: (detail: GitlabMergeRequestDetails) => void;
+  onUnapprove: (detail: GitlabMergeRequestDetails) => void;
 }) {
   return (
     <div className="mt-3 grid gap-2 rounded-md border border-line bg-canvas/60 p-3 text-xs">
@@ -308,15 +349,25 @@ function MergeRequestDetailsView({
           <span>you can approve</span>
         )}
       </div>
-      {detail.approvals?.userCanApprove && !detail.approvals.userHasApproved && (
+      {detail.approvals && (
         <div className="flex justify-end">
-          <button
-            onClick={() => onApprove(detail)}
-            disabled={approving}
-            className="rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
-          >
-            {approving ? "Approving" : "Approve"}
-          </button>
+          {detail.approvals.userHasApproved ? (
+            <button
+              onClick={() => onUnapprove(detail)}
+              disabled={approvalAction !== null}
+              className="rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
+            >
+              {approvalAction === "unapprove" ? "Unapproving" : "Unapprove"}
+            </button>
+          ) : detail.approvals.userCanApprove ? (
+            <button
+              onClick={() => onApprove(detail)}
+              disabled={approvalAction !== null}
+              className="rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
+            >
+              {approvalAction === "approve" ? "Approving" : "Approve"}
+            </button>
+          ) : null}
         </div>
       )}
       {detail.latestPipeline && (
