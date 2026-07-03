@@ -52,35 +52,36 @@ export function GitlabMrPanel({
 
   useEffect(() => {
     let alive = true;
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        if (!remote || !branch) {
-          setMrs([]);
-          setDetailByIid({});
-          setError(
-            branch ? "当前仓库没有 GitLab 远程地址" : "当前仓库还没有本地分支",
-          );
-          return;
-        }
-        const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
-        const next = await fetchGitlabMergeRequests(remote, branch, token);
-        if (alive) {
-          setMrs(next);
-          setDetailByIid({});
-        }
-      } catch (e) {
-        if (alive) setError((e as IpcError).message ?? String(e));
-      } finally {
-        if (alive) setLoading(false);
-      }
-    }
-    load();
+    loadList(() => alive);
     return () => {
       alive = false;
     };
   }, [remote, branch]);
+
+  async function loadList(isAlive: () => boolean = () => true) {
+    setLoading(true);
+    setError(null);
+    try {
+      if (!remote || !branch) {
+        setMrs([]);
+        setDetailByIid({});
+        setError(
+          branch ? "当前仓库没有 GitLab 远程地址" : "当前仓库还没有本地分支",
+        );
+        return;
+      }
+      const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
+      const next = await fetchGitlabMergeRequests(remote, branch, token);
+      if (isAlive()) {
+        setMrs(next);
+        setDetailByIid({});
+      }
+    } catch (e) {
+      if (isAlive()) setError((e as IpcError).message ?? String(e));
+    } finally {
+      if (isAlive()) setLoading(false);
+    }
+  }
 
   async function openMr(url: string) {
     try {
@@ -209,12 +210,21 @@ export function GitlabMrPanel({
         </div>
 
         <div className="flex justify-between gap-2 border-t border-line px-4 py-3">
-          <button
-            onClick={onConfigureToken}
-            className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
-          >
-            设置 token
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={onConfigureToken}
+              className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
+            >
+              设置 token
+            </button>
+            <button
+              onClick={() => loadList()}
+              disabled={loading}
+              className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
+            >
+              Refresh
+            </button>
+          </div>
           <button
             onClick={onClose}
             className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg"

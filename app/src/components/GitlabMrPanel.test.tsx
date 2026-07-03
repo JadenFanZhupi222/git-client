@@ -132,4 +132,59 @@ describe("GitlabMrPanel", () => {
     expect(screen.getByText("1/2 approved")).toBeInTheDocument();
     expect(screen.getByText("reviewer-a")).toBeInTheDocument();
   });
+
+  it("refreshes merge request results", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              iid: 7,
+              title: "Old MR title",
+              web_url: "https://gitlab.com/team/project/-/merge_requests/7",
+              author: { username: "dev-a" },
+              source_branch: "feature/refresh",
+              target_branch: "main",
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              iid: 7,
+              title: "Updated MR title",
+              web_url: "https://gitlab.com/team/project/-/merge_requests/7",
+              author: { username: "dev-a" },
+              source_branch: "feature/refresh",
+              target_branch: "main",
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ToastProvider>
+        <GitlabMrPanel
+          remotes={remotes}
+          branch="feature/refresh"
+          preferredRemote="origin"
+          onClose={vi.fn()}
+          onConfigureToken={vi.fn()}
+        />
+      </ToastProvider>,
+    );
+
+    expect(await screen.findByText("!7 Old MR title")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+    expect(await screen.findByText("!7 Updated MR title")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

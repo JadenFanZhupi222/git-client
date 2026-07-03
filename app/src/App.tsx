@@ -800,6 +800,7 @@ export default function App() {
           branches={branches}
           refs={refs}
           onClose={() => setGithubCreatePrOpen(false)}
+          onCreated={() => setGithubPrOpen(true)}
           onConfigureToken={() => {
             setGithubCreatePrOpen(false);
             setGithubTokenOpen(true);
@@ -815,6 +816,7 @@ export default function App() {
           branches={branches}
           refs={refs}
           onClose={() => setGitlabCreateMrOpen(false)}
+          onCreated={() => setGitlabMrOpen(true)}
           onConfigureToken={() => {
             setGitlabCreateMrOpen(false);
             setGitlabTokenOpen(true);
