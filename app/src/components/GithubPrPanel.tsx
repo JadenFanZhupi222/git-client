@@ -5,7 +5,9 @@ import {
   createGithubPullRequestComment,
   fetchGithubPullRequestDetails,
   fetchGithubPullRequests,
+  mergeGithubPullRequest,
   type GithubPullRequestDetails,
+  type GithubPullMergeMethod,
   type GithubPullRequestSummary,
 } from "../lib/github";
 import {
@@ -36,6 +38,7 @@ export function GithubPrPanel({
   >({});
   const [detailLoading, setDetailLoading] = useState<number | null>(null);
   const [creatingComment, setCreatingComment] = useState<number | null>(null);
+  const [mergingPull, setMergingPull] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -153,6 +156,44 @@ export function GithubPrPanel({
     }
   }
 
+  async function mergePull(
+    detail: GithubPullRequestDetails,
+    method: GithubPullMergeMethod,
+  ) {
+    if (!remote || mergingPull === detail.number) return;
+    setMergingPull(detail.number);
+    try {
+      const token = (await hasGithubToken()) ? await getGithubToken() : null;
+      if (!token?.trim()) {
+        toast({ kind: "error", title: "GitHub token is required" });
+        onConfigureToken();
+        return;
+      }
+      const result = await mergeGithubPullRequest(
+        remote,
+        detail.number,
+        { method, headSha: detail.headSha },
+        token,
+      );
+      setPulls((current) =>
+        current.filter((pull) => pull.number !== detail.number),
+      );
+      setDetailByNumber((current) => {
+        const next = { ...current };
+        delete next[detail.number];
+        return next;
+      });
+      toast({
+        kind: "success",
+        title: result.message || `Merged PR #${detail.number}`,
+      });
+    } catch (e) {
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+    } finally {
+      setMergingPull(null);
+    }
+  }
+
   return (
     <div
       className="overlay-in fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6"
@@ -241,6 +282,8 @@ export function GithubPrPanel({
                       detail={detailByNumber[pr.number]}
                       creatingComment={creatingComment === pr.number}
                       onCreateComment={createPullComment}
+                      mergingPull={mergingPull === pr.number}
+                      onMerge={mergePull}
                     />
                   )}
                 </li>
@@ -281,6 +324,8 @@ function PullRequestDetailsView({
   detail,
   creatingComment,
   onCreateComment,
+  mergingPull,
+  onMerge,
 }: {
   detail: GithubPullRequestDetails;
   creatingComment: boolean;
@@ -288,8 +333,15 @@ function PullRequestDetailsView({
     detail: GithubPullRequestDetails,
     body: string,
   ) => Promise<boolean>;
+  mergingPull: boolean;
+  onMerge: (
+    detail: GithubPullRequestDetails,
+    method: GithubPullMergeMethod,
+  ) => void;
 }) {
   const [commentBody, setCommentBody] = useState("");
+  const [mergeMethod, setMergeMethod] =
+    useState<GithubPullMergeMethod>("merge");
   const trimmedCommentBody = commentBody.trim();
   const reviewCounts = detail.reviews.reduce<Record<string, number>>(
     (counts, review) => ({
@@ -304,6 +356,8 @@ function PullRequestDetailsView({
     const created = await onCreateComment(detail, trimmedCommentBody);
     if (created) setCommentBody("");
   }
+
+  const mergeBlockedReason = githubMergeBlockedReason(detail);
 
   return (
     <div className="mt-3 grid gap-2 rounded-md border border-line bg-canvas/60 p-3 text-xs">
@@ -396,6 +450,40 @@ function PullRequestDetailsView({
         </div>
       )}
       <div className="grid gap-1.5 border-t border-line pt-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <label
+            className="sr-only"
+            htmlFor={`github-pr-merge-method-${detail.number}`}
+          >
+            Merge method
+          </label>
+          <select
+            id={`github-pr-merge-method-${detail.number}`}
+            value={mergeMethod}
+            onChange={(event) =>
+              setMergeMethod(event.currentTarget.value as GithubPullMergeMethod)
+            }
+            className="h-7 rounded-md border border-line bg-elevated px-2 text-xs text-fg outline-none transition-colors focus:border-accent"
+          >
+            <option value="merge">Merge commit</option>
+            <option value="squash">Squash</option>
+            <option value="rebase">Rebase</option>
+          </select>
+          <button
+            onClick={() => onMerge(detail, mergeMethod)}
+            disabled={Boolean(mergeBlockedReason) || mergingPull}
+            className="rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
+          >
+            {mergingPull ? "Merging" : "Merge"}
+          </button>
+          {mergeBlockedReason && (
+            <span className="text-[11px] text-fg-subtle">
+              {mergeBlockedReason}
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="grid gap-1.5 border-t border-line pt-2">
         <label className="sr-only" htmlFor={`github-pr-comment-${detail.number}`}>
           New pull request comment
         </label>
@@ -446,6 +534,15 @@ function reviewSummary(counts: Record<string, number>): string {
   if (approved || changes) return `${approved} approved / ${changes} changes`;
   const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
   return total ? `${total} reviews` : "none";
+}
+
+function githubMergeBlockedReason(detail: GithubPullRequestDetails): string | null {
+  if (!detail.headSha) return "missing head SHA";
+  if (detail.mergeable !== true) return mergeableLabel(detail);
+  if (detail.combinedStatus && detail.combinedStatus.state !== "success") {
+    return `status ${detail.combinedStatus.state}`;
+  }
+  return null;
 }
 
 function formatCommentTime(value: string): string {

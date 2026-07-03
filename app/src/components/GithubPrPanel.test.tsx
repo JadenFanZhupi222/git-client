@@ -137,6 +137,16 @@ describe("GithubPrPanel", () => {
           }),
           { status: 201 },
         ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            sha: "merge123",
+            merged: true,
+            message: "Pull Request successfully merged",
+          }),
+          { status: 200 },
+        ),
       );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -186,6 +196,27 @@ describe("GithubPrPanel", () => {
       );
     });
     expect(screen.getByLabelText("New pull request comment")).toHaveValue("");
+
+    await userEvent.selectOptions(screen.getByLabelText("Merge method"), "squash");
+    await userEvent.click(screen.getByRole("button", { name: "Merge" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.github.com/repos/team/project/pulls/7/merge",
+        {
+          method: "PUT",
+          headers: {
+            Accept: "application/vnd.github+json",
+            Authorization: "Bearer ghp_secret",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            merge_method: "squash",
+            sha: "abc123",
+          }),
+        },
+      );
+    });
   });
 
   it("refreshes pull request results", async () => {

@@ -48,6 +48,19 @@ export interface GithubPullReviewThread {
   updatedAt: string;
 }
 
+export type GithubPullMergeMethod = "merge" | "squash" | "rebase";
+
+export interface MergeGithubPullRequestInput {
+  method: GithubPullMergeMethod;
+  headSha: string;
+}
+
+export interface GithubPullMergeResult {
+  sha: string;
+  merged: boolean;
+  message: string;
+}
+
 export interface GithubPullRequestDetails extends GithubPullRequestSummary {
   mergeable: boolean | null;
   mergeableState: string | null;
@@ -126,6 +139,12 @@ interface GithubReviewCommentResponse {
   updated_at?: string | null;
 }
 
+interface GithubPullMergeResponse {
+  sha?: string | null;
+  merged?: boolean | null;
+  message?: string | null;
+}
+
 export function buildGithubPullsApiUrl(
   remote: HostingRemote,
   branch: string | null,
@@ -179,6 +198,13 @@ export function buildGithubPullReviewCommentsApiUrl(
   pullNumber: number,
 ): string {
   return `${githubRepoApiBase(remote)}/pulls/${pullNumber}/comments?per_page=20`;
+}
+
+export function buildGithubMergePullRequestApiUrl(
+  remote: HostingRemote,
+  pullNumber: number,
+): string {
+  return `${githubRepoApiBase(remote)}/pulls/${pullNumber}/merge`;
 }
 
 export async function fetchGithubPullRequests(
@@ -260,6 +286,44 @@ export async function createGithubPullRequestComment(
   return toPullRequestComment(
     (await response.json()) as GithubIssueCommentResponse,
   );
+}
+
+export async function mergeGithubPullRequest(
+  remote: HostingRemote,
+  pullNumber: number,
+  input: MergeGithubPullRequestInput,
+  token: string | null,
+  fetcher: typeof fetch = fetch,
+): Promise<GithubPullMergeResult> {
+  const trimmedToken = token?.trim();
+  if (!trimmedToken) throw new Error("GitHub token is required");
+  const headSha = input.headSha.trim();
+  if (!headSha) throw new Error("PR head SHA is required");
+
+  const response = await fetcher(
+    buildGithubMergePullRequestApiUrl(remote, pullNumber),
+    {
+      method: "PUT",
+      headers: {
+        ...githubHeaders(trimmedToken),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        merge_method: input.method,
+        sha: headSha,
+      }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(githubApiErrorMessage(response.status));
+  }
+
+  const payload = (await response.json()) as GithubPullMergeResponse;
+  return {
+    sha: payload.sha ?? "",
+    merged: payload.merged ?? false,
+    message: payload.message ?? "",
+  };
 }
 
 export async function fetchGithubPullRequestDetails(

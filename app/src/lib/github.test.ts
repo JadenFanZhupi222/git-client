@@ -3,6 +3,7 @@ import {
   buildGithubCombinedStatusApiUrl,
   buildGithubCreatePullApiUrl,
   buildGithubIssueCommentsApiUrl,
+  buildGithubMergePullRequestApiUrl,
   buildGithubPullApiUrl,
   buildGithubPullReviewCommentsApiUrl,
   buildGithubPullsApiUrl,
@@ -12,6 +13,7 @@ import {
   fetchGithubPullRequestDetails,
   fetchGithubPullRequests,
   githubApiErrorMessage,
+  mergeGithubPullRequest,
 } from "./github";
 import type { HostingRemote } from "./hosting";
 
@@ -60,6 +62,72 @@ describe("GitHub pull request detail URLs", () => {
     expect(buildGithubPullReviewCommentsApiUrl(githubRemote, 7)).toBe(
       "https://api.github.com/repos/acme/project/pulls/7/comments?per_page=20",
     );
+    expect(buildGithubMergePullRequestApiUrl(githubRemote, 7)).toBe(
+      "https://api.github.com/repos/acme/project/pulls/7/merge",
+    );
+  });
+});
+
+describe("mergeGithubPullRequest", () => {
+  it("merges a pull request with the selected method and expected head sha", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          sha: "merge123",
+          merged: true,
+          message: "Pull Request successfully merged",
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await mergeGithubPullRequest(
+      githubRemote,
+      7,
+      { method: "squash", headSha: "abc123" },
+      "ghp_secret",
+      fetchMock,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.github.com/repos/acme/project/pulls/7/merge",
+      {
+        method: "PUT",
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: "Bearer ghp_secret",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          merge_method: "squash",
+          sha: "abc123",
+        }),
+      },
+    );
+    expect(result).toEqual({
+      sha: "merge123",
+      merged: true,
+      message: "Pull Request successfully merged",
+    });
+  });
+
+  it("requires token and head sha before merging", async () => {
+    await expect(
+      mergeGithubPullRequest(
+        githubRemote,
+        7,
+        { method: "merge", headSha: "abc123" },
+        " ",
+      ),
+    ).rejects.toThrow("GitHub token is required");
+    await expect(
+      mergeGithubPullRequest(
+        githubRemote,
+        7,
+        { method: "merge", headSha: " " },
+        "ghp_secret",
+      ),
+    ).rejects.toThrow("PR head SHA is required");
   });
 });
 
