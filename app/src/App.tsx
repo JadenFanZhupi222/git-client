@@ -629,6 +629,7 @@ export default function App() {
             onClick={() => setPaletteOpen(true)}
             title={t("action.commandPalette")}
             aria-label={t("action.commandPalette")}
+            data-testid="command-palette"
             className="hidden items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2 py-1 text-fg-subtle transition-colors hover:bg-overlay hover:text-fg hover:border-fg-subtle sm:flex"
           >
             <SearchIcon width={13} height={13} />
@@ -695,6 +696,7 @@ export default function App() {
             onClick={pickRepo}
             title={repo ? t("action.switchRepo") : t("action.pickRepo")}
             aria-label={repo ? t("action.switchRepo") : t("action.pickRepo")}
+            data-testid="pick-repo"
             className="flex items-center gap-1.5 rounded-md border border-line-strong bg-elevated px-2.5 py-1 text-xs text-fg transition-colors hover:bg-overlay hover:border-fg-subtle"
           >
             <FolderIcon width={14} height={14} />

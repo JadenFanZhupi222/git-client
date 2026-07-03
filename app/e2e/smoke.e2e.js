@@ -1,9 +1,9 @@
 describe("desktop shell", () => {
   it("opens the launch screen", async () => {
-    const chooseRepo = await $("button[aria-label='选择仓库']");
-    await chooseRepo.waitForDisplayed();
+    const chooseRepo = await $("[data-testid='pick-repo']");
+    await chooseRepo.waitForDisplayed({ timeout: 20000 });
 
-    const commandPalette = await $("button[aria-label='命令面板']");
-    await commandPalette.waitForDisplayed();
+    const commandPalette = await $("[data-testid='command-palette']");
+    await commandPalette.waitForDisplayed({ timeout: 20000 });
   });
 });
