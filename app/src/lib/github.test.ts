@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildGithubCombinedStatusApiUrl,
+  buildGithubCheckRunsApiUrl,
   buildGithubCreatePullApiUrl,
   buildGithubIssueCommentsApiUrl,
   buildGithubMergePullRequestApiUrl,
@@ -55,6 +56,9 @@ describe("GitHub pull request detail URLs", () => {
     );
     expect(buildGithubCombinedStatusApiUrl(githubRemote, "abc123")).toBe(
       "https://api.github.com/repos/acme/project/commits/abc123/status",
+    );
+    expect(buildGithubCheckRunsApiUrl(githubRemote, "abc123")).toBe(
+      "https://api.github.com/repos/acme/project/commits/abc123/check-runs?per_page=20",
     );
     expect(buildGithubIssueCommentsApiUrl(githubRemote, 7)).toBe(
       "https://api.github.com/repos/acme/project/issues/7/comments",
@@ -395,6 +399,36 @@ describe("fetchGithubPullRequestDetails", () => {
       )
       .mockResolvedValueOnce(
         new Response(
+          JSON.stringify({
+            total_count: 2,
+            check_runs: [
+              {
+                id: 501,
+                name: "build / linux",
+                status: "completed",
+                conclusion: "success",
+                html_url: "https://github.com/acme/project/actions/runs/501",
+                started_at: "2026-07-03T10:00:00Z",
+                completed_at: "2026-07-03T10:05:00Z",
+                app: { slug: "github-actions" },
+              },
+              {
+                id: 502,
+                name: "test / windows",
+                status: "completed",
+                conclusion: "failure",
+                html_url: "https://github.com/acme/project/actions/runs/502",
+                started_at: "2026-07-03T10:01:00Z",
+                completed_at: "2026-07-03T10:06:00Z",
+                app: { slug: "github-actions" },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
           JSON.stringify([
             {
               id: 301,
@@ -452,11 +486,16 @@ describe("fetchGithubPullRequestDetails", () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       4,
-      "https://api.github.com/repos/acme/project/issues/7/comments?per_page=20",
+      "https://api.github.com/repos/acme/project/commits/abc123/check-runs?per_page=20",
       expect.any(Object),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       5,
+      "https://api.github.com/repos/acme/project/issues/7/comments?per_page=20",
+      expect.any(Object),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      6,
       "https://api.github.com/repos/acme/project/pulls/7/comments?per_page=20",
       expect.any(Object),
     );
@@ -489,6 +528,28 @@ describe("fetchGithubPullRequestDetails", () => {
           { context: "lint", state: "failure", targetUrl: null },
         ],
       },
+      checkRuns: [
+        {
+          id: 501,
+          name: "build / linux",
+          status: "completed",
+          conclusion: "success",
+          url: "https://github.com/acme/project/actions/runs/501",
+          app: "github-actions",
+          startedAt: "2026-07-03T10:00:00Z",
+          completedAt: "2026-07-03T10:05:00Z",
+        },
+        {
+          id: 502,
+          name: "test / windows",
+          status: "completed",
+          conclusion: "failure",
+          url: "https://github.com/acme/project/actions/runs/502",
+          app: "github-actions",
+          startedAt: "2026-07-03T10:01:00Z",
+          completedAt: "2026-07-03T10:06:00Z",
+        },
+      ],
       recentComments: [
         {
           id: 301,

@@ -389,6 +389,39 @@ function PullRequestDetailsView({
           ))}
         </div>
       )}
+      {detail.checkRuns.length > 0 && (
+        <div className="grid gap-1.5 border-t border-line pt-2">
+          <div className="text-[10px] uppercase tracking-wide text-fg-subtle">
+            Check runs
+          </div>
+          <div className="grid gap-1.5">
+            {detail.checkRuns.slice(0, 6).map((run) => (
+              <a
+                key={run.id}
+                href={run.url}
+                onClick={(event) => {
+                  event.preventDefault();
+                  if (run.url) void openUrl(run.url);
+                }}
+                className="rounded border border-line bg-elevated/60 px-2 py-1.5 text-left transition-colors hover:border-line-strong hover:bg-overlay"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-medium text-fg">
+                    {run.name || "unnamed check"}
+                  </span>
+                  <span className="shrink-0 font-mono text-[10px] text-fg-muted">
+                    {run.conclusion ?? run.status}
+                  </span>
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-fg-subtle">
+                  {run.app && <span>{run.app}</span>}
+                  <span>{run.status}</span>
+                </div>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
       {detail.recentComments.length > 0 && (
         <div className="grid gap-1.5 border-t border-line pt-2">
           <div className="text-[10px] uppercase tracking-wide text-fg-subtle">

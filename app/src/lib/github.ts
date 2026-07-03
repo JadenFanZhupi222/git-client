@@ -26,6 +26,17 @@ export interface GithubCombinedStatusSummary {
   }>;
 }
 
+export interface GithubCheckRunSummary {
+  id: number;
+  name: string;
+  status: string;
+  conclusion: string | null;
+  url: string;
+  app: string | null;
+  startedAt: string;
+  completedAt: string;
+}
+
 export interface GithubPullRequestComment {
   id: number;
   body: string;
@@ -72,6 +83,7 @@ export interface GithubPullRequestDetails extends GithubPullRequestSummary {
   deletions: number;
   reviews: GithubPullReviewSummary[];
   combinedStatus: GithubCombinedStatusSummary | null;
+  checkRuns: GithubCheckRunSummary[];
   recentComments: GithubPullRequestComment[];
   reviewThreads: GithubPullReviewThread[];
 }
@@ -115,6 +127,22 @@ interface GithubCombinedStatusResponse {
     state?: string | null;
     target_url?: string | null;
   }>;
+}
+
+interface GithubCheckRunsResponse {
+  total_count?: number;
+  check_runs?: GithubCheckRunResponse[];
+}
+
+interface GithubCheckRunResponse {
+  id: number;
+  name?: string | null;
+  status?: string | null;
+  conclusion?: string | null;
+  html_url?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  app?: { slug?: string | null; name?: string | null } | null;
 }
 
 interface GithubIssueCommentResponse {
@@ -182,6 +210,13 @@ export function buildGithubCombinedStatusApiUrl(
   ref: string,
 ): string {
   return `${githubRepoApiBase(remote)}/commits/${encodeURIComponent(ref)}/status`;
+}
+
+export function buildGithubCheckRunsApiUrl(
+  remote: HostingRemote,
+  ref: string,
+): string {
+  return `${githubRepoApiBase(remote)}/commits/${encodeURIComponent(ref)}/check-runs?per_page=20`;
 }
 
 export function buildGithubIssueCommentsApiUrl(
@@ -354,6 +389,7 @@ export async function fetchGithubPullRequestDetails(
 
   const headSha = pull.head?.sha ?? "";
   let combinedStatus: GithubCombinedStatusSummary | null = null;
+  let checkRuns: GithubCheckRunSummary[] = [];
   if (headSha) {
     const statusResponse = await fetcher(
       buildGithubCombinedStatusApiUrl(remote, headSha),
@@ -364,6 +400,17 @@ export async function fetchGithubPullRequestDetails(
     }
     combinedStatus = toCombinedStatusSummary(
       (await statusResponse.json()) as GithubCombinedStatusResponse,
+    );
+
+    const checkRunsResponse = await fetcher(
+      buildGithubCheckRunsApiUrl(remote, headSha),
+      { headers: githubHeaders(token) },
+    );
+    if (!checkRunsResponse.ok) {
+      throw new Error(githubApiErrorMessage(checkRunsResponse.status));
+    }
+    checkRuns = toCheckRunSummaries(
+      (await checkRunsResponse.json()) as GithubCheckRunsResponse,
     );
   }
 
@@ -404,6 +451,7 @@ export async function fetchGithubPullRequestDetails(
       author: review.user?.login ?? null,
     })),
     combinedStatus,
+    checkRuns,
     recentComments,
     reviewThreads,
   };
@@ -480,6 +528,21 @@ function toCombinedStatusSummary(
       targetUrl: item.target_url ?? null,
     })),
   };
+}
+
+function toCheckRunSummaries(
+  payload: GithubCheckRunsResponse,
+): GithubCheckRunSummary[] {
+  return (payload.check_runs ?? []).map((run) => ({
+    id: run.id,
+    name: run.name ?? "",
+    status: run.status ?? "",
+    conclusion: run.conclusion ?? null,
+    url: run.html_url ?? "",
+    app: run.app?.slug ?? run.app?.name ?? null,
+    startedAt: run.started_at ?? "",
+    completedAt: run.completed_at ?? "",
+  }));
 }
 
 function toPullRequestComment(

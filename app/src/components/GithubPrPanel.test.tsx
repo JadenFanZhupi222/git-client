@@ -93,6 +93,36 @@ describe("GithubPrPanel", () => {
       )
       .mockResolvedValueOnce(
         new Response(
+          JSON.stringify({
+            total_count: 2,
+            check_runs: [
+              {
+                id: 501,
+                name: "build / linux",
+                status: "completed",
+                conclusion: "success",
+                html_url: "https://github.com/team/project/actions/runs/501",
+                started_at: "2026-07-03T10:00:00Z",
+                completed_at: "2026-07-03T10:05:00Z",
+                app: { slug: "github-actions" },
+              },
+              {
+                id: 502,
+                name: "test / windows",
+                status: "completed",
+                conclusion: "failure",
+                html_url: "https://github.com/team/project/actions/runs/502",
+                started_at: "2026-07-03T10:01:00Z",
+                completed_at: "2026-07-03T10:06:00Z",
+                app: { slug: "github-actions" },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
           JSON.stringify([
             {
               id: 201,
@@ -167,7 +197,10 @@ describe("GithubPrPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Details" }));
 
     expect(await screen.findByText("mergeable")).toBeInTheDocument();
-    expect(screen.getByText("success")).toBeInTheDocument();
+    expect(screen.getAllByText("success").length).toBeGreaterThan(0);
+    expect(screen.getByText("build / linux")).toBeInTheDocument();
+    expect(screen.getByText("test / windows")).toBeInTheDocument();
+    expect(screen.getByText("failure")).toBeInTheDocument();
     expect(screen.getByText("Looks good after the retry.")).toBeInTheDocument();
     expect(screen.getByText("reviewer-a")).toBeInTheDocument();
     expect(screen.getByText("src/git.ts:42")).toBeInTheDocument();
