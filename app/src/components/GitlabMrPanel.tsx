@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getGitlabToken, hasGitlabToken, type IpcError } from "../ipc";
 import {
+  fetchGitlabMergeRequestDetails,
   fetchGitlabMergeRequests,
+  type GitlabMergeRequestDetails,
   type GitlabMergeRequestSummary,
 } from "../lib/gitlab";
 import {
@@ -28,6 +30,10 @@ export function GitlabMrPanel({
 }) {
   const toast = useToast();
   const [mrs, setMrs] = useState<GitlabMergeRequestSummary[]>([]);
+  const [detailByIid, setDetailByIid] = useState<
+    Record<number, GitlabMergeRequestDetails>
+  >({});
+  const [detailLoading, setDetailLoading] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,6 +58,7 @@ export function GitlabMrPanel({
       try {
         if (!remote || !branch) {
           setMrs([]);
+          setDetailByIid({});
           setError(
             branch ? "当前仓库没有 GitLab 远程地址" : "当前仓库还没有本地分支",
           );
@@ -59,7 +66,10 @@ export function GitlabMrPanel({
         }
         const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
         const next = await fetchGitlabMergeRequests(remote, branch, token);
-        if (alive) setMrs(next);
+        if (alive) {
+          setMrs(next);
+          setDetailByIid({});
+        }
       } catch (e) {
         if (alive) setError((e as IpcError).message ?? String(e));
       } finally {
@@ -77,6 +87,29 @@ export function GitlabMrPanel({
       await openUrl(url);
     } catch (e) {
       toast({ kind: "error", title: (e as Error).message ?? String(e) });
+    }
+  }
+
+  async function loadDetail(mr: GitlabMergeRequestSummary) {
+    if (!remote || detailByIid[mr.iid] || detailLoading === mr.iid) {
+      return;
+    }
+    setDetailLoading(mr.iid);
+    try {
+      const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
+      const detail = await fetchGitlabMergeRequestDetails(
+        remote,
+        mr.iid,
+        token,
+      );
+      setDetailByIid((current) => ({
+        ...current,
+        [mr.iid]: detail,
+      }));
+    } catch (e) {
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+    } finally {
+      setDetailLoading(null);
     }
   }
 
@@ -158,7 +191,17 @@ export function GitlabMrPanel({
                     >
                       打开
                     </button>
+                    <button
+                      onClick={() => loadDetail(mr)}
+                      disabled={detailLoading === mr.iid}
+                      className="shrink-0 rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
+                    >
+                      {detailLoading === mr.iid ? "Loading" : "Details"}
+                    </button>
                   </div>
+                  {detailByIid[mr.iid] && (
+                    <MergeRequestDetailsView detail={detailByIid[mr.iid]} />
+                  )}
                 </li>
               ))}
             </ul>
@@ -182,6 +225,75 @@ export function GitlabMrPanel({
       </div>
     </div>
   );
+}
+
+function MergeRequestDetailsView({
+  detail,
+}: {
+  detail: GitlabMergeRequestDetails;
+}) {
+  return (
+    <div className="mt-3 grid gap-2 rounded-md border border-line bg-canvas/60 p-3 text-xs">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        <DetailMetric label="Merge" value={mergeLabel(detail)} />
+        <DetailMetric
+          label="Pipeline"
+          value={detail.latestPipeline?.status ?? "unknown"}
+        />
+        <DetailMetric label="Changes" value={`${detail.changesCount || "0"} changes`} />
+        <DetailMetric label="Notes" value={`${detail.userNotesCount} notes`} />
+        <DetailMetric label="Approvals" value={approvalLabel(detail)} />
+      </div>
+      <div className="flex flex-wrap gap-2 text-[11px] text-fg-subtle">
+        <span>{detail.hasConflicts ? "conflicts" : "no conflicts"}</span>
+        <span>
+          discussions {detail.blockingDiscussionsResolved === false ? "blocked" : "resolved"}
+        </span>
+        <span>+{detail.upvotes}</span>
+        <span>-{detail.downvotes}</span>
+        {detail.approvals && detail.approvals.approvedBy.length > 0 && (
+          <span>{detail.approvals.approvedBy.join(", ")}</span>
+        )}
+        {detail.approvals?.userCanApprove && !detail.approvals.userHasApproved && (
+          <span>you can approve</span>
+        )}
+      </div>
+      {detail.latestPipeline && (
+        <div className="flex flex-wrap gap-1.5">
+          <span className="rounded border border-line bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-fg-muted">
+            {detail.latestPipeline.ref}: {detail.latestPipeline.sha}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded border border-line bg-elevated/60 px-2 py-1.5">
+      <div className="text-[10px] uppercase tracking-wide text-fg-subtle">
+        {label}
+      </div>
+      <div className="mt-0.5 truncate font-medium text-fg" title={value}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function mergeLabel(detail: GitlabMergeRequestDetails): string {
+  return detail.detailedMergeStatus || detail.mergeStatus || "unknown";
+}
+
+function approvalLabel(detail: GitlabMergeRequestDetails): string {
+  const approvals = detail.approvals;
+  if (!approvals) return "unknown";
+  const approvedCount = Math.max(
+    approvals.approvalsRequired - approvals.approvalsLeft,
+    0,
+  );
+  return `${approvedCount}/${approvals.approvalsRequired} approved`;
 }
 
 function findGitlabRemote(

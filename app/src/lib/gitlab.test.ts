@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildGitlabCreateMergeRequestApiUrl,
+  buildGitlabMergeRequestApprovalsApiUrl,
+  buildGitlabMergeRequestApiUrl,
+  buildGitlabMergeRequestPipelinesApiUrl,
   buildGitlabMergeRequestsApiUrl,
+  createGitlabMergeRequest,
+  fetchGitlabMergeRequestDetails,
   fetchGitlabMergeRequests,
   gitlabApiErrorMessage,
 } from "./gitlab";
@@ -28,6 +34,284 @@ describe("buildGitlabMergeRequestsApiUrl", () => {
       ),
     ).toBeNull();
     expect(buildGitlabMergeRequestsApiUrl(gitlabRemote, null)).toBeNull();
+  });
+});
+
+describe("buildGitlabCreateMergeRequestApiUrl", () => {
+  it("builds a GitLab create merge request API URL", () => {
+    expect(buildGitlabCreateMergeRequestApiUrl(gitlabRemote)).toBe(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests",
+    );
+  });
+});
+
+describe("GitLab merge request detail URLs", () => {
+  it("builds GitLab detail and pipeline API URLs", () => {
+    expect(buildGitlabMergeRequestApiUrl(gitlabRemote, 18)).toBe(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18",
+    );
+    expect(buildGitlabMergeRequestPipelinesApiUrl(gitlabRemote, 18)).toBe(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/pipelines?per_page=1",
+    );
+    expect(buildGitlabMergeRequestApprovalsApiUrl(gitlabRemote, 18)).toBe(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/approvals",
+    );
+  });
+});
+
+describe("fetchGitlabMergeRequestDetails", () => {
+  it("fetches merge request details and the latest pipeline", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            iid: 18,
+            title: "Add GitLab details",
+            web_url:
+              "https://gitlab.com/team/subgroup/project/-/merge_requests/18",
+            draft: false,
+            author: { username: "dev-a" },
+            source_branch: "feature/gitlab-details",
+            target_branch: "main",
+            merge_status: "can_be_merged",
+            detailed_merge_status: "mergeable",
+            changes_count: "12",
+            user_notes_count: 5,
+            blocking_discussions_resolved: false,
+            has_conflicts: false,
+            upvotes: 2,
+            downvotes: 1,
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              id: 99,
+              status: "success",
+              ref: "refs/merge-requests/18/head",
+              sha: "abc123",
+              web_url: "https://gitlab.com/team/subgroup/project/-/pipelines/99",
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            approvals_required: 2,
+            approvals_left: 1,
+            approved: false,
+            approved_by: [
+              {
+                user: {
+                  username: "reviewer-a",
+                },
+              },
+            ],
+            user_has_approved: false,
+            user_can_approve: true,
+          }),
+          { status: 200 },
+        ),
+      );
+
+    const detail = await fetchGitlabMergeRequestDetails(
+      gitlabRemote,
+      18,
+      "glpat_secret",
+      fetchMock,
+    );
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18",
+      {
+        headers: {
+          Accept: "application/json",
+          "PRIVATE-TOKEN": "glpat_secret",
+        },
+      },
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/pipelines?per_page=1",
+      {
+        headers: {
+          Accept: "application/json",
+          "PRIVATE-TOKEN": "glpat_secret",
+        },
+      },
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/approvals",
+      {
+        headers: {
+          Accept: "application/json",
+          "PRIVATE-TOKEN": "glpat_secret",
+        },
+      },
+    );
+    expect(detail).toEqual({
+      iid: 18,
+      title: "Add GitLab details",
+      url: "https://gitlab.com/team/subgroup/project/-/merge_requests/18",
+      draft: false,
+      author: "dev-a",
+      sourceBranch: "feature/gitlab-details",
+      targetBranch: "main",
+      mergeStatus: "can_be_merged",
+      detailedMergeStatus: "mergeable",
+      changesCount: "12",
+      userNotesCount: 5,
+      blockingDiscussionsResolved: false,
+      hasConflicts: false,
+      upvotes: 2,
+      downvotes: 1,
+      latestPipeline: {
+        id: 99,
+        status: "success",
+        ref: "refs/merge-requests/18/head",
+        sha: "abc123",
+        url: "https://gitlab.com/team/subgroup/project/-/pipelines/99",
+      },
+      approvals: {
+        approvalsRequired: 2,
+        approvalsLeft: 1,
+        approved: false,
+        approvedBy: ["reviewer-a"],
+        userHasApproved: false,
+        userCanApprove: true,
+      },
+    });
+  });
+});
+
+describe("createGitlabMergeRequest", () => {
+  it("posts PRIVATE-TOKEN and maps the created merge request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          iid: 18,
+          title: "Add GitLab creation",
+          web_url:
+            "https://gitlab.com/team/subgroup/project/-/merge_requests/18",
+          draft: true,
+          author: { username: "dev-a" },
+          source_branch: "feature/gitlab-create",
+          target_branch: "main",
+          merge_status: "checking",
+          detailed_merge_status: "checking",
+        }),
+        { status: 201 },
+      ),
+    );
+
+    const mr = await createGitlabMergeRequest(
+      gitlabRemote,
+      {
+        title: " Add GitLab creation ",
+        sourceBranch: " feature/gitlab-create ",
+        targetBranch: " main ",
+        description: "Create from the desktop client",
+        draft: true,
+      },
+      "glpat_secret",
+      fetchMock,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests",
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "PRIVATE-TOKEN": "glpat_secret",
+        },
+        body: JSON.stringify({
+          title: "Add GitLab creation",
+          source_branch: "feature/gitlab-create",
+          target_branch: "main",
+          description: "Create from the desktop client",
+          draft: true,
+        }),
+      },
+    );
+    expect(mr).toEqual({
+      iid: 18,
+      title: "Add GitLab creation",
+      url: "https://gitlab.com/team/subgroup/project/-/merge_requests/18",
+      draft: true,
+      author: "dev-a",
+      sourceBranch: "feature/gitlab-create",
+      targetBranch: "main",
+      mergeStatus: "checking",
+      detailedMergeStatus: "checking",
+    });
+  });
+
+  it("requires title, source branch, target branch, and token", async () => {
+    await expect(
+      createGitlabMergeRequest(
+        gitlabRemote,
+        {
+          title: " ",
+          sourceBranch: "feature/gitlab-create",
+          targetBranch: "main",
+          description: "",
+          draft: false,
+        },
+        "glpat_secret",
+      ),
+    ).rejects.toThrow("MR title cannot be empty");
+
+    await expect(
+      createGitlabMergeRequest(
+        gitlabRemote,
+        {
+          title: "Add GitLab creation",
+          sourceBranch: " ",
+          targetBranch: "main",
+          description: "",
+          draft: false,
+        },
+        "glpat_secret",
+      ),
+    ).rejects.toThrow("MR source branch cannot be empty");
+
+    await expect(
+      createGitlabMergeRequest(
+        gitlabRemote,
+        {
+          title: "Add GitLab creation",
+          sourceBranch: "feature/gitlab-create",
+          targetBranch: " ",
+          description: "",
+          draft: false,
+        },
+        "glpat_secret",
+      ),
+    ).rejects.toThrow("MR target branch cannot be empty");
+
+    await expect(
+      createGitlabMergeRequest(
+        gitlabRemote,
+        {
+          title: "Add GitLab creation",
+          sourceBranch: "feature/gitlab-create",
+          targetBranch: "main",
+          description: "",
+          draft: false,
+        },
+        " ",
+      ),
+    ).rejects.toThrow("GitLab token is required");
   });
 });
 

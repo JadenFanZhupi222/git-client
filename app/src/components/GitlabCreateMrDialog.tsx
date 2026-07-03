@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { getGithubToken, hasGithubToken, type IpcError } from "../ipc";
+import { getGitlabToken, hasGitlabToken, type IpcError } from "../ipc";
 import type { BranchDto, RefDto } from "../ipc";
 import {
-  createGithubPullRequest,
-  type GithubPullRequestSummary,
-} from "../lib/github";
+  createGitlabMergeRequest,
+  type GitlabMergeRequestSummary,
+} from "../lib/gitlab";
 import {
   detectHostingRemote,
   type HostingRemote,
@@ -19,7 +19,7 @@ import {
 import { CloseIcon, SpinnerIcon } from "./icons";
 import { useToast } from "./Toast";
 
-export function GithubCreatePrDialog({
+export function GitlabCreateMrDialog({
   remotes,
   branch,
   preferredRemote,
@@ -35,26 +35,26 @@ export function GithubCreatePrDialog({
   branches?: BranchDto[];
   refs?: RefDto[];
   onClose: () => void;
-  onCreated?: (pr: GithubPullRequestSummary) => void;
+  onCreated?: (mr: GitlabMergeRequestSummary) => void;
   onConfigureToken: () => void;
 }) {
   const toast = useToast();
   const titleRef = useRef<HTMLInputElement>(null);
   const remote = useMemo(
-    () => findGithubRemote(remotes, preferredRemote),
+    () => findGitlabRemote(remotes, preferredRemote),
     [remotes, preferredRemote],
   );
   const [title, setTitle] = useState(branch ? `${branch}` : "");
-  const [body, setBody] = useState("");
-  const [head, setHead] = useState(branch ?? "");
-  const [base, setBase] = useState("main");
+  const [sourceBranch, setSourceBranch] = useState(branch ?? "");
+  const [targetBranch, setTargetBranch] = useState("main");
+  const [description, setDescription] = useState("");
   const [draft, setDraft] = useState(false);
   const [busy, setBusy] = useState(false);
-  const headChoices = useMemo(
+  const sourceChoices = useMemo(
     () => localBranchChoices(branches, branch),
     [branches, branch],
   );
-  const baseChoices = useMemo(
+  const targetChoices = useMemo(
     () => remoteBranchChoices(refs, preferredRemote),
     [refs, preferredRemote],
   );
@@ -64,14 +64,16 @@ export function GithubCreatePrDialog({
   }, []);
 
   useEffect(() => {
-    if (!head && branch) setHead(branch);
-  }, [branch, head]);
+    if (!sourceBranch && branch) setSourceBranch(branch);
+  }, [branch, sourceBranch]);
 
   useEffect(() => {
-    setBase((current) =>
-      current === "main" || !current ? defaultBaseBranch(baseChoices) : current,
+    setTargetBranch((current) =>
+      current === "main" || !current
+        ? defaultBaseBranch(targetChoices)
+        : current,
     );
-  }, [baseChoices]);
+  }, [targetChoices]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -85,20 +87,20 @@ export function GithubCreatePrDialog({
     if (!remote || busy) return;
     setBusy(true);
     try {
-      const token = (await hasGithubToken()) ? await getGithubToken() : null;
+      const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
       if (!token) {
-        toast({ kind: "error", title: "请先设置 GitHub token" });
+        toast({ kind: "error", title: "Please set a GitLab token first" });
         onConfigureToken();
         return;
       }
-      const pr = await createGithubPullRequest(
+      const mr = await createGitlabMergeRequest(
         remote,
-        { title, body, head, base, draft },
+        { title, sourceBranch, targetBranch, description, draft },
         token,
       );
-      toast({ kind: "success", title: `已创建 PR #${pr.number}` });
-      onCreated?.(pr);
-      await openUrl(pr.url);
+      toast({ kind: "success", title: `Created MR !${mr.iid}` });
+      onCreated?.(mr);
+      await openUrl(mr.url);
       onClose();
     } catch (e) {
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
@@ -108,7 +110,11 @@ export function GithubCreatePrDialog({
   }
 
   const disabled =
-    busy || !remote || !title.trim() || !head.trim() || !base.trim();
+    busy ||
+    !remote ||
+    !title.trim() ||
+    !sourceBranch.trim() ||
+    !targetBranch.trim();
 
   return (
     <div
@@ -118,7 +124,7 @@ export function GithubCreatePrDialog({
       <form
         role="dialog"
         aria-modal="true"
-        aria-label="Create GitHub pull request"
+        aria-label="Create GitLab merge request"
         className="panel-in popover flex w-[520px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
         onClick={(e) => e.stopPropagation()}
         onSubmit={(e) => {
@@ -128,9 +134,9 @@ export function GithubCreatePrDialog({
       >
         <div className="flex items-center gap-2 border-b border-line px-4 py-3">
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-fg">Create GitHub PR</h2>
+            <h2 className="text-sm font-semibold text-fg">Create GitLab MR</h2>
             <p className="truncate text-[11px] text-fg-subtle">
-              {remote ? `${remote.owner}/${remote.repo}` : "No GitHub remote"}
+              {remote ? `${remote.owner}/${remote.repo}` : "No GitLab remote"}
             </p>
           </div>
           <button
@@ -146,15 +152,16 @@ export function GithubCreatePrDialog({
         <div className="flex flex-col gap-3 px-4 py-4">
           {!remote && (
             <div className="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
-              当前仓库没有可识别的 GitHub 远程地址
+              Current repository has no recognized GitLab remote.
             </div>
           )}
           <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
+            <span className="text-[11px] font-medium uppercase text-fg-subtle">
               Title
             </span>
             <input
               ref={titleRef}
+              aria-label="Title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               className="rounded bg-canvas px-2.5 py-1.5 text-xs text-fg field"
@@ -162,33 +169,33 @@ export function GithubCreatePrDialog({
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
-                Head
+              <span className="text-[11px] font-medium uppercase text-fg-subtle">
+                Source
               </span>
               <input
-                list="github-pr-head-choices"
-                aria-label="Head"
-                value={head}
-                onChange={(e) => setHead(e.target.value)}
+                list="gitlab-mr-source-choices"
+                aria-label="Source"
+                value={sourceBranch}
+                onChange={(e) => setSourceBranch(e.target.value)}
                 className="rounded bg-canvas px-2.5 py-1.5 font-mono text-xs text-fg field"
               />
-              <datalist id="github-pr-head-choices">
-                {headChoices.map((choice) => (
+              <datalist id="gitlab-mr-source-choices">
+                {sourceChoices.map((choice) => (
                   <option key={choice} value={choice} />
                 ))}
               </datalist>
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
-                Base
+              <span className="text-[11px] font-medium uppercase text-fg-subtle">
+                Target
               </span>
               <select
-                aria-label="Base"
-                value={base}
-                onChange={(e) => setBase(e.target.value)}
+                aria-label="Target"
+                value={targetBranch}
+                onChange={(e) => setTargetBranch(e.target.value)}
                 className="rounded bg-canvas px-2.5 py-1.5 font-mono text-xs text-fg field"
               >
-                {uniqueSelectChoices(baseChoices, base).map((choice) => (
+                {uniqueSelectChoices(targetChoices, targetBranch).map((choice) => (
                   <option key={choice} value={choice}>
                     {choice}
                   </option>
@@ -197,12 +204,13 @@ export function GithubCreatePrDialog({
             </label>
           </div>
           <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
-              Body
+            <span className="text-[11px] font-medium uppercase text-fg-subtle">
+              Description
             </span>
             <textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
+              aria-label="Description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
               rows={5}
               className="resize-none rounded bg-canvas px-2.5 py-1.5 text-xs text-fg field"
             />
@@ -214,7 +222,7 @@ export function GithubCreatePrDialog({
               onChange={(e) => setDraft(e.target.checked)}
               className="h-3.5 w-3.5"
             />
-            Draft pull request
+            Draft merge request
           </label>
         </div>
 
@@ -254,7 +262,7 @@ function uniqueSelectChoices(choices: string[], current: string): string[] {
   return [...new Set([current, ...choices].filter(Boolean))];
 }
 
-function findGithubRemote(
+function findGitlabRemote(
   remotes: RemoteLike[],
   preferredRemote: string | null,
 ): HostingRemote | null {
@@ -264,7 +272,7 @@ function findGithubRemote(
   ];
   for (const remote of ordered) {
     const hosting = detectHostingRemote(remote.url);
-    if (hosting?.provider === "github") return hosting;
+    if (hosting?.provider === "gitlab") return hosting;
   }
   return null;
 }

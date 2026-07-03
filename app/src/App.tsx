@@ -17,6 +17,7 @@ import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, checkoutB
 import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon, MoreIcon, DropletIcon, CloudIcon, PlusIcon, FileDiffIcon, BlameIcon, SubmoduleIcon, WorktreeIcon, BranchIcon } from "./components/icons";
 import { RemoteManager } from "./components/RemoteManager";
 import { GithubCreatePrDialog } from "./components/GithubCreatePrDialog";
+import { GitlabCreateMrDialog } from "./components/GitlabCreateMrDialog";
 import { GitHubTokenDialog } from "./components/GitHubTokenDialog";
 import { GitLabTokenDialog } from "./components/GitLabTokenDialog";
 import { GithubPrPanel } from "./components/GithubPrPanel";
@@ -31,7 +32,7 @@ import type { Command } from "./lib/commands";
 import { useToast } from "./components/Toast";
 import { Glass } from "./components/ui/Glass";
 import { LaunchGraph } from "./components/LaunchGraph";
-import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useRemoteList, useUndoState, useBranches, useSubmodules, useWorktrees, useSparseCheckout, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
+import { useRepoWatch, useCurrentBranch, useAheadBehind, useRemotes, useRemoteList, useUndoState, useBranches, useRefs, useSubmodules, useWorktrees, useSparseCheckout, invalidateHistory, invalidateWorktree, qk } from "./lib/queries";
 import { applyTheme, applyGlassMode, getStoredTheme, type Theme } from "./lib/theme";
 import { getStoredGlassPref, setStoredGlassPref } from "./lib/transparency";
 import { useT, useLang, toggleLang, nextLangLabel } from "./lib/i18n";
@@ -72,6 +73,7 @@ export default function App() {
   const [githubTokenOpen, setGithubTokenOpen] = useState(false);
   const [githubPrOpen, setGithubPrOpen] = useState(false);
   const [gitlabTokenOpen, setGitlabTokenOpen] = useState(false);
+  const [gitlabCreateMrOpen, setGitlabCreateMrOpen] = useState(false);
   const [gitlabMrOpen, setGitlabMrOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -90,6 +92,7 @@ export default function App() {
   const canUndo = undoState?.can_undo ?? null;
   const canRedo = undoState?.can_redo ?? null;
   const branches = useBranches(repo ?? "", !!repo).data ?? [];
+  const refs = useRefs(repo ?? "", !!repo).data ?? [];
   const submodules = useSubmodules(repo ?? "").data ?? [];
   const hasSubmodules = submodules.length > 0;
   const worktrees = useWorktrees(repo ?? "").data ?? [];
@@ -449,6 +452,7 @@ export default function App() {
     { id: "github:create-pr", icon: <PlusIcon width={15} height={15} />, title: "创建 GitHub PR", subtitle: "在客户端内通过 GitHub API 创建 Pull Request", group: "协作", keywords: "github api create pull request pr new draft token 创建 新建", disabled: !repo || !branch || busy, run: () => setGithubCreatePrOpen(true) },
     { id: "github:token", icon: <CloudIcon width={15} height={15} />, title: "设置 GitHub Token", subtitle: "保存到系统凭据库，用于访问私有仓库和提高 API 限额", group: "协作", keywords: "github token pat auth credential 凭据 认证", run: () => setGithubTokenOpen(true) },
     { id: "gitlab:list-mrs", icon: <CloudIcon width={15} height={15} />, title: "查看当前分支 GitLab MR", subtitle: "在客户端内查看 open Merge Request", group: "协作", keywords: "gitlab merge request mr api 查看 合并请求", disabled: !repo || !branch || busy, run: () => setGitlabMrOpen(true) },
+    { id: "gitlab:create-mr", icon: <PlusIcon width={15} height={15} />, title: "创建 GitLab MR", subtitle: "在客户端内通过 GitLab API 创建 Merge Request", group: "协作", keywords: "gitlab api create merge request mr new draft token 创建 新建", disabled: !repo || !branch || busy, run: () => setGitlabCreateMrOpen(true) },
     { id: "gitlab:token", icon: <CloudIcon width={15} height={15} />, title: "设置 GitLab Token", subtitle: "保存到系统凭据库，用于访问私有仓库和提高 API 限额", group: "协作", keywords: "gitlab token pat auth credential 凭据 认证", run: () => setGitlabTokenOpen(true) },
   );
   commands.push({
@@ -793,10 +797,27 @@ export default function App() {
           remotes={remoteInfos}
           branch={branch}
           preferredRemote={selectedRemote}
+          branches={branches}
+          refs={refs}
           onClose={() => setGithubCreatePrOpen(false)}
           onConfigureToken={() => {
             setGithubCreatePrOpen(false);
             setGithubTokenOpen(true);
+          }}
+        />
+      )}
+
+      {gitlabCreateMrOpen && (
+        <GitlabCreateMrDialog
+          remotes={remoteInfos}
+          branch={branch}
+          preferredRemote={selectedRemote}
+          branches={branches}
+          refs={refs}
+          onClose={() => setGitlabCreateMrOpen(false)}
+          onConfigureToken={() => {
+            setGitlabCreateMrOpen(false);
+            setGitlabTokenOpen(true);
           }}
         />
       )}
