@@ -5,6 +5,7 @@ import {
   buildGitlabMergeRequestApproveApiUrl,
   buildGitlabMergeRequestApprovalsApiUrl,
   buildGitlabMergeRequestApiUrl,
+  buildGitlabMergeRequestNotesApiUrl,
   buildGitlabMergeRequestPipelinesApiUrl,
   buildGitlabMergeRequestUnapproveApiUrl,
   buildGitlabMergeRequestsApiUrl,
@@ -59,6 +60,9 @@ describe("GitLab merge request detail URLs", () => {
     );
     expect(buildGitlabMergeRequestApprovalsApiUrl(gitlabRemote, 18)).toBe(
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/approvals",
+    );
+    expect(buildGitlabMergeRequestNotesApiUrl(gitlabRemote, 18)).toBe(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/notes?sort=desc&order_by=updated_at&per_page=5",
     );
     expect(buildGitlabMergeRequestApproveApiUrl(gitlabRemote, 18)).toBe(
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/approve",
@@ -219,6 +223,31 @@ describe("fetchGitlabMergeRequestDetails", () => {
           }),
           { status: 200 },
         ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              id: 501,
+              body: "Looks good after the pipeline fix.",
+              author: { username: "reviewer-a" },
+              created_at: "2026-07-01T10:00:00.000Z",
+              updated_at: "2026-07-01T10:05:00.000Z",
+              system: false,
+              internal: false,
+            },
+            {
+              id: 502,
+              body: "changed the title",
+              author: { username: "gitlab-bot" },
+              created_at: "2026-07-01T09:00:00.000Z",
+              updated_at: "2026-07-01T09:00:00.000Z",
+              system: true,
+              internal: false,
+            },
+          ]),
+          { status: 200 },
+        ),
       );
 
     const detail = await fetchGitlabMergeRequestDetails(
@@ -258,6 +287,16 @@ describe("fetchGitlabMergeRequestDetails", () => {
         },
       },
     );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/notes?sort=desc&order_by=updated_at&per_page=5",
+      {
+        headers: {
+          Accept: "application/json",
+          "PRIVATE-TOKEN": "glpat_secret",
+        },
+      },
+    );
     expect(detail).toEqual({
       iid: 18,
       title: "Add GitLab details",
@@ -289,6 +328,26 @@ describe("fetchGitlabMergeRequestDetails", () => {
         userHasApproved: false,
         userCanApprove: true,
       },
+      notes: [
+        {
+          id: 501,
+          body: "Looks good after the pipeline fix.",
+          author: "reviewer-a",
+          createdAt: "2026-07-01T10:00:00.000Z",
+          updatedAt: "2026-07-01T10:05:00.000Z",
+          system: false,
+          internal: false,
+        },
+        {
+          id: 502,
+          body: "changed the title",
+          author: "gitlab-bot",
+          createdAt: "2026-07-01T09:00:00.000Z",
+          updatedAt: "2026-07-01T09:00:00.000Z",
+          system: true,
+          internal: false,
+        },
+      ],
     });
   });
 });

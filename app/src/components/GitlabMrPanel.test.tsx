@@ -99,6 +99,22 @@ describe("GitlabMrPanel", () => {
       )
       .mockResolvedValueOnce(
         new Response(
+          JSON.stringify([
+            {
+              id: 501,
+              body: "Looks good after the pipeline fix.",
+              author: { username: "reviewer-a" },
+              created_at: "2026-07-01T10:00:00.000Z",
+              updated_at: "2026-07-01T10:05:00.000Z",
+              system: false,
+              internal: false,
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
           JSON.stringify({
             approvals_required: 2,
             approvals_left: 0,
@@ -159,7 +175,9 @@ describe("GitlabMrPanel", () => {
     expect(screen.getByText("3 notes")).toBeInTheDocument();
     expect(screen.getByText("Approvals")).toBeInTheDocument();
     expect(screen.getByText("1/2 approved")).toBeInTheDocument();
-    expect(screen.getByText("reviewer-a")).toBeInTheDocument();
+    expect(screen.getAllByText("reviewer-a").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Notes")).toBeInTheDocument();
+    expect(screen.getByText("Looks good after the pipeline fix.")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
 
@@ -193,7 +211,7 @@ describe("GitlabMrPanel", () => {
       );
     });
     expect(await screen.findByText("1/2 approved")).toBeInTheDocument();
-    expect(screen.getByText("reviewer-a")).toBeInTheDocument();
+    expect(screen.getAllByText("reviewer-a").length).toBeGreaterThanOrEqual(1);
   });
 
   it("refreshes merge request results", async () => {

@@ -370,6 +370,28 @@ function MergeRequestDetailsView({
           ) : null}
         </div>
       )}
+      {detail.notes.length > 0 && (
+        <div className="grid gap-1.5 border-t border-line pt-2">
+          {detail.notes.map((note) => (
+            <div
+              key={note.id}
+              className="rounded border border-line bg-elevated/50 px-2 py-1.5"
+            >
+              <div className="flex min-w-0 items-center gap-2 text-[10px] text-fg-subtle">
+                <span className="font-medium text-fg-muted">
+                  {note.author ?? "unknown"}
+                </span>
+                {note.system && <span>system</span>}
+                {note.internal && <span>internal</span>}
+                <span className="ml-auto truncate">{formatGitlabDate(note.updatedAt)}</span>
+              </div>
+              <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-[11px] leading-4 text-fg">
+                {note.body}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
       {detail.latestPipeline && (
         <div className="flex flex-wrap gap-1.5">
           <span className="rounded border border-line bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-fg-muted">
@@ -406,6 +428,13 @@ function approvalLabel(detail: GitlabMergeRequestDetails): string {
     0,
   );
   return `${approvedCount}/${approvals.approvalsRequired} approved`;
+}
+
+function formatGitlabDate(value: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 }
 
 function findGitlabRemote(

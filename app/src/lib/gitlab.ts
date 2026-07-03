@@ -29,6 +29,16 @@ export interface GitlabApprovalSummary {
   userCanApprove: boolean;
 }
 
+export interface GitlabMergeRequestNote {
+  id: number;
+  body: string;
+  author: string | null;
+  createdAt: string;
+  updatedAt: string;
+  system: boolean;
+  internal: boolean;
+}
+
 export interface GitlabMergeRequestDetails
   extends GitlabMergeRequestSummary {
   changesCount: string;
@@ -39,6 +49,7 @@ export interface GitlabMergeRequestDetails
   downvotes: number;
   latestPipeline: GitlabPipelineSummary | null;
   approvals: GitlabApprovalSummary | null;
+  notes: GitlabMergeRequestNote[];
 }
 
 export interface CreateGitlabMergeRequestInput {
@@ -87,6 +98,16 @@ interface GitlabApprovalsResponse {
   user_can_approve?: boolean | null;
 }
 
+interface GitlabMergeRequestNoteResponse {
+  id: number;
+  body?: string | null;
+  author?: { username?: string | null } | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  system?: boolean | null;
+  internal?: boolean | null;
+}
+
 export function buildGitlabMergeRequestsApiUrl(
   remote: HostingRemote,
   branch: string | null,
@@ -129,6 +150,18 @@ export function buildGitlabMergeRequestApprovalsApiUrl(
   iid: number,
 ): string {
   return `${buildGitlabMergeRequestApiUrl(remote, iid)}/approvals`;
+}
+
+export function buildGitlabMergeRequestNotesApiUrl(
+  remote: HostingRemote,
+  iid: number,
+): string {
+  const params = new URLSearchParams({
+    sort: "desc",
+    order_by: "updated_at",
+    per_page: "5",
+  });
+  return `${buildGitlabMergeRequestApiUrl(remote, iid)}/notes?${params.toString()}`;
 }
 
 export function buildGitlabMergeRequestApproveApiUrl(
@@ -225,6 +258,17 @@ export async function fetchGitlabMergeRequestDetails(
     );
   }
 
+  let notes: GitlabMergeRequestNote[] = [];
+  const notesResponse = await fetcher(
+    buildGitlabMergeRequestNotesApiUrl(remote, iid),
+    { headers: gitlabHeaders(token) },
+  );
+  if (notesResponse.ok) {
+    notes = ((await notesResponse.json()) as GitlabMergeRequestNoteResponse[]).map(
+      toMergeRequestNote,
+    );
+  }
+
   return {
     ...toMergeRequestSummary(detail),
     changesCount: detail.changes_count ?? "",
@@ -236,6 +280,7 @@ export async function fetchGitlabMergeRequestDetails(
     downvotes: detail.downvotes ?? 0,
     latestPipeline: pipelines[0] ? toPipelineSummary(pipelines[0]) : null,
     approvals,
+    notes,
   };
 }
 
@@ -371,5 +416,19 @@ function toApprovalSummary(
       .filter(Boolean),
     userHasApproved: approvals.user_has_approved ?? false,
     userCanApprove: approvals.user_can_approve ?? false,
+  };
+}
+
+function toMergeRequestNote(
+  note: GitlabMergeRequestNoteResponse,
+): GitlabMergeRequestNote {
+  return {
+    id: note.id,
+    body: note.body ?? "",
+    author: note.author?.username ?? null,
+    createdAt: note.created_at ?? "",
+    updatedAt: note.updated_at ?? "",
+    system: note.system ?? false,
+    internal: note.internal ?? false,
   };
 }
