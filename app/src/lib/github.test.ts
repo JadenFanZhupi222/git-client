@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildGithubCombinedStatusApiUrl,
   buildGithubCreatePullApiUrl,
+  buildGithubIssueCommentsApiUrl,
   buildGithubPullApiUrl,
   buildGithubPullsApiUrl,
   buildGithubReviewsApiUrl,
+  createGithubPullRequestComment,
   createGithubPullRequest,
   fetchGithubPullRequestDetails,
   fetchGithubPullRequests,
@@ -51,6 +53,70 @@ describe("GitHub pull request detail URLs", () => {
     expect(buildGithubCombinedStatusApiUrl(githubRemote, "abc123")).toBe(
       "https://api.github.com/repos/acme/project/commits/abc123/status",
     );
+    expect(buildGithubIssueCommentsApiUrl(githubRemote, 7)).toBe(
+      "https://api.github.com/repos/acme/project/issues/7/comments",
+    );
+  });
+});
+
+describe("createGithubPullRequestComment", () => {
+  it("posts a pull request issue comment and maps the created comment", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 301,
+          body: "Please re-run the failed check.",
+          html_url: "https://github.com/acme/project/pull/7#issuecomment-301",
+          user: { login: "me" },
+          created_at: "2026-07-03T10:00:00Z",
+          updated_at: "2026-07-03T10:00:00Z",
+        }),
+        { status: 201 },
+      ),
+    );
+
+    const comment = await createGithubPullRequestComment(
+      githubRemote,
+      7,
+      " Please re-run the failed check. ",
+      "ghp_secret",
+      fetchMock,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.github.com/repos/acme/project/issues/7/comments",
+      {
+        method: "POST",
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: "Bearer ghp_secret",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ body: "Please re-run the failed check." }),
+      },
+    );
+    expect(comment).toEqual({
+      id: 301,
+      body: "Please re-run the failed check.",
+      url: "https://github.com/acme/project/pull/7#issuecomment-301",
+      author: "me",
+      createdAt: "2026-07-03T10:00:00Z",
+      updatedAt: "2026-07-03T10:00:00Z",
+    });
+  });
+
+  it("requires body and token", async () => {
+    await expect(
+      createGithubPullRequestComment(githubRemote, 7, " ", "ghp_secret"),
+    ).rejects.toThrow("PR comment cannot be empty");
+    await expect(
+      createGithubPullRequestComment(
+        githubRemote,
+        7,
+        "Please re-run the failed check.",
+        " ",
+      ),
+    ).rejects.toThrow("GitHub token is required");
   });
 });
 

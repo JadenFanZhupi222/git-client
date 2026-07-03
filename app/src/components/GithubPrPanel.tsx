@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getGithubToken, hasGithubToken, type IpcError } from "../ipc";
 import {
+  createGithubPullRequestComment,
   fetchGithubPullRequestDetails,
   fetchGithubPullRequests,
   type GithubPullRequestDetails,
@@ -34,6 +35,7 @@ export function GithubPrPanel({
     Record<number, GithubPullRequestDetails>
   >({});
   const [detailLoading, setDetailLoading] = useState<number | null>(null);
+  const [creatingComment, setCreatingComment] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -111,6 +113,42 @@ export function GithubPrPanel({
       toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
     } finally {
       setDetailLoading(null);
+    }
+  }
+
+  async function createPullComment(
+    detail: GithubPullRequestDetails,
+    body: string,
+  ): Promise<boolean> {
+    if (!remote || creatingComment === detail.number) return false;
+    setCreatingComment(detail.number);
+    try {
+      const token = (await hasGithubToken()) ? await getGithubToken() : null;
+      if (!token?.trim()) {
+        toast({ kind: "error", title: "GitHub token is required" });
+        onConfigureToken();
+        return false;
+      }
+      await createGithubPullRequestComment(
+        remote,
+        detail.number,
+        body,
+        token,
+      );
+      setDetailByNumber((current) => ({
+        ...current,
+        [detail.number]: {
+          ...detail,
+          comments: detail.comments + 1,
+        },
+      }));
+      toast({ kind: "success", title: `Commented on PR #${detail.number}` });
+      return true;
+    } catch (e) {
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+      return false;
+    } finally {
+      setCreatingComment(null);
     }
   }
 
@@ -200,6 +238,8 @@ export function GithubPrPanel({
                   {detailByNumber[pr.number] && (
                     <PullRequestDetailsView
                       detail={detailByNumber[pr.number]}
+                      creatingComment={creatingComment === pr.number}
+                      onCreateComment={createPullComment}
                     />
                   )}
                 </li>
@@ -238,9 +278,18 @@ export function GithubPrPanel({
 
 function PullRequestDetailsView({
   detail,
+  creatingComment,
+  onCreateComment,
 }: {
   detail: GithubPullRequestDetails;
+  creatingComment: boolean;
+  onCreateComment: (
+    detail: GithubPullRequestDetails,
+    body: string,
+  ) => Promise<boolean>;
 }) {
+  const [commentBody, setCommentBody] = useState("");
+  const trimmedCommentBody = commentBody.trim();
   const reviewCounts = detail.reviews.reduce<Record<string, number>>(
     (counts, review) => ({
       ...counts,
@@ -248,6 +297,13 @@ function PullRequestDetailsView({
     }),
     {},
   );
+
+  async function submitComment() {
+    if (!trimmedCommentBody || creatingComment) return;
+    const created = await onCreateComment(detail, trimmedCommentBody);
+    if (created) setCommentBody("");
+  }
+
   return (
     <div className="mt-3 grid gap-2 rounded-md border border-line bg-canvas/60 p-3 text-xs">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -278,6 +334,28 @@ function PullRequestDetailsView({
           ))}
         </div>
       )}
+      <div className="grid gap-1.5 border-t border-line pt-2">
+        <label className="sr-only" htmlFor={`github-pr-comment-${detail.number}`}>
+          New pull request comment
+        </label>
+        <textarea
+          id={`github-pr-comment-${detail.number}`}
+          value={commentBody}
+          onChange={(event) => setCommentBody(event.currentTarget.value)}
+          rows={2}
+          className="min-h-14 resize-y rounded-md border border-line bg-elevated px-2 py-1.5 text-xs text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
+          placeholder="Write a comment"
+        />
+        <div className="flex justify-end">
+          <button
+            onClick={submitComment}
+            disabled={!trimmedCommentBody || creatingComment}
+            className="rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
+          >
+            {creatingComment ? "Commenting" : "Comment"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

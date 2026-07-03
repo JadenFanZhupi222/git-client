@@ -26,6 +26,15 @@ export interface GithubCombinedStatusSummary {
   }>;
 }
 
+export interface GithubPullRequestComment {
+  id: number;
+  body: string;
+  url: string;
+  author: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface GithubPullRequestDetails extends GithubPullRequestSummary {
   mergeable: boolean | null;
   mergeableState: string | null;
@@ -80,6 +89,15 @@ interface GithubCombinedStatusResponse {
   }>;
 }
 
+interface GithubIssueCommentResponse {
+  id: number;
+  body?: string | null;
+  html_url?: string | null;
+  user?: { login?: string | null } | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export function buildGithubPullsApiUrl(
   remote: HostingRemote,
   branch: string | null,
@@ -117,6 +135,13 @@ export function buildGithubCombinedStatusApiUrl(
   ref: string,
 ): string {
   return `${githubRepoApiBase(remote)}/commits/${encodeURIComponent(ref)}/status`;
+}
+
+export function buildGithubIssueCommentsApiUrl(
+  remote: HostingRemote,
+  issueNumber: number,
+): string {
+  return `${githubRepoApiBase(remote)}/issues/${issueNumber}/comments`;
 }
 
 export async function fetchGithubPullRequests(
@@ -165,6 +190,38 @@ export async function createGithubPullRequest(
   }
   return toPullRequestSummary(
     (await response.json()) as GithubPullRequestResponse,
+  );
+}
+
+export async function createGithubPullRequestComment(
+  remote: HostingRemote,
+  pullNumber: number,
+  body: string,
+  token: string | null,
+  fetcher: typeof fetch = fetch,
+): Promise<GithubPullRequestComment> {
+  const trimmedBody = body.trim();
+  if (!trimmedBody) throw new Error("PR comment cannot be empty");
+  const trimmedToken = token?.trim();
+  if (!trimmedToken) throw new Error("GitHub token is required");
+
+  const response = await fetcher(
+    buildGithubIssueCommentsApiUrl(remote, pullNumber),
+    {
+      method: "POST",
+      headers: {
+        ...githubHeaders(trimmedToken),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ body: trimmedBody }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(githubApiErrorMessage(response.status));
+  }
+
+  return toPullRequestComment(
+    (await response.json()) as GithubIssueCommentResponse,
   );
 }
 
@@ -297,5 +354,18 @@ function toCombinedStatusSummary(
       state: item.state ?? "",
       targetUrl: item.target_url ?? null,
     })),
+  };
+}
+
+function toPullRequestComment(
+  comment: GithubIssueCommentResponse,
+): GithubPullRequestComment {
+  return {
+    id: comment.id,
+    body: comment.body ?? "",
+    url: comment.html_url ?? "",
+    author: comment.user?.login ?? null,
+    createdAt: comment.created_at ?? "",
+    updatedAt: comment.updated_at ?? "",
   };
 }
