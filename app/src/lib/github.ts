@@ -35,6 +35,19 @@ export interface GithubPullRequestComment {
   updatedAt: string;
 }
 
+export interface GithubPullReviewThread {
+  id: number;
+  body: string;
+  url: string;
+  author: string | null;
+  path: string;
+  line: number | null;
+  originalLine: number | null;
+  diffHunk: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface GithubPullRequestDetails extends GithubPullRequestSummary {
   mergeable: boolean | null;
   mergeableState: string | null;
@@ -47,6 +60,7 @@ export interface GithubPullRequestDetails extends GithubPullRequestSummary {
   reviews: GithubPullReviewSummary[];
   combinedStatus: GithubCombinedStatusSummary | null;
   recentComments: GithubPullRequestComment[];
+  reviewThreads: GithubPullReviewThread[];
 }
 
 export interface CreateGithubPullRequestInput {
@@ -99,6 +113,19 @@ interface GithubIssueCommentResponse {
   updated_at?: string | null;
 }
 
+interface GithubReviewCommentResponse {
+  id: number;
+  body?: string | null;
+  html_url?: string | null;
+  path?: string | null;
+  line?: number | null;
+  original_line?: number | null;
+  diff_hunk?: string | null;
+  user?: { login?: string | null } | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export function buildGithubPullsApiUrl(
   remote: HostingRemote,
   branch: string | null,
@@ -145,6 +172,13 @@ export function buildGithubIssueCommentsApiUrl(
 ): string {
   const url = `${githubRepoApiBase(remote)}/issues/${issueNumber}/comments`;
   return perPage ? `${url}?per_page=${perPage}` : url;
+}
+
+export function buildGithubPullReviewCommentsApiUrl(
+  remote: HostingRemote,
+  pullNumber: number,
+): string {
+  return `${githubRepoApiBase(remote)}/pulls/${pullNumber}/comments?per_page=20`;
 }
 
 export async function fetchGithubPullRequests(
@@ -280,6 +314,17 @@ export async function fetchGithubPullRequestDetails(
     (await commentsResponse.json()) as GithubIssueCommentResponse[]
   ).map(toPullRequestComment);
 
+  const reviewCommentsResponse = await fetcher(
+    buildGithubPullReviewCommentsApiUrl(remote, pullNumber),
+    { headers: githubHeaders(token) },
+  );
+  if (!reviewCommentsResponse.ok) {
+    throw new Error(githubApiErrorMessage(reviewCommentsResponse.status));
+  }
+  const reviewThreads = (
+    (await reviewCommentsResponse.json()) as GithubReviewCommentResponse[]
+  ).map(toPullReviewThread);
+
   return {
     ...toPullRequestSummary(pull),
     mergeable: pull.mergeable ?? null,
@@ -296,6 +341,7 @@ export async function fetchGithubPullRequestDetails(
     })),
     combinedStatus,
     recentComments,
+    reviewThreads,
   };
 }
 
@@ -380,6 +426,23 @@ function toPullRequestComment(
     body: comment.body ?? "",
     url: comment.html_url ?? "",
     author: comment.user?.login ?? null,
+    createdAt: comment.created_at ?? "",
+    updatedAt: comment.updated_at ?? "",
+  };
+}
+
+function toPullReviewThread(
+  comment: GithubReviewCommentResponse,
+): GithubPullReviewThread {
+  return {
+    id: comment.id,
+    body: comment.body ?? "",
+    url: comment.html_url ?? "",
+    author: comment.user?.login ?? null,
+    path: comment.path ?? "",
+    line: comment.line ?? null,
+    originalLine: comment.original_line ?? null,
+    diffHunk: comment.diff_hunk ?? "",
     createdAt: comment.created_at ?? "",
     updatedAt: comment.updated_at ?? "",
   };

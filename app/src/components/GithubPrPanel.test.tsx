@@ -108,6 +108,25 @@ describe("GithubPrPanel", () => {
       )
       .mockResolvedValueOnce(
         new Response(
+          JSON.stringify([
+            {
+              id: 401,
+              body: "This branch should handle null refs.",
+              html_url: "https://github.com/team/project/pull/7#discussion_r401",
+              path: "src/git.ts",
+              line: 42,
+              original_line: 41,
+              diff_hunk: "@@ -39,7 +39,7 @@",
+              user: { login: "reviewer-b" },
+              created_at: "2026-07-03T11:00:00Z",
+              updated_at: "2026-07-03T11:02:00Z",
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
           JSON.stringify({
             id: 301,
             body: "Please re-run the failed check.",
@@ -141,6 +160,10 @@ describe("GithubPrPanel", () => {
     expect(screen.getByText("success")).toBeInTheDocument();
     expect(screen.getByText("Looks good after the retry.")).toBeInTheDocument();
     expect(screen.getByText("reviewer-a")).toBeInTheDocument();
+    expect(screen.getByText("src/git.ts:42")).toBeInTheDocument();
+    expect(
+      screen.getByText("This branch should handle null refs."),
+    ).toBeInTheDocument();
 
     await userEvent.type(
       screen.getByLabelText("New pull request comment"),

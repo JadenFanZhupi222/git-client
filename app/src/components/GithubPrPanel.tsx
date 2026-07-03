@@ -365,6 +365,36 @@ function PullRequestDetailsView({
           </div>
         </div>
       )}
+      {detail.reviewThreads.length > 0 && (
+        <div className="grid gap-1.5 border-t border-line pt-2">
+          <div className="text-[10px] uppercase tracking-wide text-fg-subtle">
+            Review threads
+          </div>
+          <div className="grid gap-1.5">
+            {detail.reviewThreads.slice(-3).map((thread) => (
+              <a
+                key={thread.id}
+                href={thread.url}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void openUrl(thread.url);
+                }}
+                className="rounded border border-line bg-elevated/60 px-2 py-1.5 text-left transition-colors hover:border-line-strong hover:bg-overlay"
+              >
+                <div className="flex items-center justify-between gap-2 text-[11px] text-fg-subtle">
+                  <span className="truncate font-mono">
+                    {reviewThreadLocation(thread)}
+                  </span>
+                  <span className="shrink-0">{thread.author ?? "unknown"}</span>
+                </div>
+                <p className="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-xs text-fg">
+                  {thread.body || "(empty review comment)"}
+                </p>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="grid gap-1.5 border-t border-line pt-2">
         <label className="sr-only" htmlFor={`github-pr-comment-${detail.number}`}>
           New pull request comment
@@ -426,6 +456,13 @@ function formatCommentTime(value: string): string {
     month: "short",
     day: "numeric",
   });
+}
+
+function reviewThreadLocation(
+  thread: GithubPullRequestDetails["reviewThreads"][number],
+): string {
+  const line = thread.line ?? thread.originalLine;
+  return line ? `${thread.path}:${line}` : thread.path;
 }
 
 function findGithubRemote(

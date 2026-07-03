@@ -4,6 +4,7 @@ import {
   buildGithubCreatePullApiUrl,
   buildGithubIssueCommentsApiUrl,
   buildGithubPullApiUrl,
+  buildGithubPullReviewCommentsApiUrl,
   buildGithubPullsApiUrl,
   buildGithubReviewsApiUrl,
   createGithubPullRequestComment,
@@ -55,6 +56,9 @@ describe("GitHub pull request detail URLs", () => {
     );
     expect(buildGithubIssueCommentsApiUrl(githubRemote, 7)).toBe(
       "https://api.github.com/repos/acme/project/issues/7/comments",
+    );
+    expect(buildGithubPullReviewCommentsApiUrl(githubRemote, 7)).toBe(
+      "https://api.github.com/repos/acme/project/pulls/7/comments?per_page=20",
     );
   });
 });
@@ -335,6 +339,25 @@ describe("fetchGithubPullRequestDetails", () => {
           ]),
           { status: 200 },
         ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              id: 401,
+              body: "This branch should handle null refs.",
+              html_url: "https://github.com/acme/project/pull/7#discussion_r401",
+              path: "src/git.ts",
+              line: 42,
+              original_line: 41,
+              diff_hunk: "@@ -39,7 +39,7 @@",
+              user: { login: "reviewer-b" },
+              created_at: "2026-07-03T11:00:00Z",
+              updated_at: "2026-07-03T11:02:00Z",
+            },
+          ]),
+          { status: 200 },
+        ),
       );
 
     const detail = await fetchGithubPullRequestDetails(
@@ -362,6 +385,11 @@ describe("fetchGithubPullRequestDetails", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       4,
       "https://api.github.com/repos/acme/project/issues/7/comments?per_page=20",
+      expect.any(Object),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      5,
+      "https://api.github.com/repos/acme/project/pulls/7/comments?per_page=20",
       expect.any(Object),
     );
     expect(detail).toEqual({
@@ -401,6 +429,20 @@ describe("fetchGithubPullRequestDetails", () => {
           author: "reviewer-a",
           createdAt: "2026-07-03T10:00:00Z",
           updatedAt: "2026-07-03T10:01:00Z",
+        },
+      ],
+      reviewThreads: [
+        {
+          id: 401,
+          body: "This branch should handle null refs.",
+          url: "https://github.com/acme/project/pull/7#discussion_r401",
+          author: "reviewer-b",
+          path: "src/git.ts",
+          line: 42,
+          originalLine: 41,
+          diffHunk: "@@ -39,7 +39,7 @@",
+          createdAt: "2026-07-03T11:00:00Z",
+          updatedAt: "2026-07-03T11:02:00Z",
         },
       ],
     });
