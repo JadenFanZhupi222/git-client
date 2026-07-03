@@ -9,6 +9,24 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+fn git_command() -> Command {
+    let mut command = Command::new("git");
+    hide_child_console(&mut command);
+    command
+}
+
+#[cfg(windows)]
+fn hide_child_console(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn hide_child_console(_command: &mut Command) {}
 
 /// 进程内单调计数,给临时文件起唯一名(避免并发 rebase 撞名)。
 static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -65,7 +83,7 @@ fn parse_submodule_status_line(line: &str) -> Option<(SubmoduleStatus, String, S
 ///(不是错误:子模块的 URL 只是附加信息)。
 fn submodule_urls(repo: &Path) -> HashMap<String, String> {
     let gitmodules = repo.join(".gitmodules");
-    let out = Command::new("git")
+    let out = git_command()
         .arg("-C")
         .arg(repo)
         .arg("config")
@@ -324,7 +342,7 @@ fn parse_line_log(stdout: &[u8]) -> Vec<LineHistoryEntry> {
 
 /// 读 HEAD 的完整 SHA(提交/修订成功后取返回值)。
 fn head_sha(repo: &Path) -> Result<String, GitError> {
-    let out = Command::new("git")
+    let out = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "HEAD"])
@@ -418,7 +436,7 @@ impl CliBackend {
         if let Err(e) = std::fs::create_dir_all(path) {
             return Err(GitError::Backend(format!("创建目录失败: {e}")));
         }
-        let output = Command::new("git")
+        let output = git_command()
             .arg("init")
             .arg(path)
             .output()
@@ -447,7 +465,7 @@ impl CliBackend {
                 return Err(GitError::DestinationNotEmpty(dst.display().to_string()));
             }
         }
-        let output = Command::new("git")
+        let output = git_command()
             .arg("clone")
             .arg(url)
             .arg(dst)
@@ -480,7 +498,7 @@ impl CliBackend {
     pub fn fetch(&self, repo: &Path, remote: Option<&str>) -> Result<FetchOutcome, GitError> {
         // 先确认仓库配了远程 —— 否则 `git fetch` 可能静默 no-op(exit 0、无输出),
         // 用户点了没反应很困惑。这一步顺带充当「git 是否安装」的探测。
-        let remotes = Command::new("git")
+        let remotes = git_command()
             .arg("-C")
             .arg(repo)
             .arg("remote")
@@ -496,7 +514,7 @@ impl CliBackend {
             return Err(GitError::NoRemote);
         }
 
-        let mut cmd = Command::new("git");
+        let mut cmd = git_command();
         cmd.arg("-C").arg(repo).arg("fetch").arg("--prune");
         if let Some(r) = remote {
             cmd.arg(r);
@@ -552,7 +570,7 @@ impl CliBackend {
         remote: Option<&str>,
         rebase: bool,
     ) -> Result<PullOutcome, GitError> {
-        let mut cmd = Command::new("git");
+        let mut cmd = git_command();
         cmd.arg("-C").arg(repo).arg("pull");
         // 显式指定模式,避免被用户全局 pull.rebase 配置左右。
         cmd.arg(if rebase { "--rebase" } else { "--no-rebase" });
@@ -609,7 +627,7 @@ impl CliBackend {
     /// 当前分支无上游时自动 `-u` 建立跟踪后重试一次;
     /// 被拒(non-fast-forward)→ PushRejected。
     pub fn push(&self, repo: &Path, remote: Option<&str>) -> Result<PushOutcome, GitError> {
-        let mut cmd = Command::new("git");
+        let mut cmd = git_command();
         cmd.arg("-C").arg(repo).arg("push");
         if let Some(r) = remote {
             cmd.arg(r);
@@ -645,7 +663,7 @@ impl CliBackend {
         remote: Option<&str>,
     ) -> Result<PushOutcome, GitError> {
         // 取当前分支短名;分离头(HEAD)无法自动建上游。
-        let head = Command::new("git")
+        let head = git_command()
             .arg("-C")
             .arg(repo)
             .args(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -657,7 +675,7 @@ impl CliBackend {
         }
         let remote = remote.unwrap_or("origin");
 
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["push", "-u", remote, &branch])
@@ -699,7 +717,7 @@ impl CliBackend {
 
     /// `git -C repo diff [--cached] -- file` 的文本输出。
     fn diff_text(&self, repo: &Path, file: &str, staged: bool) -> Result<String, GitError> {
-        let mut cmd = Command::new("git");
+        let mut cmd = git_command();
         cmd.arg("-C").arg(repo).arg("diff");
         if staged {
             cmd.arg("--cached");
@@ -716,7 +734,7 @@ impl CliBackend {
 
     /// `git stash list` → StashEntry 列表(stash@{0} 在前)。
     pub fn stash_list(&self, repo: &Path) -> Result<Vec<StashEntry>, GitError> {
-        let out = Command::new("git")
+        let out = git_command()
             .arg("-C")
             .arg(repo)
             .args(["stash", "list"])
@@ -735,7 +753,7 @@ impl CliBackend {
 
     /// `git stash push [-m msg]`。无改动时 git 不报错、只打印提示 → 转 NothingToStash。
     pub fn stash_save(&self, repo: &Path, message: Option<&str>) -> Result<(), GitError> {
-        let mut cmd = Command::new("git");
+        let mut cmd = git_command();
         cmd.arg("-C").arg(repo).args(["stash", "push"]);
         if let Some(m) = message.filter(|m| !m.trim().is_empty()) {
             cmd.arg("-m").arg(m);
@@ -772,7 +790,7 @@ impl CliBackend {
     }
 
     fn resolve_side(&self, repo: &Path, file: &str, side: &str) -> Result<(), GitError> {
-        let co = Command::new("git")
+        let co = git_command()
             .arg("-C")
             .arg(repo)
             .arg("checkout")
@@ -786,7 +804,7 @@ impl CliBackend {
                 String::from_utf8_lossy(&co.stderr).trim().to_string(),
             ));
         }
-        let add = Command::new("git")
+        let add = git_command()
             .arg("-C")
             .arg(repo)
             .args(["add", "--", file])
@@ -842,7 +860,7 @@ impl CliBackend {
     /// 把某分支合并进当前分支(`git merge --no-edit <name>`)。
     /// 走 CLI 才能跑 hooks + 按配置签名合并提交。冲突 → MergeConflict(进入 merging 中)。
     pub fn merge_branch(&self, repo: &Path, name: &str) -> Result<MergeOutcome, GitError> {
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["merge", "--no-edit", name])
@@ -884,7 +902,7 @@ impl CliBackend {
     /// 提交。走 `git commit -m`,**原生跑 pre-commit/commit-msg hooks、并按 commit.gpgsign 签名**
     /// ——这正是相比 git2 直接写提交所修正的正确性硬伤。失败按输出归类。
     pub fn commit(&self, repo: &Path, message: &str) -> Result<String, GitError> {
-        let out = Command::new("git")
+        let out = git_command()
             .arg("-C")
             .arg(repo)
             .args(["commit", "-m", message])
@@ -899,7 +917,7 @@ impl CliBackend {
     /// 修订最近一次提交。message=None → `--no-edit` 保留原信息。同样跑 hooks + 签名。
     pub fn amend_commit(&self, repo: &Path, message: Option<&str>) -> Result<String, GitError> {
         // 空仓库无可修订 → NoHead(与 git2 行为一致)。
-        let head = Command::new("git")
+        let head = git_command()
             .arg("-C")
             .arg(repo)
             .args(["rev-parse", "--verify", "HEAD"])
@@ -908,7 +926,7 @@ impl CliBackend {
         if !head.status.success() {
             return Err(GitError::NoHead);
         }
-        let mut cmd = Command::new("git");
+        let mut cmd = git_command();
         cmd.arg("-C").arg(repo).args(["commit", "--amend"]);
         match message {
             Some(m) => {
@@ -936,7 +954,7 @@ impl CliBackend {
         file: &str,
         limit: usize,
     ) -> Result<Vec<Commit>, GitError> {
-        let out = Command::new("git")
+        let out = git_command()
             .arg("-C")
             .arg(repo)
             .args([
@@ -971,7 +989,7 @@ impl CliBackend {
         } else {
             format!("-S{query}")
         };
-        let out = Command::new("git")
+        let out = git_command()
             .arg("-C")
             .arg(repo)
             .args([
@@ -999,7 +1017,7 @@ impl CliBackend {
         start: u32,
         end: u32,
     ) -> Result<Vec<LineHistoryEntry>, GitError> {
-        let out = Command::new("git")
+        let out = git_command()
             .arg("-C")
             .arg(repo)
             .args([
@@ -1022,7 +1040,7 @@ impl CliBackend {
         repo: &Path,
         commit_id: &str,
     ) -> Result<SignatureInfo, GitError> {
-        let out = Command::new("git")
+        let out = git_command()
             .arg("-C")
             .arg(repo)
             .args(["show", "-s", "--format=%G?%x00%GS", commit_id])
@@ -1060,7 +1078,7 @@ impl CliBackend {
     /// 列出子模块:`git submodule status` 给状态 + sha + 路径,`.gitmodules` 给 URL。
     /// 无子模块 → 命令成功且输出为空 → 空 Vec。
     pub fn list_submodules(&self, repo: &Path) -> Result<Vec<SubmoduleInfo>, GitError> {
-        let out = Command::new("git")
+        let out = git_command()
             .arg("-C")
             .arg(repo)
             .args(["submodule", "status"])
@@ -1095,7 +1113,7 @@ impl CliBackend {
     /// 初始化并更新某子模块到超级项目记录的提交。`--init` 让未初始化的也能一步 clone+checkout。
     /// 可能联网(clone),由上层 spawn_blocking 兜住,不阻塞 UI。
     pub fn update_submodule(&self, repo: &Path, path: &str) -> Result<(), GitError> {
-        let out = Command::new("git")
+        let out = git_command()
             .arg("-C")
             .arg(repo)
             .args(["submodule", "update", "--init", "--"])
@@ -1115,7 +1133,7 @@ impl CliBackend {
     /// 列出工作树:`git worktree list --porcelain`。第一条为主工作树;路径与打开仓库一致
     /// 的那条标 `is_current`(canonicalize 抹平 /tmp↔/private/tmp 等符号链接差异)。
     pub fn list_worktrees(&self, repo: &Path) -> Result<Vec<WorktreeInfo>, GitError> {
-        let out = Command::new("git")
+        let out = git_command()
             .arg("-C")
             .arg(repo)
             .args(["worktree", "list", "--porcelain"])
@@ -1148,7 +1166,7 @@ impl CliBackend {
     /// 稀疏检出范围:`git sparse-checkout list`。未开启稀疏检出时该命令非零退出
     /// (`this worktree is not sparse`)—— 这是普通仓库的常态,按「空范围」处理,不当错误。
     pub fn sparse_checkout_patterns(&self, repo: &Path) -> Result<Vec<String>, GitError> {
-        let out = Command::new("git")
+        let out = git_command()
             .arg("-C")
             .arg(repo)
             .args(["sparse-checkout", "list"])
@@ -1229,7 +1247,7 @@ impl CliBackend {
         // 故等价于 `cp "<我们的 todo>" <git-rebase-todo>`(Git 自带 sh/cp)。
         let seq_editor = format!("cp \"{todo_fwd}\"");
 
-        let mut cmd = Command::new("git");
+        let mut cmd = git_command();
         cmd.arg("-C").arg(repo).arg("rebase").arg("-i");
         match base {
             Some(b) if !b.trim().is_empty() => {
@@ -1270,7 +1288,7 @@ impl CliBackend {
 
     /// 跑 continue/abort/cherry-pick 命令;GIT_EDITOR=true 防止弹编辑器卡住,冲突归 MergeConflict。
     fn run_op(&self, repo: &Path, args: &[&str]) -> Result<(), GitError> {
-        let out = Command::new("git")
+        let out = git_command()
             .arg("-C")
             .arg(repo)
             .args(args)
@@ -1298,7 +1316,7 @@ impl CliBackend {
     /// apply/pop/drop 共用:`git stash <sub> stash@{index}`;apply/pop 冲突 → MergeConflict。
     fn run_stash_mutation(&self, repo: &Path, sub: &str, index: usize) -> Result<(), GitError> {
         let spec = format!("stash@{{{index}}}");
-        let out = Command::new("git")
+        let out = git_command()
             .arg("-C")
             .arg(repo)
             .arg("stash")
@@ -1323,7 +1341,7 @@ impl CliBackend {
 
 /// 把一段 patch 通过 stdin 喂给 `git apply --cached`(reverse 时加 --reverse)。
 fn apply_cached(repo: &Path, patch: &str, reverse: bool) -> Result<(), GitError> {
-    let mut cmd = Command::new("git");
+    let mut cmd = git_command();
     cmd.arg("-C").arg(repo).arg("apply").arg("--cached");
     if reverse {
         cmd.arg("--reverse");
@@ -1360,9 +1378,21 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_git_commands_use_no_console_window_flag() {
+        assert_eq!(CREATE_NO_WINDOW, 0x08000000);
+    }
+
+    #[test]
+    fn git_command_can_spawn_git() {
+        let out = git_command().arg("--version").output().unwrap();
+        assert!(out.status.success());
+    }
+
     /// 在某目录里跑 git(arrange 用)。被测的是 CliBackend.fetch。
     fn git(dir: &Path, args: &[&str]) {
-        let ok = Command::new("git")
+        let ok = git_command()
             .current_dir(dir)
             .args(args)
             .output()
@@ -1374,7 +1404,7 @@ mod tests {
 
     /// 用 git CLI 读某 ref 的 SHA(避免引入 git2 依赖,保持本模块 feature 无关)。
     fn rev_parse(repo: &Path, spec: &str) -> String {
-        let out = Command::new("git")
+        let out = git_command()
             .current_dir(repo)
             .args(["rev-parse", spec])
             .output()
@@ -1543,7 +1573,7 @@ mod tests {
             .amend_commit(repo.path(), Some("amended"))
             .unwrap();
         let msg = {
-            let out = Command::new("git")
+            let out = git_command()
                 .current_dir(repo.path())
                 .args(["log", "-1", "--format=%s"])
                 .output()
@@ -1575,7 +1605,7 @@ mod tests {
             "被 hook 拦截应为 Backend 错误"
         );
         // 提交未发生:HEAD 仍未生(空仓库)。
-        let head = Command::new("git")
+        let head = git_command()
             .current_dir(repo.path())
             .args(["rev-parse", "--verify", "HEAD"])
             .output()
@@ -1746,7 +1776,7 @@ mod tests {
                 .trim_end(),
             "from-B"
         );
-        let merges = Command::new("git")
+        let merges = git_command()
             .current_dir(b.path())
             .args(["rev-list", "--count", "--merges", "HEAD"])
             .output()
@@ -1812,7 +1842,7 @@ mod tests {
             "首次 push 后远程应有该提交"
         );
         // 上游确实建立了
-        let up = Command::new("git")
+        let up = git_command()
             .current_dir(a.path())
             .args(["rev-parse", "--abbrev-ref", "main@{u}"])
             .output()
@@ -1862,7 +1892,7 @@ mod tests {
         if cached {
             args.push("--cached");
         }
-        let out = Command::new("git")
+        let out = git_command()
             .current_dir(repo)
             .args(&args)
             .output()
@@ -1935,7 +1965,7 @@ mod tests {
         std::fs::write(repo.path().join("f.txt"), "main\n").unwrap();
         git(repo.path(), &["commit", "-am", "cM"]);
         // merge 会因冲突返回非零退出 —— 不能用断言成功的 git() helper。
-        let _ = Command::new("git")
+        let _ = git_command()
             .current_dir(repo.path())
             .args(["merge", "other"])
             .output()
@@ -1944,7 +1974,7 @@ mod tests {
     }
 
     fn porcelain(repo: &Path) -> String {
-        let out = Command::new("git")
+        let out = git_command()
             .current_dir(repo)
             .args(["status", "--porcelain"])
             .output()
@@ -2019,7 +2049,7 @@ mod tests {
     }
 
     fn log_subjects(repo: &Path) -> Vec<String> {
-        let out = Command::new("git")
+        let out = git_command()
             .current_dir(repo)
             .args(["log", "--format=%s"])
             .output()
@@ -2097,7 +2127,7 @@ mod tests {
         // 回滚 c2 → g.txt 应消失,且生成新提交
         CliBackend.revert(repo.path(), &sha).unwrap();
         assert!(!repo.path().join("g.txt").exists(), "回滚后 g.txt 应被移除");
-        let log = Command::new("git")
+        let log = git_command()
             .current_dir(repo.path())
             .args(["log", "--oneline"])
             .output()
