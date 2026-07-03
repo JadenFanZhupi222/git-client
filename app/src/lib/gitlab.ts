@@ -39,6 +39,17 @@ export interface GitlabMergeRequestNote {
   internal: boolean;
 }
 
+export interface GitlabMergeRequestDiscussion {
+  id: string;
+  resolvable: boolean;
+  resolved: boolean;
+  path: string;
+  line: number | null;
+  author: string | null;
+  body: string;
+  updatedAt: string;
+}
+
 export interface GitlabMergeRequestDetails
   extends GitlabMergeRequestSummary {
   changesCount: string;
@@ -50,6 +61,7 @@ export interface GitlabMergeRequestDetails
   latestPipeline: GitlabPipelineSummary | null;
   approvals: GitlabApprovalSummary | null;
   notes: GitlabMergeRequestNote[];
+  discussions: GitlabMergeRequestDiscussion[];
 }
 
 export interface CreateGitlabMergeRequestInput {
@@ -108,6 +120,30 @@ interface GitlabMergeRequestNoteResponse {
   internal?: boolean | null;
 }
 
+interface GitlabDiscussionResponse {
+  id: string;
+  individual_note?: boolean | null;
+  notes?: GitlabDiscussionNoteResponse[] | null;
+}
+
+interface GitlabDiscussionNoteResponse {
+  id: number;
+  type?: string | null;
+  body?: string | null;
+  author?: { username?: string | null } | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  system?: boolean | null;
+  resolvable?: boolean | null;
+  resolved?: boolean | null;
+  position?: {
+    new_path?: string | null;
+    old_path?: string | null;
+    new_line?: number | null;
+    old_line?: number | null;
+  } | null;
+}
+
 export function buildGitlabMergeRequestsApiUrl(
   remote: HostingRemote,
   branch: string | null,
@@ -162,6 +198,14 @@ export function buildGitlabMergeRequestNotesApiUrl(
     per_page: "5",
   });
   return `${buildGitlabMergeRequestApiUrl(remote, iid)}/notes?${params.toString()}`;
+}
+
+export function buildGitlabMergeRequestDiscussionsApiUrl(
+  remote: HostingRemote,
+  iid: number,
+): string {
+  const params = new URLSearchParams({ per_page: "20" });
+  return `${buildGitlabMergeRequestApiUrl(remote, iid)}/discussions?${params.toString()}`;
 }
 
 export function buildGitlabMergeRequestNoteCreateApiUrl(
@@ -276,6 +320,19 @@ export async function fetchGitlabMergeRequestDetails(
     );
   }
 
+  let discussions: GitlabMergeRequestDiscussion[] = [];
+  const discussionsResponse = await fetcher(
+    buildGitlabMergeRequestDiscussionsApiUrl(remote, iid),
+    { headers: gitlabHeaders(token) },
+  );
+  if (discussionsResponse.ok) {
+    discussions = ((await discussionsResponse.json()) as GitlabDiscussionResponse[])
+      .map(toMergeRequestDiscussion)
+      .filter((discussion): discussion is GitlabMergeRequestDiscussion =>
+        Boolean(discussion),
+      );
+  }
+
   return {
     ...toMergeRequestSummary(detail),
     changesCount: detail.changes_count ?? "",
@@ -288,6 +345,7 @@ export async function fetchGitlabMergeRequestDetails(
     latestPipeline: pipelines[0] ? toPipelineSummary(pipelines[0]) : null,
     approvals,
     notes,
+    discussions,
   };
 }
 
@@ -469,5 +527,25 @@ function toMergeRequestNote(
     updatedAt: note.updated_at ?? "",
     system: note.system ?? false,
     internal: note.internal ?? false,
+  };
+}
+
+function toMergeRequestDiscussion(
+  discussion: GitlabDiscussionResponse,
+): GitlabMergeRequestDiscussion | null {
+  const note = (discussion.notes ?? []).find(
+    (entry) => !entry.system && entry.body,
+  );
+  if (!note) return null;
+  const position = note.position;
+  return {
+    id: discussion.id,
+    resolvable: note.resolvable ?? false,
+    resolved: note.resolved ?? false,
+    path: position?.new_path ?? position?.old_path ?? "",
+    line: position?.new_line ?? position?.old_line ?? null,
+    author: note.author?.username ?? null,
+    body: note.body ?? "",
+    updatedAt: note.updated_at ?? "",
   };
 }

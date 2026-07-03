@@ -429,6 +429,9 @@ function MergeRequestDetailsView({
       )}
       {detail.notes.length > 0 && (
         <div className="grid gap-1.5 border-t border-line pt-2">
+          <div className="text-[10px] uppercase tracking-wide text-fg-subtle">
+            Notes
+          </div>
           {detail.notes.map((note) => (
             <div
               key={note.id}
@@ -444,6 +447,32 @@ function MergeRequestDetailsView({
               </div>
               <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-[11px] leading-4 text-fg">
                 {note.body}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+      {detail.discussions.length > 0 && (
+        <div className="grid gap-1.5 border-t border-line pt-2">
+          <div className="text-[10px] uppercase tracking-wide text-fg-subtle">
+            Discussions
+          </div>
+          {detail.discussions.slice(-3).map((discussion) => (
+            <div
+              key={discussion.id}
+              className="rounded border border-line bg-elevated/50 px-2 py-1.5"
+            >
+              <div className="flex min-w-0 items-center gap-2 text-[10px] text-fg-subtle">
+                <span className="truncate font-mono">
+                  {gitlabDiscussionLocation(discussion)}
+                </span>
+                <span>{discussion.resolved ? "resolved" : "unresolved"}</span>
+                <span className="ml-auto truncate">
+                  {discussion.author ?? "unknown"}
+                </span>
+              </div>
+              <p className="mt-1 line-clamp-2 whitespace-pre-wrap text-[11px] leading-4 text-fg">
+                {discussion.body}
               </p>
             </div>
           ))}
@@ -514,6 +543,12 @@ function formatGitlabDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
+}
+
+function gitlabDiscussionLocation(
+  discussion: GitlabMergeRequestDetails["discussions"][number],
+): string {
+  return discussion.line ? `${discussion.path}:${discussion.line}` : discussion.path;
 }
 
 function findGitlabRemote(

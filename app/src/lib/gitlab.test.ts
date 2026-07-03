@@ -8,6 +8,7 @@ import {
   buildGitlabMergeRequestNoteCreateApiUrl,
   buildGitlabMergeRequestNotesApiUrl,
   buildGitlabMergeRequestPipelinesApiUrl,
+  buildGitlabMergeRequestDiscussionsApiUrl,
   buildGitlabMergeRequestUnapproveApiUrl,
   buildGitlabMergeRequestsApiUrl,
   createGitlabMergeRequest,
@@ -65,6 +66,9 @@ describe("GitLab merge request detail URLs", () => {
     );
     expect(buildGitlabMergeRequestNotesApiUrl(gitlabRemote, 18)).toBe(
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/notes?sort=desc&order_by=updated_at&per_page=5",
+    );
+    expect(buildGitlabMergeRequestDiscussionsApiUrl(gitlabRemote, 18)).toBe(
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/discussions?per_page=20",
     );
     expect(buildGitlabMergeRequestNoteCreateApiUrl(gitlabRemote, 18)).toBe(
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/notes",
@@ -317,6 +321,36 @@ describe("fetchGitlabMergeRequestDetails", () => {
           ]),
           { status: 200 },
         ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              id: "discussion-1",
+              individual_note: false,
+              notes: [
+                {
+                  id: 701,
+                  type: "DiffNote",
+                  body: "This branch should handle null refs.",
+                  author: { username: "reviewer-b" },
+                  created_at: "2026-07-01T11:00:00.000Z",
+                  updated_at: "2026-07-01T11:05:00.000Z",
+                  system: false,
+                  resolvable: true,
+                  resolved: false,
+                  position: {
+                    new_path: "src/git.ts",
+                    old_path: "src/git.ts",
+                    new_line: 42,
+                    old_line: null,
+                  },
+                },
+              ],
+            },
+          ]),
+          { status: 200 },
+        ),
       );
 
     const detail = await fetchGitlabMergeRequestDetails(
@@ -359,6 +393,16 @@ describe("fetchGitlabMergeRequestDetails", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       4,
       "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/notes?sort=desc&order_by=updated_at&per_page=5",
+      {
+        headers: {
+          Accept: "application/json",
+          "PRIVATE-TOKEN": "glpat_secret",
+        },
+      },
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      5,
+      "https://gitlab.com/api/v4/projects/team%2Fsubgroup%2Fproject/merge_requests/18/discussions?per_page=20",
       {
         headers: {
           Accept: "application/json",
@@ -415,6 +459,18 @@ describe("fetchGitlabMergeRequestDetails", () => {
           updatedAt: "2026-07-01T09:00:00.000Z",
           system: true,
           internal: false,
+        },
+      ],
+      discussions: [
+        {
+          id: "discussion-1",
+          resolvable: true,
+          resolved: false,
+          path: "src/git.ts",
+          line: 42,
+          author: "reviewer-b",
+          body: "This branch should handle null refs.",
+          updatedAt: "2026-07-01T11:05:00.000Z",
         },
       ],
     });

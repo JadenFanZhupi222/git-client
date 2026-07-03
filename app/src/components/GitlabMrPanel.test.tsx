@@ -115,6 +115,36 @@ describe("GitlabMrPanel", () => {
       )
       .mockResolvedValueOnce(
         new Response(
+          JSON.stringify([
+            {
+              id: "discussion-1",
+              individual_note: false,
+              notes: [
+                {
+                  id: 701,
+                  type: "DiffNote",
+                  body: "This branch should handle null refs.",
+                  author: { username: "reviewer-b" },
+                  created_at: "2026-07-01T11:00:00.000Z",
+                  updated_at: "2026-07-01T11:05:00.000Z",
+                  system: false,
+                  resolvable: true,
+                  resolved: false,
+                  position: {
+                    new_path: "src/git.ts",
+                    old_path: "src/git.ts",
+                    new_line: 42,
+                    old_line: null,
+                  },
+                },
+              ],
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
           JSON.stringify({
             id: 503,
             body: "Please re-run the failed job.",
@@ -190,8 +220,13 @@ describe("GitlabMrPanel", () => {
     expect(screen.getByText("Approvals")).toBeInTheDocument();
     expect(screen.getByText("1/2 approved")).toBeInTheDocument();
     expect(screen.getAllByText("reviewer-a").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Notes")).toBeInTheDocument();
+    expect(screen.getAllByText("Notes").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Looks good after the pipeline fix.")).toBeInTheDocument();
+    expect(screen.getByText("src/git.ts:42")).toBeInTheDocument();
+    expect(screen.getByText("unresolved")).toBeInTheDocument();
+    expect(
+      screen.getByText("This branch should handle null refs."),
+    ).toBeInTheDocument();
 
     await userEvent.type(
       screen.getByLabelText("New merge request note"),
