@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { setLang } from "../lib/i18n";
 import { GithubCreatePrDialog } from "./GithubCreatePrDialog";
 import { ToastProvider } from "./Toast";
 
@@ -28,6 +29,34 @@ describe("GithubCreatePrDialog", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    localStorage.clear();
+    setLang("en");
+  });
+
+  it("renders create PR copy in English", () => {
+    setLang("en");
+    render(
+      <ToastProvider>
+        <GithubCreatePrDialog
+          remotes={remotes}
+          branch="feature/selectors"
+          preferredRemote="origin"
+          onClose={vi.fn()}
+          onConfigureToken={vi.fn()}
+        />
+      </ToastProvider>,
+    );
+
+    expect(screen.getByRole("dialog", { name: "Create GitHub pull request" })).toBeInTheDocument();
+    expect(screen.getByText("Create GitHub PR")).toBeInTheDocument();
+    expect(screen.getByLabelText("Title")).toBeInTheDocument();
+    expect(screen.getByLabelText("Head")).toBeInTheDocument();
+    expect(screen.getByLabelText("Base")).toBeInTheDocument();
+    expect(screen.getByLabelText("Body")).toBeInTheDocument();
+    expect(screen.getByLabelText("Draft pull request")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Token" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create" })).toBeInTheDocument();
   });
 
   it("uses selectable head and base branches when creating a pull request", async () => {

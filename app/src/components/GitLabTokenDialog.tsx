@@ -7,9 +7,11 @@ import {
 } from "../ipc";
 import { CloseIcon, SpinnerIcon } from "./icons";
 import { useToast } from "./Toast";
+import { useT } from "../lib/i18n";
 
 export function GitLabTokenDialog({ onClose }: { onClose: () => void }) {
   const toast = useToast();
+  const t = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   const [token, setToken] = useState("");
   const [hasToken, setHasToken] = useState(false);
@@ -46,7 +48,7 @@ export function GitLabTokenDialog({ onClose }: { onClose: () => void }) {
     setBusy(true);
     try {
       await setGitlabToken(token);
-      toast({ kind: "success", title: "GitLab token 已保存" });
+      toast({ kind: "success", title: t("collabToken.gitlabSaved") });
       setToken("");
       setHasToken(true);
       onClose();
@@ -62,7 +64,7 @@ export function GitLabTokenDialog({ onClose }: { onClose: () => void }) {
     setBusy(true);
     try {
       await clearGitlabToken();
-      toast({ kind: "success", title: "GitLab token 已清除" });
+      toast({ kind: "success", title: t("collabToken.gitlabCleared") });
       setHasToken(false);
       setToken("");
     } catch (e) {
@@ -89,11 +91,11 @@ export function GitLabTokenDialog({ onClose }: { onClose: () => void }) {
         }}
       >
         <div className="flex items-center gap-2 border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold text-fg">GitLab Token</h2>
+          <h2 className="text-sm font-semibold text-fg">{t("collabToken.gitlabTitle")}</h2>
           <button
             type="button"
             onClick={onClose}
-            aria-label="关闭"
+            aria-label={t("collabToken.close")}
             className="ml-auto grid h-6 w-6 place-items-center rounded text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
           >
             <CloseIcon width={13} height={13} />
@@ -102,18 +104,20 @@ export function GitLabTokenDialog({ onClose }: { onClose: () => void }) {
 
         <div className="flex flex-col gap-3 px-4 py-4">
           <div className="rounded border border-line bg-elevated px-3 py-2 text-xs text-fg-muted">
-            当前状态: {hasToken ? "已保存到系统凭据库" : "未设置"}
+            {t("collabToken.currentStatus", {
+              status: hasToken ? t("collabToken.statusSaved") : t("collabToken.statusUnset"),
+            })}
           </div>
           <label className="flex flex-col gap-1">
             <span className="text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
-              Personal access token
+              {t("collabToken.label")}
             </span>
             <input
               ref={inputRef}
               type="password"
               value={token}
               onChange={(e) => setToken(e.target.value)}
-              placeholder="glpat-..."
+              placeholder={t("collabToken.gitlabPlaceholder")}
               className="rounded bg-canvas px-2.5 py-1.5 font-mono text-xs text-fg placeholder:text-fg-subtle field"
             />
           </label>
@@ -126,7 +130,7 @@ export function GitLabTokenDialog({ onClose }: { onClose: () => void }) {
             disabled={busy || !hasToken}
             className="rounded-md px-3 py-1.5 text-xs text-danger transition-colors hover:bg-danger/10 disabled:opacity-50"
           >
-            清除
+            {t("collabToken.clear")}
           </button>
           <div className="flex gap-2">
             <button
@@ -135,7 +139,7 @@ export function GitLabTokenDialog({ onClose }: { onClose: () => void }) {
               disabled={busy}
               className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
             >
-              取消
+              {t("collabToken.cancel")}
             </button>
             <button
               type="submit"
@@ -143,7 +147,7 @@ export function GitLabTokenDialog({ onClose }: { onClose: () => void }) {
               className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {busy ? <SpinnerIcon width={13} height={13} /> : null}
-              保存
+              {t("collabToken.save")}
             </button>
           </div>
         </div>

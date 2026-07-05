@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { setLang } from "../lib/i18n";
 import { GithubPrPanel } from "./GithubPrPanel";
 import { ToastProvider } from "./Toast";
 
@@ -28,6 +29,172 @@ describe("GithubPrPanel", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    localStorage.clear();
+    setLang("en");
+  });
+
+  it("renders panel shell copy in Chinese", async () => {
+    setLang("zh");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ToastProvider>
+        <GithubPrPanel
+          remotes={remotes}
+          branch="feature/empty"
+          preferredRemote="origin"
+          onClose={vi.fn()}
+          onConfigureToken={vi.fn()}
+        />
+      </ToastProvider>,
+    );
+
+    expect(screen.getByRole("dialog", { name: "GitHub 拉取请求" })).toBeInTheDocument();
+    expect(screen.getByText("GitHub PR")).toBeInTheDocument();
+    expect(await screen.findByText("当前分支没有打开的 PR")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "设置 token" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "刷新" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "关闭" })).toHaveLength(2);
+  });
+
+  it("renders pull request detail copy in Chinese", async () => {
+    setLang("zh");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              number: 7,
+              title: "Ship GitHub details",
+              html_url: "https://github.com/team/project/pull/7",
+              user: { login: "dev-a" },
+              head: { ref: "feature/details", sha: "abc123" },
+              base: { ref: "main" },
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            number: 7,
+            title: "Ship GitHub details",
+            html_url: "https://github.com/team/project/pull/7",
+            mergeable: true,
+            mergeable_state: "clean",
+            comments: 2,
+            review_comments: 1,
+            commits: 3,
+            changed_files: 4,
+            additions: 24,
+            deletions: 8,
+            user: { login: "dev-a" },
+            head: { ref: "feature/details", sha: "abc123" },
+            base: { ref: "main" },
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([{ state: "APPROVED", user: { login: "reviewer-a" } }]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            state: "success",
+            total_count: 1,
+            statuses: [{ context: "ci/test", state: "success" }],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            total_count: 1,
+            check_runs: [
+              {
+                id: 501,
+                name: "build / linux",
+                status: "completed",
+                conclusion: "success",
+                html_url: "https://github.com/team/project/actions/runs/501",
+                app: { slug: "github-actions" },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              id: 201,
+              body: "Looks good after the retry.",
+              html_url: "https://github.com/team/project/pull/7#issuecomment-201",
+              user: { login: "reviewer-a" },
+              created_at: "2026-07-03T09:00:00Z",
+              updated_at: "2026-07-03T09:00:00Z",
+            },
+          ]),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              id: 401,
+              body: "This branch should handle null refs.",
+              html_url: "https://github.com/team/project/pull/7#discussion_r401",
+              path: "src/git.ts",
+              line: 42,
+              user: { login: "reviewer-b" },
+            },
+          ]),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ToastProvider>
+        <GithubPrPanel
+          remotes={remotes}
+          branch="feature/details"
+          preferredRemote="origin"
+          onClose={vi.fn()}
+          onConfigureToken={vi.fn()}
+        />
+      </ToastProvider>,
+    );
+
+    expect(await screen.findByText("#7 Ship GitHub details")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "详情" }));
+
+    expect(await screen.findByText("合并状态")).toBeInTheDocument();
+    expect(screen.getByText("状态")).toBeInTheDocument();
+    expect(screen.getByText("评审")).toBeInTheDocument();
+    expect(screen.getByText("变更")).toBeInTheDocument();
+    expect(screen.getByText("4 个文件")).toBeInTheDocument();
+    expect(screen.getByText("3 个提交")).toBeInTheDocument();
+    expect(screen.getByText("2 条评论")).toBeInTheDocument();
+    expect(screen.getByText("1 条评审评论")).toBeInTheDocument();
+    expect(screen.getByText("检查运行")).toBeInTheDocument();
+    expect(screen.getByText("最近评论")).toBeInTheDocument();
+    expect(screen.getByText("评审讨论")).toBeInTheDocument();
+    expect(screen.getByLabelText("合并方式")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "合并" })).toBeInTheDocument();
+    expect(screen.getByLabelText("新建拉取请求评论")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("写一条评论")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "评论" })).toBeInTheDocument();
   });
 
   it("loads pull request details and creates a conversation comment", async () => {

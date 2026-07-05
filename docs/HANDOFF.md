@@ -141,8 +141,26 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
     + 命令面板;成功后自动打开新仓库。⚠️ **trait 方法命名 `clone_repo` 而非 `clone`** —— 否则与
     `Clone::clone` 在 `Arc<dyn GitBackend>` 上撞名,所有 `.clone(url,dst)` 调用点会误解析成 Arc 的 0 参 clone。
   - ⚠️ 真机视觉验收待做:远程管理面板、merge 冲突跳转、clone 进度/认证失败提示、init 后空仓库视图。
-  - **Tier 0 仍剩**:diff 语法高亮(CodeMirror lang-*)、跨平台 CI/签名(属 infra)。下一刀候选见
-    `2026-06-17-path-to-number-one.md` 的「5 件事」:② 语法高亮 ③ i18n 骨架 ④ AI 提交信息(BYOK+Haiku,
+  - ✅ **diff / 冲突编辑器语法高亮**(2026-07-05,纯前端):`app/src/lib/syntax.ts` 做路径语言识别 + 轻量单行 tokenization,
+    `DiffView` 在统一/并排两种视图里复用同一套 token 渲染,保留词级 emphasis 与行级暂存;`ConflictEditor`
+    通过 `cmSyntax.ts` 转 CodeMirror decoration,三栏共享语法高亮。无 Rust / IPC / DTO 变更。
+  - ✅ **协作 token 弹窗 i18n 切片**(2026-07-05,纯前端):GitHub/GitLab token 设置弹窗的状态、按钮、
+    placeholder、成功 toast 全部接入 `useT()` 和 `collabToken.*` 字典键;补 `TokenDialogs.test.tsx`
+    锁定中英文切换行为。PR/MR 大面板仍有散落文案,后续按面板继续切。
+  - ✅ **协作创建 PR/MR 弹窗 i18n 切片**(2026-07-05,纯前端):GitHub 创建 PR / GitLab 创建 MR 弹窗
+    的标题、字段、草稿、缺远程提示、token/cancel/create 按钮和 toast 接入 `collabCreate.*`;
+    原有 API payload 测试保留,新增中英文可见文案断言。PR/MR 列表详情面板仍待继续切。
+  - ✅ **GitHub PR 面板外壳 i18n 切片**(2026-07-06,纯前端):`GithubPrPanel` 的 dialog 名称、标题、
+    远程/分支 fallback、缺远程/缺分支错误、loading/empty 状态、列表打开/详情按钮、底部 token/refresh/close
+    接入 `githubPr.*`;详情区指标、check runs、comments、merge/comment 控件仍留给后续切片。
+  - ✅ **GitHub PR 详情区 i18n 切片**(2026-07-06,纯前端):`GithubPrPanel` 详情体里的指标 label、
+    计数单位、Check runs/Recent comments/Review threads 标题、merge method/options、merge/comment 按钮、
+    评论输入 label/placeholder 接入 `githubPrDetail.*`;API 状态、CI 名称、用户、日期、toast、阻塞原因仍保持原样。
+  - ✅ **GitLab MR 面板外壳 i18n 切片**(2026-07-06,纯前端):`GitlabMrPanel` 的 dialog 名称、标题、
+    远程/分支 fallback、缺远程/缺分支错误、loading/empty 状态、列表打开/详情按钮、底部 token/refresh/close
+    接入 `gitlabMr.*`;详情区 approvals、notes、discussions、pipeline jobs、merge/comment 控件仍留给后续切片。
+  - **Tier 0 仍剩**:跨平台 CI/签名(属 infra)。下一刀候选见
+    `2026-06-17-path-to-number-one.md` 的「5 件事」:③ i18n 骨架 ④ AI 提交信息(BYOK+Haiku,
     用户已认可方向但本轮暂不做)⑤ M7 GitHub PR。
 - **下一里程碑:M7 · 协作/PR**(原 roadmap M6,见 `2026-06-08-world-class-roadmap.md`)。
 - ⚠️ **真机视觉/交互验收欠账**(自动门 test/clippy/fmt/tsc/build 全过):M5 各刀、图片 diff、

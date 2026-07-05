@@ -17,6 +17,7 @@ import {
 } from "../lib/hosting";
 import { CloseIcon, SpinnerIcon } from "./icons";
 import { useToast } from "./Toast";
+import { useT } from "../lib/i18n";
 
 export function GithubPrPanel({
   remotes,
@@ -32,6 +33,7 @@ export function GithubPrPanel({
   onConfigureToken: () => void;
 }) {
   const toast = useToast();
+  const t = useT();
   const [pulls, setPulls] = useState<GithubPullRequestSummary[]>([]);
   const [detailByNumber, setDetailByNumber] = useState<
     Record<number, GithubPullRequestDetails>
@@ -71,7 +73,7 @@ export function GithubPrPanel({
         setPulls([]);
         setDetailByNumber({});
         setError(
-          branch ? "当前仓库没有 GitHub 远程地址" : "当前仓库还没有本地分支",
+          branch ? t("githubPr.errNoRemote") : t("githubPr.errNoBranch"),
         );
         return;
       }
@@ -202,16 +204,16 @@ export function GithubPrPanel({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="GitHub pull requests"
+        aria-label={t("githubPr.dialog")}
         className="panel-in popover flex max-h-[78vh] w-[560px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-line px-4 py-3">
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-fg">GitHub PR</h2>
+            <h2 className="text-sm font-semibold text-fg">{t("githubPr.title")}</h2>
             <p className="truncate text-[11px] text-fg-subtle">
-              {remote ? `${remote.owner}/${remote.repo}` : "未识别 GitHub 远程"}{" "}
-              · {branch ?? "无分支"}
+              {remote ? `${remote.owner}/${remote.repo}` : t("githubPr.unknownRemote")}{" "}
+              · {branch ?? t("githubPr.noBranch")}
             </p>
           </div>
           <button
@@ -226,7 +228,7 @@ export function GithubPrPanel({
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           {loading ? (
             <div className="flex items-center gap-2 py-8 text-xs text-fg-subtle">
-              <SpinnerIcon width={13} height={13} /> 正在读取 GitHub PR
+              <SpinnerIcon width={13} height={13} /> {t("githubPr.loading")}
             </div>
           ) : error ? (
             <div className="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
@@ -234,7 +236,7 @@ export function GithubPrPanel({
             </div>
           ) : pulls.length === 0 ? (
             <p className="py-8 text-center text-xs text-fg-subtle">
-              当前分支没有 open PR
+              {t("githubPr.empty")}
             </p>
           ) : (
             <ul className="flex flex-col gap-2">
@@ -267,14 +269,14 @@ export function GithubPrPanel({
                       onClick={() => openPull(pr.url)}
                       className="shrink-0 rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
                     >
-                      打开
+                      {t("githubPr.open")}
                     </button>
                     <button
                       onClick={() => loadDetail(pr)}
                       disabled={detailLoading === pr.number}
                       className="shrink-0 rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
                     >
-                      {detailLoading === pr.number ? "Loading" : "Details"}
+                      {detailLoading === pr.number ? t("githubPr.detailsLoading") : t("githubPr.details")}
                     </button>
                   </div>
                   {detailByNumber[pr.number] && (
@@ -298,21 +300,21 @@ export function GithubPrPanel({
               onClick={onConfigureToken}
               className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
             >
-              设置 token
+              {t("githubPr.setToken")}
             </button>
             <button
               onClick={() => loadList()}
               disabled={loading}
               className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
             >
-              Refresh
+              {t("githubPr.refresh")}
             </button>
           </div>
           <button
             onClick={onClose}
             className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
           >
-            关闭
+            {t("githubPr.close")}
           </button>
         </div>
       </div>
@@ -339,6 +341,7 @@ function PullRequestDetailsView({
     method: GithubPullMergeMethod,
   ) => void;
 }) {
+  const t = useT();
   const [commentBody, setCommentBody] = useState("");
   const [mergeMethod, setMergeMethod] =
     useState<GithubPullMergeMethod>("merge");
@@ -362,20 +365,20 @@ function PullRequestDetailsView({
   return (
     <div className="mt-3 grid gap-2 rounded-md border border-line bg-canvas/60 p-3 text-xs">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <DetailMetric label="Merge" value={mergeableLabel(detail)} />
+        <DetailMetric label={t("githubPrDetail.metricMerge")} value={mergeableLabel(detail)} />
         <DetailMetric
-          label="Status"
+          label={t("githubPrDetail.metricStatus")}
           value={detail.combinedStatus?.state ?? "unknown"}
         />
-        <DetailMetric label="Reviews" value={reviewSummary(reviewCounts)} />
-        <DetailMetric label="Changes" value={`${detail.changedFiles} files`} />
+        <DetailMetric label={t("githubPrDetail.metricReviews")} value={reviewSummary(reviewCounts, t)} />
+        <DetailMetric label={t("githubPrDetail.metricChanges")} value={t("githubPrDetail.files", { count: detail.changedFiles })} />
       </div>
       <div className="flex flex-wrap gap-2 text-[11px] text-fg-subtle">
-        <span>{detail.commits} commits</span>
+        <span>{t("githubPrDetail.commits", { count: detail.commits })}</span>
         <span>+{detail.additions}</span>
         <span>-{detail.deletions}</span>
-        <span>{detail.comments} comments</span>
-        <span>{detail.reviewComments} review comments</span>
+        <span>{t("githubPrDetail.comments", { count: detail.comments })}</span>
+        <span>{t("githubPrDetail.reviewComments", { count: detail.reviewComments })}</span>
       </div>
       {detail.combinedStatus && detail.combinedStatus.statuses.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
@@ -392,7 +395,7 @@ function PullRequestDetailsView({
       {detail.checkRuns.length > 0 && (
         <div className="grid gap-1.5 border-t border-line pt-2">
           <div className="text-[10px] uppercase tracking-wide text-fg-subtle">
-            Check runs
+            {t("githubPrDetail.checkRuns")}
           </div>
           <div className="grid gap-1.5">
             {detail.checkRuns.slice(0, 6).map((run) => (
@@ -407,7 +410,7 @@ function PullRequestDetailsView({
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate font-medium text-fg">
-                    {run.name || "unnamed check"}
+                    {run.name || t("githubPrDetail.unnamedCheck")}
                   </span>
                   <span className="shrink-0 font-mono text-[10px] text-fg-muted">
                     {run.conclusion ?? run.status}
@@ -425,7 +428,7 @@ function PullRequestDetailsView({
       {detail.recentComments.length > 0 && (
         <div className="grid gap-1.5 border-t border-line pt-2">
           <div className="text-[10px] uppercase tracking-wide text-fg-subtle">
-            Recent comments
+            {t("githubPrDetail.recentComments")}
           </div>
           <div className="grid gap-1.5">
             {detail.recentComments.slice(-3).map((comment) => (
@@ -445,7 +448,7 @@ function PullRequestDetailsView({
                   </span>
                 </div>
                 <p className="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-xs text-fg">
-                  {comment.body || "(empty comment)"}
+                  {comment.body || t("githubPrDetail.emptyComment")}
                 </p>
               </a>
             ))}
@@ -455,7 +458,7 @@ function PullRequestDetailsView({
       {detail.reviewThreads.length > 0 && (
         <div className="grid gap-1.5 border-t border-line pt-2">
           <div className="text-[10px] uppercase tracking-wide text-fg-subtle">
-            Review threads
+            {t("githubPrDetail.reviewThreads")}
           </div>
           <div className="grid gap-1.5">
             {detail.reviewThreads.slice(-3).map((thread) => (
@@ -475,7 +478,7 @@ function PullRequestDetailsView({
                   <span className="shrink-0">{thread.author ?? "unknown"}</span>
                 </div>
                 <p className="mt-1 line-clamp-3 whitespace-pre-wrap break-words text-xs text-fg">
-                  {thread.body || "(empty review comment)"}
+                  {thread.body || t("githubPrDetail.emptyReviewComment")}
                 </p>
               </a>
             ))}
@@ -488,7 +491,7 @@ function PullRequestDetailsView({
             className="sr-only"
             htmlFor={`github-pr-merge-method-${detail.number}`}
           >
-            Merge method
+            {t("githubPrDetail.mergeMethod")}
           </label>
           <select
             id={`github-pr-merge-method-${detail.number}`}
@@ -498,16 +501,16 @@ function PullRequestDetailsView({
             }
             className="h-7 rounded-md border border-line bg-elevated px-2 text-xs text-fg outline-none transition-colors focus:border-accent"
           >
-            <option value="merge">Merge commit</option>
-            <option value="squash">Squash</option>
-            <option value="rebase">Rebase</option>
+            <option value="merge">{t("githubPrDetail.methodMergeCommit")}</option>
+            <option value="squash">{t("githubPrDetail.methodSquash")}</option>
+            <option value="rebase">{t("githubPrDetail.methodRebase")}</option>
           </select>
           <button
             onClick={() => onMerge(detail, mergeMethod)}
             disabled={Boolean(mergeBlockedReason) || mergingPull}
             className="rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
           >
-            {mergingPull ? "Merging" : "Merge"}
+            {mergingPull ? t("githubPrDetail.merging") : t("githubPrDetail.merge")}
           </button>
           {mergeBlockedReason && (
             <span className="text-[11px] text-fg-subtle">
@@ -518,7 +521,7 @@ function PullRequestDetailsView({
       </div>
       <div className="grid gap-1.5 border-t border-line pt-2">
         <label className="sr-only" htmlFor={`github-pr-comment-${detail.number}`}>
-          New pull request comment
+          {t("githubPrDetail.newComment")}
         </label>
         <textarea
           id={`github-pr-comment-${detail.number}`}
@@ -526,7 +529,7 @@ function PullRequestDetailsView({
           onChange={(event) => setCommentBody(event.currentTarget.value)}
           rows={2}
           className="min-h-14 resize-y rounded-md border border-line bg-elevated px-2 py-1.5 text-xs text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
-          placeholder="Write a comment"
+          placeholder={t("githubPrDetail.commentPlaceholder")}
         />
         <div className="flex justify-end">
           <button
@@ -534,7 +537,7 @@ function PullRequestDetailsView({
             disabled={!trimmedCommentBody || creatingComment}
             className="rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
           >
-            {creatingComment ? "Commenting" : "Comment"}
+            {creatingComment ? t("githubPrDetail.commenting") : t("githubPrDetail.comment")}
           </button>
         </div>
       </div>
@@ -561,12 +564,17 @@ function mergeableLabel(detail: GithubPullRequestDetails): string {
   return detail.mergeableState ?? "unknown";
 }
 
-function reviewSummary(counts: Record<string, number>): string {
+function reviewSummary(
+  counts: Record<string, number>,
+  t: ReturnType<typeof useT>,
+): string {
   const approved = counts.APPROVED ?? 0;
   const changes = counts.CHANGES_REQUESTED ?? 0;
-  if (approved || changes) return `${approved} approved / ${changes} changes`;
+  if (approved || changes) {
+    return t("githubPrDetail.reviewSummaryChanges", { approved, changes });
+  }
   const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
-  return total ? `${total} reviews` : "none";
+  return total ? t("githubPrDetail.reviewSummaryTotal", { count: total }) : t("githubPrDetail.reviewSummaryNone");
 }
 
 function githubMergeBlockedReason(detail: GithubPullRequestDetails): string | null {

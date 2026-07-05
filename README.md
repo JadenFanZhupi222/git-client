@@ -1,176 +1,196 @@
-# Git 客户端 · 启动指南(阶段 0)
+# Git Client
 
-这个压缩包是**已经编译验证过的架构骨架**。你要做的是:装好环境 → 确认骨架能跑 → 加上 Tauri 外壳和前端 → 让一条命令(读 HEAD)贯通"前端 → Tauri → app-service → git-engine → git-core"全链路,亲眼看到结果。
+A production-oriented desktop Git client built with Tauri 2, React, and a multi-crate Rust workspace.
 
-> 已验证:`git-core` / `ipc-types` / `git-engine` / `app-service` 四个 crate 在本地编译通过,分层测试(注入 FakeBackend)通过。
-> 你机器上要做的:装现代 Rust 后启用真实 git2 后端 + 加 Tauri 外壳(这部分需要你本机的图形/系统依赖,无法在别处替你编译)。
+The long-term target is the quality bar of the Git tooling built into mature IDEs: fast on large repositories, safe for real work, predictable during complex operations, and easy to extend without mixing UI code with Git implementation details.
 
----
+## Current Status
 
-## 第 1 步:安装环境(必须,按你的操作系统来)
+The app already covers the core daily Git workflow and several advanced workflows:
 
-### 1.1 安装 Rust(用 rustup,不要用系统包管理器的旧版)
+- Repository open, clone, and init
+- Status, stage, unstage, hunk and line staging
+- Commit and amend, with Git hooks and signing respected where routed through the CLI backend
+- Commit history, graph view, reflog, file history, line history, blame, and pickaxe search
+- Branch create, checkout, delete, merge, upstream tracking, fetch, pull, and push
+- Remote management: add, rename, remove
+- Stash, tag create/delete, cherry-pick, revert, reset, and interactive rebase
+- Conflict handling with a three-pane CodeMirror merge editor
+- Word-level diff, side-by-side diff, syntax highlighting, image diff, Git LFS pointer handling, submodule/worktree/sparse-checkout awareness
+- GitHub and GitLab collaboration panels for tokens, PR/MR creation, and PR/MR review details
+- Frontend test coverage for the major UI slices added during development
 
-**macOS / Linux**,终端执行:
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-# 装完重开终端,或执行:
-source "$HOME/.cargo/env"
+Some production hardening work is still pending, especially cross-platform CI, signing/notarization, auto-update release plumbing, and full real-device visual QA for the newer advanced diff and image-diff flows.
+
+## Tech Stack
+
+- Desktop shell: Tauri 2.x
+- Frontend: React 19, TypeScript, Vite, TanStack Query, CodeMirror, Tailwind CSS v4 tokens
+- Backend: Rust workspace with separate domain, backend adapter, application service, IPC type, and Tauri crates
+- Git backends: `git2` for common local operations, Git CLI for complex workflows and network/auth-sensitive operations, routed through `CompositeBackend`
+- Type sharing: Rust DTOs exported to TypeScript through `ts-rs`
+- Package manager: pnpm
+
+## Repository Layout
+
+```text
+git-client/
+  app/                    React frontend and Tauri shell
+    src/                  UI, hooks, IPC wrappers, generated bindings
+    src-tauri/            Tauri commands and desktop app bootstrap
+  crates/
+    git-core/             Domain models, GitBackend trait, typed errors
+    git-engine/           git2 / CLI backend implementations and routing
+    app-service/          Use cases, repository context, cache, operation orchestration
+    ipc-types/            DTOs shared across Rust and TypeScript
+  docs/                   Handoff notes, feature plans, implementation specs
+  Cargo.toml              Rust workspace
 ```
 
-**Windows**:去 https://rustup.rs 下载 `rustup-init.exe` 运行。
+## Architecture Rules
 
-验证(应显示 1.85 以上):
-```bash
-rustc --version
-cargo --version
-```
+These rules matter more than any individual implementation detail:
 
-> 为什么强调版本:现代 git 库(gix/git2 的依赖)需要 Rust 1.85+。系统自带的旧 Rust 会编译失败。
+1. All blocking Git work must run inside `spawn_blocking` when called from Tauri async commands.
+2. Upper layers depend on the `GitBackend` trait, not on `git2`, CLI, or any concrete backend.
+3. `git-core` owns domain models and typed errors. It must stay independent of Tauri and backend implementation details.
+4. `git-engine` implements backend adapters. Use the CLI backend for operations where native libraries do not faithfully cover real Git behavior, such as network/auth flows, hooks, signing, interactive rebase, and complex porcelain workflows.
+5. `app-service` orchestrates use cases and repository state. UI components should not know backend details.
+6. Tauri commands are thin adapters: validate input, call `app-service`, map errors to structured IPC errors, and never panic.
+7. Frontend components should call typed IPC wrappers/hooks instead of calling Tauri `invoke` directly.
+8. Frontend colors and typography should use theme tokens from `app/src/index.css`; do not hard-code ad hoc hex colors in components.
 
-### 1.2 安装 Node.js(给前端用)
+## Prerequisites
 
-去 https://nodejs.org 装 LTS 版(20 以上),或用 nvm。验证:
-```bash
-node --version
-npm --version
-```
+Install these before running the project:
 
-### 1.3 安装 Tauri 的系统依赖(平台相关,关键一步)
+- Rust via rustup, matching `rust-toolchain.toml`
+- Node.js LTS
+- pnpm
+- Git, available on `PATH`
+- Tauri system dependencies for your OS
 
-- **macOS**:装 Xcode Command Line Tools
+Tauri prerequisites:
+
+- macOS: Xcode Command Line Tools
+
   ```bash
   xcode-select --install
   ```
-- **Windows**:装 **Microsoft C++ Build Tools**(含 MSVC)+ **WebView2 Runtime**(Win11 自带,Win10 可能要手动装)。
-- **Linux(Debian/Ubuntu)**:
+
+- Windows: Microsoft C++ Build Tools with MSVC and WebView2 Runtime
+- Ubuntu/Debian:
+
   ```bash
   sudo apt update
   sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
     libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
   ```
 
-> 官方完整清单(以最新为准):https://tauri.app/start/prerequisites/
+For the most current platform list, use the official Tauri prerequisites documentation.
 
----
+## Setup
 
-## 第 2 步:确认骨架能编译 + 测试通过
-
-解压本包,进入目录,先验证纯架构部分(用假后端,不依赖系统 git 库):
 ```bash
+git clone <repo-url>
 cd git-client
-cargo test --no-default-features -p app-service
+pnpm --dir app install
 ```
 
-应看到:
-```
-test tests::head_commit_via_fake_backend ... ok
-```
+If dependencies already exist, do not run `npm install` in `app/`. This project is configured for pnpm and npm can disturb the installed dependency layout.
 
-这一步通过,说明你的 Rust 环境 OK,且整套分层架构在你机器上成立。
+## Development
 
-接着验证**真实的 git2 后端**(现在你的 Rust 够新了,这步在本机能成功,沙箱里因 Rust 太旧不行):
-```bash
-cargo build
-```
-默认会启用 `git2-backend` 特性,编译真实的 `Git2Backend`。第一次会下载并编译 libgit2,稍慢,正常。
-
----
-
-## 第 3 步:加上 Tauri 外壳 + 前端
-
-外壳和前端用**官方脚手架**生成最稳(它会正确处理图标、权限、平台配置,这些手写极易出错),然后我们把它接到已有的 crate 上。
-
-### 3.1 在 `git-client/` 目录内生成 Tauri + React 应用
+Run the desktop app:
 
 ```bash
-cd git-client
-npm create tauri-app@latest
-```
-交互式选择:
-- 项目名:输入 `app`(会生成 `git-client/app/` 目录)
-- 前端语言:**TypeScript / JavaScript**
-- 包管理器:**npm**
-- 前端框架:**React**
-- 风格:**TypeScript**
-
-生成后结构大致是 `git-client/app/`(里面有 `src/` 前端 和 `src-tauri/` Rust 外壳)。
-
-### 3.2 把 Tauri 外壳纳入工作区
-
-编辑根 `git-client/Cargo.toml`,在 `members` 里加上外壳路径:
-```toml
-[workspace]
-resolver = "2"
-members = [
-    "crates/git-core",
-    "crates/git-engine",
-    "crates/app-service",
-    "crates/ipc-types",
-    "app/src-tauri",          # ← 新增这行
-]
+pnpm --dir app tauri dev
 ```
 
-### 3.3 让外壳依赖我们的 app-service
-
-编辑 `git-client/app/src-tauri/Cargo.toml`,在 `[dependencies]` 里加:
-```toml
-app-service = { path = "../../crates/app-service" }
-ipc-types   = { path = "../../crates/ipc-types" }
-git-engine  = { path = "../../crates/git-engine" }
-```
-
-### 3.4 接入命令(读 HEAD)—— 贯通全链路
-
-把 `docs/src-tauri-lib.rs` 的内容**参照**着合并进 `git-client/app/src-tauri/src/lib.rs`(关键是注册 `get_head_commit` 命令 + 用 `spawn_blocking` 跑阻塞的 git 操作)。该文件里有详细注释。
-
-### 3.5 接入前端
-
-- 把 `docs/frontend-ipc.ts` 复制到 `git-client/app/src/ipc.ts`
-- 用 `docs/frontend-App.tsx` 的内容替换 `git-client/app/src/App.tsx`
-
----
-
-## 第 4 步:跑起来,看到结果
+Run the frontend-only dev server:
 
 ```bash
-cd git-client/app
-npm install
-npm run tauri dev
+pnpm --dir app dev
 ```
 
-第一次编译较久。窗口起来后:点按钮选一个**本地 git 仓库目录**,界面会显示该仓库 HEAD 的提交 SHA、提交信息和作者——这条数据正是从 `git2 → git-core → app-service → Tauri → 前端` 一路流过来的。
+Run the frontend build:
 
-**看到它,就代表你的生产级架构地基已经跑通了。** 后面阶段 1(status / stage / commit)就是在这个骨架上往 trait 里加方法、往前端加界面而已。
-
----
-
-## 目录速览
-
-```
-git-client/
-├── Cargo.toml              # 工作区根
-├── crates/
-│   ├── git-core/           # 领域层:模型 + GitBackend trait + 错误(纯净)
-│   ├── git-engine/         # 适配器:FakeBackend(已验证) + Git2Backend(本机启用)
-│   ├── app-service/        # 应用层:RepoService,依赖注入 + 用例 + 测试
-│   └── ipc-types/          # 前后端共享 DTO
-├── docs/                   # 第 3 步要用的接线代码(复制/参照)
-│   ├── src-tauri-lib.rs
-│   ├── frontend-ipc.ts
-│   └── frontend-App.tsx
-└── app/                    # ← 第 3 步你用脚手架生成,不在本包内
+```bash
+pnpm --dir app build
 ```
 
----
+## Verification
 
-## 常见卡点
+Backend checks:
 
-- **`cargo build` 报 edition2024 / Rust 版本太旧**:你的 Rust 不是 rustup 装的最新版。执行 `rustup update`,确认 `rustc --version` ≥ 1.85。
-- **Tauri `npm run tauri dev` 报缺少 webkit / 链接错误**:第 1.3 步的系统依赖没装全,回去补。
-- **选了仓库却报 RepoNotFound**:确认选的是含 `.git` 的仓库根目录,且该仓库至少有一次提交。
-- **UI 卡死**:检查 git 操作是不是没放进 `spawn_blocking`(见第 0 部分铁律)。
+```bash
+cargo test --workspace
+cargo clippy --workspace
+cargo fmt --check
+```
 
----
+Frontend checks:
 
-*下一步建议:先把这个跑通,再回来我们一起做阶段 1 —— 给 trait 加 `status` / `stage` / `commit`,前端加文件列表和提交框。一次加一小块,每步都能跑。*
+```bash
+pnpm --dir app test
+pnpm --dir app exec tsc -p tsconfig.json --noEmit
+pnpm --dir app build
+```
+
+End-to-end checks:
+
+```bash
+pnpm --dir app e2e:ci
+```
+
+When a DTO changes, regenerate TypeScript bindings by running:
+
+```bash
+cargo test -p ipc-types
+```
+
+## Development Workflow
+
+Most features should be implemented vertically:
+
+```text
+git-core trait/model
+  -> git-engine backend implementation and tests
+  -> app-service use case and fake-backend tests
+  -> ipc-types DTO
+  -> src-tauri command with spawn_blocking
+  -> app/src/ipc.ts wrapper
+  -> app/src/lib/queries.ts hook
+  -> React UI
+```
+
+Small pure-frontend slices can skip the Rust layers, but should still have focused UI tests when behavior changes.
+
+## Language Policy
+
+Use English for new project-facing documentation, code comments, issue-style notes, commit descriptions, and user-visible source strings unless the feature is explicitly about localization.
+
+The current repository still contains older Chinese handoff notes and some Chinese source comments. Treat those as legacy context rather than the preferred style for new work. New UI copy should go through the locale dictionaries instead of being hard-coded in components.
+
+## Known Gaps
+
+- Cross-platform CI should be tightened with formatting, Clippy, tests, frontend type checks, and build gates.
+- Release signing and notarization are not finished.
+- Tauri updater and production release distribution still need final wiring.
+- Some newer advanced UI flows still need real-device visual QA.
+- Collaboration panels are being progressively internationalized; GitLab MR detail copy is still a natural next slice.
+
+## Useful Project Docs
+
+- `docs/HANDOFF.md` records the latest implementation state and next-step context.
+- `ARCHITECTURE.md` contains the original full architecture write-up. Parts of it are older than the current codebase.
+- `PRODUCT.md` describes product direction.
+- `docs/superpowers/specs/` and `docs/superpowers/plans/` contain feature-level design and implementation notes.
+
+## Troubleshooting
+
+- If Rust compilation fails because the toolchain is too old, run `rustup update` and make sure rustup is the Rust provider.
+- If Tauri fails to link or complains about WebKit/WebView dependencies, re-check the OS-specific Tauri prerequisites.
+- If the app cannot open a repository, confirm the selected directory is a Git repository root or inside a valid Git worktree.
+- If the UI freezes during a Git operation, audit the Tauri command path and confirm blocking Git work is inside `spawn_blocking`.
+- If TypeScript bindings look stale after a Rust DTO change, run `cargo test -p ipc-types`.

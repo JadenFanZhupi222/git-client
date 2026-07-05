@@ -18,6 +18,7 @@ import {
 } from "../lib/branchChoices";
 import { CloseIcon, SpinnerIcon } from "./icons";
 import { useToast } from "./Toast";
+import { useT } from "../lib/i18n";
 
 export function GitlabCreateMrDialog({
   remotes,
@@ -39,6 +40,7 @@ export function GitlabCreateMrDialog({
   onConfigureToken: () => void;
 }) {
   const toast = useToast();
+  const t = useT();
   const titleRef = useRef<HTMLInputElement>(null);
   const remote = useMemo(
     () => findGitlabRemote(remotes, preferredRemote),
@@ -89,7 +91,7 @@ export function GitlabCreateMrDialog({
     try {
       const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
       if (!token) {
-        toast({ kind: "error", title: "Please set a GitLab token first" });
+        toast({ kind: "error", title: t("collabCreate.gitlabTokenRequired") });
         onConfigureToken();
         return;
       }
@@ -98,7 +100,7 @@ export function GitlabCreateMrDialog({
         { title, sourceBranch, targetBranch, description, draft },
         token,
       );
-      toast({ kind: "success", title: `Created MR !${mr.iid}` });
+      toast({ kind: "success", title: t("collabCreate.gitlabCreated", { iid: mr.iid }) });
       onCreated?.(mr);
       await openUrl(mr.url);
       onClose();
@@ -124,7 +126,7 @@ export function GitlabCreateMrDialog({
       <form
         role="dialog"
         aria-modal="true"
-        aria-label="Create GitLab merge request"
+        aria-label={t("collabCreate.gitlabDialog")}
         className="panel-in popover flex w-[520px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
         onClick={(e) => e.stopPropagation()}
         onSubmit={(e) => {
@@ -134,9 +136,9 @@ export function GitlabCreateMrDialog({
       >
         <div className="flex items-center gap-2 border-b border-line px-4 py-3">
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-fg">Create GitLab MR</h2>
+            <h2 className="text-sm font-semibold text-fg">{t("collabCreate.gitlabTitle")}</h2>
             <p className="truncate text-[11px] text-fg-subtle">
-              {remote ? `${remote.owner}/${remote.repo}` : "No GitLab remote"}
+              {remote ? `${remote.owner}/${remote.repo}` : t("collabCreate.noGitlabRemoteShort")}
             </p>
           </div>
           <button
@@ -152,16 +154,16 @@ export function GitlabCreateMrDialog({
         <div className="flex flex-col gap-3 px-4 py-4">
           {!remote && (
             <div className="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
-              Current repository has no recognized GitLab remote.
+              {t("collabCreate.noGitlabRemote")}
             </div>
           )}
           <label className="flex flex-col gap-1">
             <span className="text-[11px] font-medium uppercase text-fg-subtle">
-              Title
+              {t("collabCreate.title")}
             </span>
             <input
               ref={titleRef}
-              aria-label="Title"
+              aria-label={t("collabCreate.title")}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               className="rounded bg-canvas px-2.5 py-1.5 text-xs text-fg field"
@@ -170,11 +172,11 @@ export function GitlabCreateMrDialog({
           <div className="grid grid-cols-2 gap-2">
             <label className="flex flex-col gap-1">
               <span className="text-[11px] font-medium uppercase text-fg-subtle">
-                Source
+                {t("collabCreate.source")}
               </span>
               <input
                 list="gitlab-mr-source-choices"
-                aria-label="Source"
+                aria-label={t("collabCreate.source")}
                 value={sourceBranch}
                 onChange={(e) => setSourceBranch(e.target.value)}
                 className="rounded bg-canvas px-2.5 py-1.5 font-mono text-xs text-fg field"
@@ -187,10 +189,10 @@ export function GitlabCreateMrDialog({
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-[11px] font-medium uppercase text-fg-subtle">
-                Target
+                {t("collabCreate.target")}
               </span>
               <select
-                aria-label="Target"
+                aria-label={t("collabCreate.target")}
                 value={targetBranch}
                 onChange={(e) => setTargetBranch(e.target.value)}
                 className="rounded bg-canvas px-2.5 py-1.5 font-mono text-xs text-fg field"
@@ -205,10 +207,10 @@ export function GitlabCreateMrDialog({
           </div>
           <label className="flex flex-col gap-1">
             <span className="text-[11px] font-medium uppercase text-fg-subtle">
-              Description
+              {t("collabCreate.description")}
             </span>
             <textarea
-              aria-label="Description"
+              aria-label={t("collabCreate.description")}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={5}
@@ -222,7 +224,7 @@ export function GitlabCreateMrDialog({
               onChange={(e) => setDraft(e.target.checked)}
               className="h-3.5 w-3.5"
             />
-            Draft merge request
+            {t("collabCreate.draftMr")}
           </label>
         </div>
 
@@ -232,7 +234,7 @@ export function GitlabCreateMrDialog({
             onClick={onConfigureToken}
             className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
           >
-            Token
+            {t("collabCreate.token")}
           </button>
           <div className="flex gap-2">
             <button
@@ -241,7 +243,7 @@ export function GitlabCreateMrDialog({
               disabled={busy}
               className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
             >
-              Cancel
+              {t("collabCreate.cancel")}
             </button>
             <button
               type="submit"
@@ -249,7 +251,7 @@ export function GitlabCreateMrDialog({
               className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {busy ? <SpinnerIcon width={13} height={13} /> : null}
-              Create
+              {t("collabCreate.create")}
             </button>
           </div>
         </div>

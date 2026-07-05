@@ -20,6 +20,7 @@ import {
 } from "../lib/hosting";
 import { CloseIcon, SpinnerIcon } from "./icons";
 import { useToast } from "./Toast";
+import { useT } from "../lib/i18n";
 
 export function GitlabMrPanel({
   remotes,
@@ -35,6 +36,7 @@ export function GitlabMrPanel({
   onConfigureToken: () => void;
 }) {
   const toast = useToast();
+  const t = useT();
   const [mrs, setMrs] = useState<GitlabMergeRequestSummary[]>([]);
   const [detailByIid, setDetailByIid] = useState<
     Record<number, GitlabMergeRequestDetails>
@@ -79,7 +81,7 @@ export function GitlabMrPanel({
         setMrs([]);
         setDetailByIid({});
         setError(
-          branch ? "当前仓库没有 GitLab 远程地址" : "当前仓库还没有本地分支",
+          branch ? t("gitlabMr.errNoRemote") : t("gitlabMr.errNoBranch"),
         );
         return;
       }
@@ -295,21 +297,21 @@ export function GitlabMrPanel({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="GitLab merge requests"
+        aria-label={t("gitlabMr.dialog")}
         className="panel-in popover flex max-h-[78vh] w-[560px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-line px-4 py-3">
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-fg">GitLab MR</h2>
+            <h2 className="text-sm font-semibold text-fg">{t("gitlabMr.title")}</h2>
             <p className="truncate text-[11px] text-fg-subtle">
-              {remote ? `${remote.owner}/${remote.repo}` : "未识别 GitLab 远程"}{" "}
-              · {branch ?? "无分支"}
+              {remote ? `${remote.owner}/${remote.repo}` : t("gitlabMr.unknownRemote")}{" "}
+              · {branch ?? t("gitlabMr.noBranch")}
             </p>
           </div>
           <button
             onClick={onClose}
-            aria-label="关闭"
+            aria-label={t("gitlabMr.close")}
             className="ml-auto grid h-6 w-6 place-items-center rounded text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
           >
             <CloseIcon width={13} height={13} />
@@ -319,7 +321,7 @@ export function GitlabMrPanel({
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
           {loading ? (
             <div className="flex items-center gap-2 py-8 text-xs text-fg-subtle">
-              <SpinnerIcon width={13} height={13} /> 正在读取 GitLab MR
+              <SpinnerIcon width={13} height={13} /> {t("gitlabMr.loading")}
             </div>
           ) : error ? (
             <div className="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
@@ -327,7 +329,7 @@ export function GitlabMrPanel({
             </div>
           ) : mrs.length === 0 ? (
             <p className="py-8 text-center text-xs text-fg-subtle">
-              当前分支没有 open MR
+              {t("gitlabMr.empty")}
             </p>
           ) : (
             <ul className="flex flex-col gap-2">
@@ -363,14 +365,14 @@ export function GitlabMrPanel({
                       onClick={() => openMr(mr.url)}
                       className="shrink-0 rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
                     >
-                      打开
+                      {t("gitlabMr.open")}
                     </button>
                     <button
                       onClick={() => loadDetail(mr)}
                       disabled={detailLoading === mr.iid}
                       className="shrink-0 rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
                     >
-                      {detailLoading === mr.iid ? "Loading" : "Details"}
+                      {detailLoading === mr.iid ? t("gitlabMr.detailsLoading") : t("gitlabMr.details")}
                     </button>
                   </div>
                   {detailByIid[mr.iid] && (
@@ -403,21 +405,21 @@ export function GitlabMrPanel({
               onClick={onConfigureToken}
               className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
             >
-              设置 token
+              {t("gitlabMr.setToken")}
             </button>
             <button
               onClick={() => loadList()}
               disabled={loading}
               className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
             >
-              Refresh
+              {t("gitlabMr.refresh")}
             </button>
           </div>
           <button
             onClick={onClose}
             className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
           >
-            关闭
+            {t("gitlabMr.close")}
           </button>
         </div>
       </div>

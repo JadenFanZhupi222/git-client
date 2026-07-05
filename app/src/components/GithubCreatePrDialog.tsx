@@ -18,6 +18,7 @@ import {
 } from "../lib/branchChoices";
 import { CloseIcon, SpinnerIcon } from "./icons";
 import { useToast } from "./Toast";
+import { useT } from "../lib/i18n";
 
 export function GithubCreatePrDialog({
   remotes,
@@ -39,6 +40,7 @@ export function GithubCreatePrDialog({
   onConfigureToken: () => void;
 }) {
   const toast = useToast();
+  const t = useT();
   const titleRef = useRef<HTMLInputElement>(null);
   const remote = useMemo(
     () => findGithubRemote(remotes, preferredRemote),
@@ -87,7 +89,7 @@ export function GithubCreatePrDialog({
     try {
       const token = (await hasGithubToken()) ? await getGithubToken() : null;
       if (!token) {
-        toast({ kind: "error", title: "请先设置 GitHub token" });
+        toast({ kind: "error", title: t("collabCreate.githubTokenRequired") });
         onConfigureToken();
         return;
       }
@@ -96,7 +98,7 @@ export function GithubCreatePrDialog({
         { title, body, head, base, draft },
         token,
       );
-      toast({ kind: "success", title: `已创建 PR #${pr.number}` });
+      toast({ kind: "success", title: t("collabCreate.githubCreated", { number: pr.number }) });
       onCreated?.(pr);
       await openUrl(pr.url);
       onClose();
@@ -118,7 +120,7 @@ export function GithubCreatePrDialog({
       <form
         role="dialog"
         aria-modal="true"
-        aria-label="Create GitHub pull request"
+        aria-label={t("collabCreate.githubDialog")}
         className="panel-in popover flex w-[520px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
         onClick={(e) => e.stopPropagation()}
         onSubmit={(e) => {
@@ -128,9 +130,9 @@ export function GithubCreatePrDialog({
       >
         <div className="flex items-center gap-2 border-b border-line px-4 py-3">
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-fg">Create GitHub PR</h2>
+            <h2 className="text-sm font-semibold text-fg">{t("collabCreate.githubTitle")}</h2>
             <p className="truncate text-[11px] text-fg-subtle">
-              {remote ? `${remote.owner}/${remote.repo}` : "No GitHub remote"}
+              {remote ? `${remote.owner}/${remote.repo}` : t("collabCreate.noGithubRemoteShort")}
             </p>
           </div>
           <button
@@ -146,15 +148,16 @@ export function GithubCreatePrDialog({
         <div className="flex flex-col gap-3 px-4 py-4">
           {!remote && (
             <div className="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
-              当前仓库没有可识别的 GitHub 远程地址
+              {t("collabCreate.noGithubRemote")}
             </div>
           )}
           <label className="flex flex-col gap-1">
             <span className="text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
-              Title
+              {t("collabCreate.title")}
             </span>
             <input
               ref={titleRef}
+              aria-label={t("collabCreate.title")}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               className="rounded bg-canvas px-2.5 py-1.5 text-xs text-fg field"
@@ -163,11 +166,11 @@ export function GithubCreatePrDialog({
           <div className="grid grid-cols-2 gap-2">
             <label className="flex flex-col gap-1">
               <span className="text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
-                Head
+                {t("collabCreate.head")}
               </span>
               <input
                 list="github-pr-head-choices"
-                aria-label="Head"
+                aria-label={t("collabCreate.head")}
                 value={head}
                 onChange={(e) => setHead(e.target.value)}
                 className="rounded bg-canvas px-2.5 py-1.5 font-mono text-xs text-fg field"
@@ -180,10 +183,10 @@ export function GithubCreatePrDialog({
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
-                Base
+                {t("collabCreate.base")}
               </span>
               <select
-                aria-label="Base"
+                aria-label={t("collabCreate.base")}
                 value={base}
                 onChange={(e) => setBase(e.target.value)}
                 className="rounded bg-canvas px-2.5 py-1.5 font-mono text-xs text-fg field"
@@ -198,9 +201,10 @@ export function GithubCreatePrDialog({
           </div>
           <label className="flex flex-col gap-1">
             <span className="text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
-              Body
+              {t("collabCreate.body")}
             </span>
             <textarea
+              aria-label={t("collabCreate.body")}
               value={body}
               onChange={(e) => setBody(e.target.value)}
               rows={5}
@@ -214,7 +218,7 @@ export function GithubCreatePrDialog({
               onChange={(e) => setDraft(e.target.checked)}
               className="h-3.5 w-3.5"
             />
-            Draft pull request
+            {t("collabCreate.draftPr")}
           </label>
         </div>
 
@@ -224,7 +228,7 @@ export function GithubCreatePrDialog({
             onClick={onConfigureToken}
             className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg"
           >
-            Token
+            {t("collabCreate.token")}
           </button>
           <div className="flex gap-2">
             <button
@@ -233,7 +237,7 @@ export function GithubCreatePrDialog({
               disabled={busy}
               className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
             >
-              Cancel
+              {t("collabCreate.cancel")}
             </button>
             <button
               type="submit"
@@ -241,7 +245,7 @@ export function GithubCreatePrDialog({
               className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
             >
               {busy ? <SpinnerIcon width={13} height={13} /> : null}
-              Create
+              {t("collabCreate.create")}
             </button>
           </div>
         </div>

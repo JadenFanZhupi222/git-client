@@ -392,6 +392,42 @@ body {
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
 }
 
+/* Lightweight code syntax colors for diff rows and CodeMirror panes. */
+.syn-keyword,
+.cm-keyword {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+.syn-string,
+.cm-string {
+  color: var(--color-success);
+}
+.syn-number,
+.cm-number {
+  color: var(--color-warning);
+}
+.syn-comment,
+.cm-comment {
+  color: var(--color-fg-subtle);
+  font-style: italic;
+}
+.syn-type,
+.cm-type {
+  color: color-mix(in oklab, var(--color-accent) 70%, var(--color-fg));
+}
+.syn-function,
+.cm-function {
+  color: color-mix(in oklab, var(--color-warning) 82%, var(--color-fg));
+}
+.syn-property,
+.cm-property {
+  color: color-mix(in oklab, var(--color-success) 76%, var(--color-fg));
+}
+.syn-operator,
+.cm-operator {
+  color: var(--color-fg-muted);
+}
+
 /* Toast:从右侧滑入 / 滑出 */
 @keyframes toast-in {
   from {

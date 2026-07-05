@@ -5,6 +5,8 @@ import { EditorState, StateField, StateEffect, type Text, type Range } from "@co
 import { writeResolved, type IpcError } from "../ipc";
 import { useConflictSides, useFileText, invalidateWorktree, qk } from "../lib/queries";
 import { buildMergeModel, type MergeModel, type MergeRegion, type Spacer } from "../lib/mergeModel";
+import { syntaxExtensionForLang } from "../lib/cmSyntax";
+import { languageIdForPath } from "../lib/syntax";
 import { useToast } from "./Toast";
 import { Button } from "./ui/Button";
 import { useT } from "../lib/i18n";
@@ -189,6 +191,7 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
 
     const oursLines = oursStr.split("\n");
     const theirsLines = theirsStr.split("\n");
+    const syntaxExtensions = syntaxExtensionForLang(languageIdForPath(file));
 
     const readOnly = [EditorState.readOnly.of(true), EditorView.editable.of(false)];
 
@@ -243,12 +246,12 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
     const ov = new EditorView({
       doc: oursStr,
       parent: oursRef.current,
-      extensions: [lineNumbers(), baseTheme, decoField, ...readOnly],
+      extensions: [lineNumbers(), baseTheme, ...syntaxExtensions, decoField, ...readOnly],
     });
     const tv = new EditorView({
       doc: theirsStr,
       parent: theirsRef.current,
-      extensions: [lineNumbers(), baseTheme, decoField, ...readOnly],
+      extensions: [lineNumbers(), baseTheme, ...syntaxExtensions, decoField, ...readOnly],
     });
     const rv = new EditorView({
       doc: initialResult,
@@ -256,6 +259,7 @@ export function ConflictEditor({ repo, file }: { repo: string; file: string }) {
       extensions: [
         lineNumbers(),
         baseTheme,
+        ...syntaxExtensions,
         decoField,
         EditorView.updateListener.of((u) => {
           if (u.docChanged) recompute();

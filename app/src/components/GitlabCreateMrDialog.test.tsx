@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { setLang } from "../lib/i18n";
 import { GitlabCreateMrDialog } from "./GitlabCreateMrDialog";
 import { ToastProvider } from "./Toast";
 
@@ -30,6 +31,34 @@ describe("GitlabCreateMrDialog", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    localStorage.clear();
+    setLang("en");
+  });
+
+  it("renders create MR copy in Chinese", () => {
+    setLang("zh");
+    render(
+      <ToastProvider>
+        <GitlabCreateMrDialog
+          remotes={remotes}
+          branch="feature/gitlab-create"
+          preferredRemote="origin"
+          onClose={onClose}
+          onConfigureToken={onConfigureToken}
+        />
+      </ToastProvider>,
+    );
+
+    expect(screen.getByRole("dialog", { name: "创建 GitLab 合并请求" })).toBeInTheDocument();
+    expect(screen.getByText("创建 GitLab MR")).toBeInTheDocument();
+    expect(screen.getByLabelText("标题")).toBeInTheDocument();
+    expect(screen.getByLabelText("源分支")).toBeInTheDocument();
+    expect(screen.getByLabelText("目标分支")).toBeInTheDocument();
+    expect(screen.getByLabelText("描述")).toBeInTheDocument();
+    expect(screen.getByLabelText("草稿合并请求")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Token" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "取消" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "创建" })).toBeInTheDocument();
   });
 
   it("creates a GitLab merge request and opens it", async () => {

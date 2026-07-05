@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { readImage, type DiffLineDto, type FileDiffDto, type ImageRefDto } from "../ipc";
 import { buildDiffRows, maxContentCols, type DiffRow, type LineRef, type SbsRow } from "../lib/diffRows";
+import { highlightCodeLine, languageIdForPath, type SyntaxLang, type SyntaxKind } from "../lib/syntax";
 import { ChevronDownIcon, FileDiffIcon } from "./icons";
 import { EmptyHint } from "./ui/EmptyHint";
 import { useT } from "../lib/i18n";
@@ -96,6 +97,7 @@ export function DiffView({
       <ViewToggle view={view} onChange={setViewPersist} />
       <VirtualDiff
         diff={diff}
+        lang={languageIdForPath(diff.path)}
         view={view}
         selected={selected}
         toggle={toggle}
@@ -151,6 +153,7 @@ type FoldProps = {
  */
 function VirtualDiff({
   diff,
+  lang,
   view,
   selected,
   toggle,
@@ -158,7 +161,7 @@ function VirtualDiff({
   hunkAction,
   expanded,
   expand,
-}: { diff: FileDiffDto; view: ViewMode } & StageProps & FoldProps) {
+}: { diff: FileDiffDto; lang: SyntaxLang | null; view: ViewMode } & StageProps & FoldProps) {
   const rows = useMemo(() => buildDiffRows(diff, expanded, view), [diff, expanded, view]);
   const hasSel = !!lineStage;
   const split = view === "split";
@@ -194,6 +197,7 @@ function VirtualDiff({
           >
             <DiffRowView
               r={rows[vi.index]}
+              lang={lang}
               selected={selected}
               toggle={toggle}
               lineStage={lineStage}
@@ -210,6 +214,7 @@ function VirtualDiff({
 /** 一条渲染项的分派:hunk 头 / 折叠条 / 统一行 / 并排配对行。 */
 function DiffRowView({
   r,
+  lang,
   selected,
   toggle,
   lineStage,
@@ -217,6 +222,7 @@ function DiffRowView({
   expand,
 }: {
   r: DiffRow;
+  lang: SyntaxLang | null;
 } & StageProps & Pick<FoldProps, "expand">) {
   switch (r.kind) {
     case "hunk": {
@@ -226,14 +232,14 @@ function DiffRowView({
     case "fold":
       return <FoldBar count={r.count} onExpand={() => expand(r.foldKey)} />;
     case "uline":
-      return <UnifiedLine hi={r.hi} ref_={r.ref} selected={selected} toggle={toggle} lineStage={lineStage} />;
+      return <UnifiedLine hi={r.hi} ref_={r.ref} lang={lang} selected={selected} toggle={toggle} lineStage={lineStage} />;
     case "pair":
-      return <PairRow hi={r.hi} row={r.row} selected={selected} toggle={toggle} lineStage={lineStage} />;
+      return <PairRow hi={r.hi} row={r.row} lang={lang} selected={selected} toggle={toggle} lineStage={lineStage} />;
   }
 }
 
 /** unified 视图的一行。 */
-function UnifiedLine({ hi, ref_, selected, toggle, lineStage }: { hi: number; ref_: LineRef } & Pick<StageProps, "selected" | "toggle" | "lineStage">) {
+function UnifiedLine({ hi, ref_, lang, selected, toggle, lineStage }: { hi: number; ref_: LineRef; lang: SyntaxLang | null } & Pick<StageProps, "selected" | "toggle" | "lineStage">) {
   const l = ref_.line;
   const add = l.kind === "add";
   const del = l.kind === "del";
@@ -258,7 +264,7 @@ function UnifiedLine({ hi, ref_, selected, toggle, lineStage }: { hi: number; re
       <Gutter n={l.new_lineno} border />
       <span className={`w-4 shrink-0 select-none text-center ${signCls}`}>{sign}</span>
       <span className="flex-1 whitespace-pre pr-3 text-fg">
-        <LineContent line={l} add={add} del={del} />
+        <LineContent line={l} add={add} del={del} lang={lang} />
       </span>
     </div>
   );
@@ -280,18 +286,18 @@ function FoldBar({ count, onExpand }: { count: number; onExpand: () => void }) {
 
 /** 并排配对行:左旧 | 右新 一行内并置,各占一半宽度(50/50)。长行在半栏内「自动换行」,不横滚、不超宽。
  *  items-stretch 让左右两半等高(取较高者),换行后两侧仍逐行对齐;竖向由外层虚拟化容器统一驱动。 */
-function PairRow({ hi, row, selected, toggle, lineStage }: { hi: number; row: SbsRow } & Pick<StageProps, "selected" | "toggle" | "lineStage">) {
+function PairRow({ hi, row, lang, selected, toggle, lineStage }: { hi: number; row: SbsRow; lang: SyntaxLang | null } & Pick<StageProps, "selected" | "toggle" | "lineStage">) {
   return (
     <div className="flex w-full items-stretch">
-      <HalfCell side="old" cell={row.left} hi={hi} selected={selected} toggle={toggle} lineStage={lineStage} />
-      <HalfCell side="new" cell={row.right} hi={hi} selected={selected} toggle={toggle} lineStage={lineStage} border />
+      <HalfCell side="old" cell={row.left} hi={hi} lang={lang} selected={selected} toggle={toggle} lineStage={lineStage} />
+      <HalfCell side="new" cell={row.right} hi={hi} lang={lang} selected={selected} toggle={toggle} lineStage={lineStage} border />
     </div>
   );
 }
 
 /** 并排某一侧的一格(取 row 的 left 或 right);对侧有内容本侧无则占位空行。
  *  行号/符号顶对齐(items-start),内容列自动换行(whitespace-pre-wrap + 任意处断词),GitHub 式。 */
-function HalfCell({ hi, side, cell, border, selected, toggle, lineStage }: { hi: number; side: Side; cell: SbsRow["left"] } & Pick<StageProps, "selected" | "toggle" | "lineStage"> & { border?: boolean }) {
+function HalfCell({ hi, side, cell, lang, border, selected, toggle, lineStage }: { hi: number; side: Side; cell: SbsRow["left"]; lang: SyntaxLang | null } & Pick<StageProps, "selected" | "toggle" | "lineStage"> & { border?: boolean }) {
   const borderCls = border ? "border-l border-line" : "";
   if (!cell) {
     return <div className={`min-h-5 w-1/2 min-w-0 bg-overlay/40 ${borderCls}`}>&nbsp;</div>;
@@ -319,7 +325,7 @@ function HalfCell({ hi, side, cell, border, selected, toggle, lineStage }: { hi:
       <Gutter n={lineno} border />
       <span className={`w-4 shrink-0 select-none text-center ${signCls}`}>{sign}</span>
       <span className="min-w-0 flex-1 whitespace-pre-wrap pr-3 text-fg [overflow-wrap:anywhere]">
-        <LineContent line={l} add={add} del={del} />
+        <LineContent line={l} add={add} del={del} lang={lang} />
       </span>
     </div>
   );
@@ -372,23 +378,39 @@ function StageHeader({
 }
 
 /** 行内容渲染:有词级 emphasis 则逐段高亮(changed 段深一档底色),否则整行纯文本。两视图共用。 */
-function LineContent({ line, add, del }: { line: DiffLineDto; add: boolean; del: boolean }) {
+function LineContent({ line, add, del, lang }: { line: DiffLineDto; add: boolean; del: boolean; lang: SyntaxLang | null }) {
   if (line.emphasis && line.emphasis.length > 0) {
     return (
       <>
         {line.emphasis.map((s, si) =>
           s.changed ? (
             <span key={si} className={add ? "bg-success/30" : del ? "bg-danger/30" : ""}>
-              {s.text}
+              <SyntaxText text={s.text || " "} lang={lang} />
             </span>
           ) : (
-            <span key={si}>{s.text}</span>
+            <SyntaxText key={si} text={s.text || " "} lang={lang} />
           ),
         )}
       </>
     );
   }
-  return <>{line.content || " "}</>;
+  return <SyntaxText text={line.content || " "} lang={lang} />;
+}
+
+function SyntaxText({ text, lang }: { text: string; lang: SyntaxLang | null }) {
+  return (
+    <>
+      {highlightCodeLine(text, lang).map((token, i) => (
+        <span key={i} className={syntaxClass(token.kind)}>
+          {token.text}
+        </span>
+      ))}
+    </>
+  );
+}
+
+function syntaxClass(kind: SyntaxKind): string {
+  return kind === "plain" ? "" : `syn-${kind}`;
 }
 
 type ImgMode = "side" | "swipe" | "onion";

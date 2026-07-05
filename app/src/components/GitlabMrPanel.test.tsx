@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { setLang } from "../lib/i18n";
 import { GitlabMrPanel } from "./GitlabMrPanel";
 import { ToastProvider } from "./Toast";
 
@@ -28,6 +29,33 @@ describe("GitlabMrPanel", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    localStorage.clear();
+    setLang("en");
+  });
+
+  it("renders panel shell copy in Chinese", async () => {
+    setLang("zh");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ToastProvider>
+        <GitlabMrPanel
+          remotes={remotes}
+          branch="feature/empty"
+          preferredRemote="origin"
+          onClose={vi.fn()}
+          onConfigureToken={vi.fn()}
+        />
+      </ToastProvider>,
+    );
+
+    expect(screen.getByRole("dialog", { name: "GitLab 合并请求" })).toBeInTheDocument();
+    expect(screen.getByText("GitLab MR")).toBeInTheDocument();
+    expect(await screen.findByText("当前分支没有打开的 MR")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "设置 token" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "刷新" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "关闭" })).toHaveLength(2);
   });
 
   it("loads and displays merge request details", async () => {
