@@ -1,10 +1,28 @@
+async function prepareRepo(runPrefix) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const runId = `${runPrefix}-${attempt + 1}`;
+    try {
+      const repoPath = await browser.tauri.execute(
+        ({ core }, fixtureRunId) =>
+          core.invoke("e2e_prepare_repo", { runId: fixtureRunId }),
+        runId,
+      );
+      return { runId, repoPath };
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) {
+        await browser.pause(300);
+      }
+    }
+  }
+  throw lastError ?? new Error("Unable to prepare the E2E repository");
+}
+
 describe("Git commit workflow", () => {
   it("initializes a repository, stages a file, commits it, and shows history", async () => {
-    const runId = `commit-loop-${process.pid}-${Date.now()}`;
-    const repoPath = await browser.tauri.execute(
-      ({ core }, fixtureRunId) =>
-        core.invoke("e2e_prepare_repo", { runId: fixtureRunId }),
-      runId,
+    const { runId, repoPath } = await prepareRepo(
+      `commit-loop-${process.pid}-${Date.now()}`,
     );
 
     await browser.execute((repo) => {
