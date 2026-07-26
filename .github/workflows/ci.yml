@@ -44,6 +44,10 @@ jobs:
       - name: test
         run: cargo test --workspace
 
+      - name: dependency boundaries
+        shell: pwsh
+        run: ./scripts/check-dependency-boundaries.ps1
+
   frontend:
     name: Frontend(${{ matrix.os }})
     runs-on: ${{ matrix.os }}
