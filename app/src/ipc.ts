@@ -94,6 +94,10 @@ export async function getStatus(repoPath: string): Promise<StatusDto> {
   return await invoke<StatusDto>("get_status", { repoPath });
 }
 
+export async function refreshStatus(repoPath: string): Promise<StatusDto> {
+  return await invoke<StatusDto>("refresh_status", { repoPath });
+}
+
 export async function stageFile(
   repoPath: string,
   filePath: string,

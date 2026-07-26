@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   stageFile, unstageFile, stageHunk, unstageHunk, stageLines, commit, amendCommit,
-  getHeadCommit, resolveOurs, resolveTheirs,
+  getHeadCommit, refreshStatus, resolveOurs, resolveTheirs,
   type FileEntryDto, type IpcError,
 } from "../ipc";
 import { useStatus, useWorkingDiff, useRepoState, useCurrentBranch, invalidateWorktree, invalidateHistory, qk } from "../lib/queries";
@@ -66,6 +66,7 @@ export function ChangesView({ repo }: { repo: string }) {
   const [message, setMessage] = useState("");
   const [amend, setAmend] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [sel, setSel] = useState<{ path: string; staged: boolean } | null>(null);
   const listCol = useResizableWidth("changes.listW", 340, 220, 680);
   const listScrollRef = useRef<HTMLDivElement>(null);
@@ -150,6 +151,19 @@ export function ChangesView({ repo }: { repo: string }) {
     try { await action(); invalidateWorktree(qc, repo); }
     catch (e) { toast({ kind: "error", title: (e as IpcError).message ?? String(e) }); }
     finally { setBusy(false); }
+  }
+
+  async function refresh() {
+    setRefreshing(true);
+    try {
+      const fresh = await refreshStatus(repo);
+      qc.setQueryData(qk.status(repo), fresh);
+      qc.invalidateQueries({ queryKey: qk.workingDiff(repo) });
+    } catch (e) {
+      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   // 批量暂存 / 取消暂存(顺序执行,避免并发写 index 冲突)
@@ -283,13 +297,13 @@ export function ChangesView({ repo }: { repo: string }) {
           <span className="flex-1 text-[12.5px] font-semibold text-fg">{t("changes.workingTree")}</span>
           <button
             data-testid="refresh-status"
-            onClick={() => qc.invalidateQueries({ queryKey: qk.status(repo) })}
-            disabled={busy || statusQ.isFetching}
+            onClick={refresh}
+            disabled={busy || refreshing || statusQ.isFetching}
             title={t("changes.refresh")}
             aria-label={t("changes.refresh")}
             className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-line text-fg-muted transition-colors hover:text-fg disabled:opacity-40"
           >
-            <RefreshIcon width={13} height={13} className={busy || statusQ.isFetching ? "animate-spin" : ""} />
+            <RefreshIcon width={13} height={13} className={busy || refreshing || statusQ.isFetching ? "animate-spin" : ""} />
           </button>
         </FloatBar>
 

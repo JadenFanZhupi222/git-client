@@ -222,6 +222,15 @@ impl RepoContext {
         *self.cache.status.lock().unwrap() = Some(st.clone());
         Ok(st)
     }
+
+    /// 用户显式刷新时绕过状态快照缓存。
+    ///
+    /// 文件监听器可能还在启动，或底层平台漏掉了一个很早的事件；手动刷新必须始终
+    /// 重新读取 Git 工作区，而不能只让前端重新请求同一份 Rust 缓存。
+    pub fn refresh_status(&self) -> Result<StatusDto, GitError> {
+        self.invalidate(ChangeKind::WorkingTree);
+        self.status()
+    }
     pub fn log(&self, limit: usize, skip: usize) -> Result<Vec<CommitDto>, GitError> {
         let key = (limit, skip);
         if let Some(hit) = self.cache.log.lock().unwrap().get(&key).cloned() {
@@ -992,6 +1001,21 @@ mod tests {
         ctx.invalidate(ChangeKind::WorkingTree);
         ctx.status().unwrap();
         assert_eq!(fb.status_call_count(), 2, "失效后应重新拉取");
+    }
+
+    #[test]
+    fn refresh_status_bypasses_the_cached_snapshot() {
+        let fb = Arc::new(FakeBackend::default());
+        let ctx = RepoRegistry::new(fb.clone()).context(Path::new("/r"));
+
+        ctx.status().unwrap();
+        ctx.refresh_status().unwrap();
+
+        assert_eq!(
+            fb.status_call_count(),
+            2,
+            "manual refresh must invalidate the Rust-side status cache",
+        );
     }
 
     #[test]

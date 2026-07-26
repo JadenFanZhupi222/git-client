@@ -246,18 +246,21 @@ test("desktop E2E explicitly refreshes status after an external fixture write", 
     path.dirname(fileURLToPath(import.meta.url)),
     "..",
   );
-  const [spec, changesView] = await Promise.all([
+  const [spec, changesView, ipc] = await Promise.all([
     readFile(path.join(root, "app", "e2e", "smoke.e2e.js"), "utf8"),
     readFile(
       path.join(root, "app", "src", "views", "ChangesView.tsx"),
       "utf8",
     ),
+    readFile(path.join(root, "app", "src", "ipc.ts"), "utf8"),
   ]);
 
   assert.match(
     changesView,
     /data-testid=["']refresh-status["']/,
   );
+  assert.match(changesView, /refreshStatus\(repo\)/);
+  assert.match(ipc, /invoke<StatusDto>\(["']refresh_status["']/);
   assert.match(
     spec,
     /e2e_write_file[\s\S]*data-testid=['"]refresh-status['"][\s\S]*waitForEnabled[\s\S]*\.click\(\)[\s\S]*data-testid='unstaged-file'/,

@@ -588,6 +588,18 @@ async fn get_status(
 }
 
 #[tauri::command]
+async fn refresh_status(
+    registry: tauri::State<'_, RepoRegistry>,
+    repo_path: String,
+) -> Result<StatusDto, IpcError> {
+    let ctx = registry.context(&PathBuf::from(repo_path));
+    tokio::task::spawn_blocking(move || ctx.refresh_status())
+        .await
+        .map_err(join_panic)?
+        .map_err(to_ipc)
+}
+
+#[tauri::command]
 async fn stage_file(
     registry: tauri::State<'_, RepoRegistry>,
     repo_path: String,
@@ -1625,6 +1637,7 @@ pub fn run() {
         clone_repo,
         get_head_commit,
         get_status,
+        refresh_status,
         stage_file,
         unstage_file,
         stage_hunk,
@@ -1712,6 +1725,7 @@ pub fn run() {
         clone_repo,
         get_head_commit,
         get_status,
+        refresh_status,
         stage_file,
         unstage_file,
         stage_hunk,
