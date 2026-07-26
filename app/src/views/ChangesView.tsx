@@ -282,6 +282,7 @@ export function ChangesView({ repo }: { repo: string }) {
         <FloatBar>
           <span className="flex-1 text-[12.5px] font-semibold text-fg">{t("changes.workingTree")}</span>
           <button
+            data-testid="refresh-status"
             onClick={() => qc.invalidateQueries({ queryKey: qk.status(repo) })}
             disabled={busy || statusQ.isFetching}
             title={t("changes.refresh")}

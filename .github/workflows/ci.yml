@@ -140,5 +140,6 @@ jobs:
         with:
           name: desktop-e2e-failure-${{ runner.os }}
           path: app/.e2e-tmp/**
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7

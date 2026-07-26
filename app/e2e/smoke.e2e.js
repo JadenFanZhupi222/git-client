@@ -27,6 +27,14 @@ describe("Git commit workflow", () => {
       "hello from the desktop E2E workflow\n",
     );
 
+    await browser.execute(() => {
+      const refresh = document.querySelector("[data-testid='refresh-status']");
+      if (!(refresh instanceof HTMLButtonElement)) {
+        throw new Error("Status refresh button is not available");
+      }
+      refresh.click();
+    });
+
     const unstaged = await $(
       "[data-testid='unstaged-file'][data-file-path='hello.txt']",
     );
