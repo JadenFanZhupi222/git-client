@@ -1,16 +1,9 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const fixtureRoot = path.join(appDir, ".e2e-tmp");
-
 describe("Git commit workflow", () => {
   it("initializes a repository, stages a file, commits it, and shows history", async () => {
     const runId = `commit-loop-${process.pid}-${Date.now()}`;
     const repoPath = await browser.tauri.execute(
-      ({ core }, rootPath, fixtureRunId) =>
-        core.invoke("e2e_prepare_repo", { rootPath, runId: fixtureRunId }),
-      fixtureRoot,
+      ({ core }, fixtureRunId) =>
+        core.invoke("e2e_prepare_repo", { runId: fixtureRunId }),
       runId,
     );
 
@@ -27,9 +20,9 @@ describe("Git commit workflow", () => {
     await repoShell.waitForDisplayed({ timeout: 20_000 });
 
     await browser.tauri.execute(
-      ({ core }, repo, relativePath, contents) =>
-        core.invoke("e2e_write_file", { repoPath: repo, relativePath, contents }),
-      repoPath,
+      ({ core }, fixtureRunId, relativePath, contents) =>
+        core.invoke("e2e_write_file", { runId: fixtureRunId, relativePath, contents }),
+      runId,
       "hello.txt",
       "hello from the desktop E2E workflow\n",
     );
@@ -42,7 +35,15 @@ describe("Git commit workflow", () => {
       "[data-testid='unstaged-file'][data-file-path='hello.txt'] [data-testid='stage-action']",
     );
     await stageAction.waitForClickable({ timeout: 20_000 });
-    await stageAction.click();
+    await browser.execute(() => {
+      const action = document.querySelector(
+        "[data-testid='unstaged-file'][data-file-path='hello.txt'] [data-testid='stage-action']",
+      );
+      if (!(action instanceof HTMLButtonElement)) {
+        throw new Error("Stage action button is not available");
+      }
+      action.click();
+    });
 
     const staged = await $(
       "[data-testid='staged-file'][data-file-path='hello.txt']",

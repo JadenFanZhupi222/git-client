@@ -102,6 +102,8 @@ export const zh = {
   "title.sparse": "稀疏检出",
   "count.items": "项",
   "common.loading": "加载中…",
+  "common.lazyLoadFailed": "此区域加载失败。",
+  "common.reload": "重新加载应用",
 
   // 次级视图表格列头
   "col.path": "路径",

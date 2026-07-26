@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { lazy, useEffect, useState, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -23,9 +23,10 @@ import { useT, useLang, toggleLang, nextLangLabel } from "./lib/i18n";
 import { GlobeIcon } from "./components/icons";
 import { checkForAppUpdate } from "./lib/updater";
 import { buildCreateChangeRequestUrl, buildFindChangeRequestUrl } from "./lib/hosting";
+import { LazyBoundary } from "./components/LazyBoundary";
+import { ChangesView } from "./views/ChangesView";
+import { HistoryView } from "./views/HistoryView";
 
-const ChangesView = lazy(() => import("./views/ChangesView").then((m) => ({ default: m.ChangesView })));
-const HistoryView = lazy(() => import("./views/HistoryView").then((m) => ({ default: m.HistoryView })));
 const CompareView = lazy(() => import("./views/CompareView").then((m) => ({ default: m.CompareView })));
 const BlameView = lazy(() => import("./views/BlameView").then((m) => ({ default: m.BlameView })));
 const SubmodulesView = lazy(() => import("./views/SubmodulesView").then((m) => ({ default: m.SubmodulesView })));
@@ -724,9 +725,13 @@ export default function App() {
             hasSparse={hasSparse}
           />
           <div className="min-h-0 min-w-0 flex-1">
-            <Suspense fallback={<LazyFallback />}>
+            <LazyBoundary
+              loading={<LazyFallback />}
+              message={t("common.lazyLoadFailed")}
+              retryLabel={t("common.reload")}
+            >
               {tab === "changes" ? <ChangesView repo={repo} /> : tab === "history" ? <HistoryView repo={repo} /> : tab === "compare" ? <CompareView repo={repo} /> : tab === "submodules" ? <SubmodulesView repo={repo} /> : tab === "worktrees" ? <WorktreesView repo={repo} /> : tab === "sparse" ? <SparseCheckoutView repo={repo} /> : <BlameView repo={repo} />}
-            </Suspense>
+            </LazyBoundary>
           </div>
         </div>
       ) : (
@@ -772,7 +777,11 @@ export default function App() {
 
       {paletteOpen && <CommandPalette commands={commands} onClose={() => setPaletteOpen(false)} />}
 
-      <Suspense fallback={<LazyFallback overlay />}>
+      <LazyBoundary
+        loading={<LazyFallback overlay />}
+        message={t("common.lazyLoadFailed")}
+        retryLabel={t("common.reload")}
+      >
       {repo && opLogOpen && (
         <OpLogPanel
           repo={repo}
@@ -860,7 +869,7 @@ export default function App() {
           onCloned={(path) => { setCloneOpen(false); setRepo(path); }}
         />
       )}
-      </Suspense>
+      </LazyBoundary>
     </div>
   );
 }

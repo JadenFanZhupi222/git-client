@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 // Instrument Serif:仅「编辑性大字时刻」用(启动屏巨字、提交标题、视图标题、blame 文件名)。
-// 只 400 + italic,自托管离线可用。中文衬线由字体栈回退到 Noto Serif SC(index.html 的 <link>)。
+// 只 400 + italic,自托管离线可用。中文衬线由字体栈回退到本机 Noto/宋体/system。
 import "@fontsource/instrument-serif/400.css";
 import "@fontsource/instrument-serif/400-italic.css";
 import "./index.css";

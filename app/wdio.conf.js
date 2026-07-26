@@ -6,6 +6,7 @@ const configDir = path.dirname(fileURLToPath(import.meta.url));
 const binaryName = process.platform === "win32" ? "app.exe" : "app";
 const e2eRoot = path.resolve(configDir, ".e2e-tmp");
 const harnessLog = path.join(e2eRoot, "harness.log");
+process.env.GIT_CLIENT_E2E_ROOT = e2eRoot;
 const fatalHarnessPatterns = [
   /thread ['"].+['"] panicked|panicked at/i,
   /Tauri core\.invoke not available|core\.invoke unavailable/i,

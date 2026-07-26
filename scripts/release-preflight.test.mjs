@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   cargoPackageVersion,
+  resolveUpdaterEndpoints,
   validateRelease,
 } from "./release-preflight.mjs";
 
@@ -79,6 +80,31 @@ test("rejects an empty updater endpoint for a release", () => {
   );
 
   assert.match(errors.join("\n"), /updater endpoint/i);
+});
+
+test("uses the GitHub release endpoint when no updater endpoint is configured", () => {
+  assert.deepEqual(
+    resolveUpdaterEndpoints(
+      { GITHUB_REPOSITORY: "example/git-client" },
+      [],
+    ),
+    [
+      "https://github.com/example/git-client/releases/latest/download/latest.json",
+    ],
+  );
+});
+
+test("an explicit updater endpoint overrides the GitHub fallback", () => {
+  assert.deepEqual(
+    resolveUpdaterEndpoints(
+      {
+        GITHUB_REPOSITORY: "example/git-client",
+        TAURI_UPDATER_ENDPOINT: "https://updates.example.test/latest.json",
+      },
+      [],
+    ),
+    ["https://updates.example.test/latest.json"],
+  );
 });
 
 test("reports every missing updater signing input", () => {
@@ -183,4 +209,30 @@ test("release documentation does not retain completed hardening as pending work"
 
   assert.doesNotMatch(text, /Cross-platform CI should be tightened/i);
   assert.doesNotMatch(text, /main 领先 origin/);
+});
+
+test("the packaged frontend does not depend on font CDNs blocked by CSP", async () => {
+  const root = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+  );
+  const index = await readFile(path.join(root, "app", "index.html"), "utf8");
+
+  assert.doesNotMatch(index, /fonts\.(?:googleapis|gstatic)\.com/i);
+});
+
+test("desktop E2E failures are retained as CI artifacts", async () => {
+  const root = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+  );
+  const workflow = await readFile(
+    path.join(root, ".github", "workflows", "ci.yml"),
+    "utf8",
+  );
+
+  assert.match(
+    workflow,
+    /if:\s*failure\(\)[\s\S]*actions\/upload-artifact@v4[\s\S]*app\/\.e2e-tmp\/\*\*/i,
+  );
 });

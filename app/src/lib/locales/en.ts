@@ -102,6 +102,8 @@ export const en: Record<MessageKey, string> = {
   "title.sparse": "Sparse checkout",
   "count.items": "items",
   "common.loading": "Loading…",
+  "common.lazyLoadFailed": "This section could not be loaded.",
+  "common.reload": "Reload application",
 
   // Secondary view table columns
   "col.path": "Path",

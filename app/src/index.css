@@ -30,7 +30,7 @@
   --color-del-bg: rgba(187, 47, 26, 0.08);
 
   /* 三声部排版:Geist(UI)+ Geist Mono(数据)+ Instrument Serif(编辑性大字);
-     中文配 Noto Sans/Serif SC,逐字回退。 */
+     中文优先使用本机 Noto Sans/Serif SC,再逐字回退到系统字体。 */
   --font-sans: "Geist Variable", "Noto Sans SC", ui-sans-serif, system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "Geist Mono Variable", ui-monospace, "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
   --font-serif: "Instrument Serif", "Noto Serif SC", ui-serif, Georgia, "Songti SC", serif;

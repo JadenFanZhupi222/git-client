@@ -112,6 +112,23 @@ export function cargoPackageVersion(cargoToml) {
   throw new Error("Could not read [package].version from Cargo.toml");
 }
 
+export function resolveUpdaterEndpoints(env, configuredEndpoints = []) {
+  const explicitEndpoint = String(env.TAURI_UPDATER_ENDPOINT ?? "").trim();
+  if (explicitEndpoint) return [explicitEndpoint];
+
+  const configured = configuredEndpoints.filter((endpoint) =>
+    String(endpoint).trim(),
+  );
+  if (configured.length) return configured;
+
+  const repository = String(env.GITHUB_REPOSITORY ?? "").trim();
+  return repository
+    ? [
+        `https://github.com/${repository}/releases/latest/download/latest.json`,
+      ]
+    : [];
+}
+
 export async function loadReleaseInput({
   root,
   env,
@@ -129,7 +146,6 @@ export async function loadReleaseInput({
   ]);
   const packageJson = JSON.parse(packageText);
   const tauriConfig = JSON.parse(tauriText);
-  const envEndpoint = String(env.TAURI_UPDATER_ENDPOINT ?? "").trim();
   const envPubkey = String(env.TAURI_UPDATER_PUBKEY ?? "").trim();
 
   return {
@@ -141,9 +157,10 @@ export async function loadReleaseInput({
     tag,
     updater: {
       pubkey: envPubkey || tauriConfig.plugins?.updater?.pubkey || "",
-      endpoints: envEndpoint
-        ? [envEndpoint]
-        : tauriConfig.plugins?.updater?.endpoints || [],
+      endpoints: resolveUpdaterEndpoints(
+        env,
+        tauriConfig.plugins?.updater?.endpoints || [],
+      ),
     },
     csp: tauriConfig.app?.security?.csp,
     env,

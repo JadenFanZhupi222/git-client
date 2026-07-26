@@ -92,6 +92,19 @@ fn e2e_error(code: &str, message: impl Into<String>) -> IpcError {
 }
 
 #[cfg(feature = "e2e")]
+fn configured_e2e_root() -> Result<PathBuf, IpcError> {
+    std::env::var_os("GIT_CLIENT_E2E_ROOT")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            e2e_error(
+                "E2E_ROOT_NOT_CONFIGURED",
+                "GIT_CLIENT_E2E_ROOT must be configured by the desktop test harness",
+            )
+        })
+}
+
+#[cfg(feature = "e2e")]
 fn safe_e2e_join(root: &Path, relative: &str) -> Result<PathBuf, IpcError> {
     let relative = Path::new(relative);
     if relative.as_os_str().is_empty()
@@ -176,13 +189,31 @@ fn prepare_e2e_repo_at(root: &Path, run_id: &str) -> Result<PathBuf, IpcError> {
 }
 
 #[cfg(feature = "e2e")]
-fn write_e2e_file_at(repo: &Path, relative: &str, contents: &str) -> Result<(), IpcError> {
+fn write_e2e_file_at(
+    root: &Path,
+    run_id: &str,
+    relative: &str,
+    contents: &str,
+) -> Result<(), IpcError> {
+    let root = root.canonicalize().map_err(|error| {
+        e2e_error(
+            "E2E_FIXTURE_FAILED",
+            format!("failed to canonicalize E2E root: {error}"),
+        )
+    })?;
+    let repo = safe_e2e_join(&root, run_id)?;
     let repo = repo.canonicalize().map_err(|error| {
         e2e_error(
             "E2E_FIXTURE_FAILED",
             format!("failed to canonicalize E2E repository: {error}"),
         )
     })?;
+    if !repo.starts_with(&root) {
+        return Err(e2e_error(
+            "E2E_PATH_OUTSIDE_ROOT",
+            "E2E repository escaped its configured fixture root",
+        ));
+    }
     if !repo.join(".git").is_dir() {
         return Err(e2e_error(
             "E2E_NOT_A_REPOSITORY",
@@ -239,10 +270,10 @@ fn write_e2e_file_at(repo: &Path, relative: &str, contents: &str) -> Result<(), 
 
 #[cfg(feature = "e2e")]
 #[tauri::command]
-async fn e2e_prepare_repo(root_path: String, run_id: String) -> Result<String, IpcError> {
+async fn e2e_prepare_repo(run_id: String) -> Result<String, IpcError> {
     tokio::task::spawn_blocking(move || {
-        prepare_e2e_repo_at(Path::new(&root_path), &run_id)
-            .map(|path| path.to_string_lossy().into_owned())
+        let root = configured_e2e_root()?;
+        prepare_e2e_repo_at(&root, &run_id).map(|path| path.to_string_lossy().into_owned())
     })
     .await
     .map_err(join_panic)?
@@ -251,12 +282,13 @@ async fn e2e_prepare_repo(root_path: String, run_id: String) -> Result<String, I
 #[cfg(feature = "e2e")]
 #[tauri::command]
 async fn e2e_write_file(
-    repo_path: String,
+    run_id: String,
     relative_path: String,
     contents: String,
 ) -> Result<(), IpcError> {
     tokio::task::spawn_blocking(move || {
-        write_e2e_file_at(Path::new(&repo_path), &relative_path, &contents)
+        let root = configured_e2e_root()?;
+        write_e2e_file_at(&root, &run_id, &relative_path, &contents)
     })
     .await
     .map_err(join_panic)?
@@ -284,11 +316,24 @@ mod e2e_fixture_tests {
         assert!(config.contains("Git Client E2E"));
         assert!(config.contains("e2e@git-client.invalid"));
 
-        write_e2e_file_at(&repo, "hello.txt", "hello from e2e\n").unwrap();
+        write_e2e_file_at(root.path(), "fixture-run", "hello.txt", "hello from e2e\n").unwrap();
         assert_eq!(
             std::fs::read_to_string(repo.join("hello.txt")).unwrap(),
             "hello from e2e\n"
         );
+    }
+
+    #[test]
+    fn e2e_fixture_cannot_write_to_a_repo_outside_the_configured_root() {
+        let trusted_root = tempfile::tempdir().unwrap();
+        let outside_root = tempfile::tempdir().unwrap();
+        prepare_e2e_repo_at(outside_root.path(), "outside-repo").unwrap();
+
+        let error = write_e2e_file_at(trusted_root.path(), "../outside-repo", "owned.txt", "nope")
+            .unwrap_err();
+
+        assert_eq!(error.code, "E2E_PATH_OUTSIDE_ROOT");
+        assert!(!outside_root.path().join("outside-repo/owned.txt").exists());
     }
 }
 

@@ -133,3 +133,12 @@ jobs:
           else
             pnpm -C app e2e
           fi
+
+      - name: Upload desktop E2E failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-e2e-failure-${{ runner.os }}
+          path: app/.e2e-tmp/**
+          if-no-files-found: warn
+          retention-days: 7
