@@ -70,8 +70,8 @@ pnpm -C app tauri build --ci --no-sign
 
 Expected Windows unsigned bundle paths:
 
-- `target/release/bundle/msi/Git Client_0.1.3_x64_en-US.msi`
-- `target/release/bundle/nsis/Git Client_0.1.3_x64-setup.exe`
+- `target/release/bundle/msi/Git Client_0.1.4_x64_en-US.msi`
+- `target/release/bundle/nsis/Git Client_0.1.4_x64-setup.exe`
 
 ## Manual Artifact Dry Run
 
@@ -95,8 +95,8 @@ Check:
 3. Create and push a tag:
 
 ```powershell
-git tag app-v0.1.3
-git push origin app-v0.1.3
+git tag app-v0.1.4
+git push origin app-v0.1.4
 ```
 
 4. Wait for Build Artifacts to finish.

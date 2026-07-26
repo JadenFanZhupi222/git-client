@@ -20,7 +20,7 @@ The app already covers the core daily Git workflow and several advanced workflow
 - GitHub and GitLab collaboration panels for tokens, PR/MR creation, and PR/MR review details
 - Frontend test coverage for the major UI slices added during development
 
-The 0.1.3 line now has release-candidate hardening: Linux/macOS/Windows CI,
+The 0.1.4 line now has release-candidate hardening: Linux/macOS/Windows CI,
 a real desktop init-to-commit E2E loop, fail-closed tagged releases, a restrictive
 CSP, dependency-boundary checks, complete GitLab MR detail localization, and an
 enforced initial JavaScript bundle budget. A public production release still
