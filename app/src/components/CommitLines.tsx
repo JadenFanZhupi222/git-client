@@ -13,6 +13,7 @@ export function CommitLines({ commit, badges, selected }: { commit: CommitDto; b
         <div className="flex items-center gap-1.5 overflow-hidden">
           {badges}
           <span
+            data-testid="commit-subject"
             className={`truncate text-[13.5px] ${selected ? "font-semibold" : "font-normal"} ${isMerge ? "text-fg-muted" : "text-fg"}`}
             title={commit.summary}
           >

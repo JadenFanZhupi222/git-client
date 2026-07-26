@@ -1,4 +1,6 @@
 use app_service::RepoRegistry;
+#[cfg(feature = "e2e")]
+use app_service::RepoService;
 use app_service::watcher::{ChangeKind, RepoWatcher};
 use git_engine::CompositeBackend; // 生产后端:git2(本地)+ cli(网络)组合
 use ipc_types::{
@@ -9,6 +11,10 @@ use ipc_types::{
     WorktreeInfoDto,
 };
 use std::path::PathBuf;
+#[cfg(feature = "e2e")]
+use std::path::{Component, Path};
+#[cfg(feature = "e2e")]
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -73,6 +79,216 @@ fn join_panic(e: tokio::task::JoinError) -> IpcError {
         code: "TASK_PANIC".into(),
         message: format!("后台任务异常: {e}"),
         recoverable: true,
+    }
+}
+
+#[cfg(feature = "e2e")]
+fn e2e_error(code: &str, message: impl Into<String>) -> IpcError {
+    IpcError {
+        code: code.into(),
+        message: message.into(),
+        recoverable: false,
+    }
+}
+
+#[cfg(feature = "e2e")]
+fn safe_e2e_join(root: &Path, relative: &str) -> Result<PathBuf, IpcError> {
+    let relative = Path::new(relative);
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(e2e_error(
+            "E2E_PATH_OUTSIDE_ROOT",
+            "E2E fixture path must be a non-empty relative path without traversal",
+        ));
+    }
+    Ok(root.join(relative))
+}
+
+#[cfg(feature = "e2e")]
+fn run_e2e_git(repo: &Path, args: &[&str]) -> Result<(), IpcError> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .map_err(|error| {
+            e2e_error(
+                "E2E_GIT_FAILED",
+                format!("failed to start git for E2E fixture: {error}"),
+            )
+        })?;
+    if !output.status.success() {
+        return Err(e2e_error(
+            "E2E_GIT_FAILED",
+            format!(
+                "git {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "e2e")]
+fn prepare_e2e_repo_at(root: &Path, run_id: &str) -> Result<PathBuf, IpcError> {
+    std::fs::create_dir_all(root).map_err(|error| {
+        e2e_error(
+            "E2E_FIXTURE_FAILED",
+            format!("failed to create E2E root: {error}"),
+        )
+    })?;
+    let root = root.canonicalize().map_err(|error| {
+        e2e_error(
+            "E2E_FIXTURE_FAILED",
+            format!("failed to canonicalize E2E root: {error}"),
+        )
+    })?;
+    let repo = safe_e2e_join(&root, run_id)?;
+    std::fs::create_dir(&repo).map_err(|error| {
+        e2e_error(
+            "E2E_FIXTURE_FAILED",
+            format!("failed to create isolated E2E repository: {error}"),
+        )
+    })?;
+    let repo = repo.canonicalize().map_err(|error| {
+        e2e_error(
+            "E2E_FIXTURE_FAILED",
+            format!("failed to canonicalize E2E repository: {error}"),
+        )
+    })?;
+    if !repo.starts_with(&root) {
+        return Err(e2e_error(
+            "E2E_PATH_OUTSIDE_ROOT",
+            "E2E repository escaped its fixture root",
+        ));
+    }
+
+    RepoService::new(Arc::new(CompositeBackend::default()))
+        .init_repo(&repo)
+        .map_err(to_ipc)?;
+    run_e2e_git(&repo, &["config", "user.name", "Git Client E2E"])?;
+    run_e2e_git(&repo, &["config", "user.email", "e2e@git-client.invalid"])?;
+    Ok(repo)
+}
+
+#[cfg(feature = "e2e")]
+fn write_e2e_file_at(repo: &Path, relative: &str, contents: &str) -> Result<(), IpcError> {
+    let repo = repo.canonicalize().map_err(|error| {
+        e2e_error(
+            "E2E_FIXTURE_FAILED",
+            format!("failed to canonicalize E2E repository: {error}"),
+        )
+    })?;
+    if !repo.join(".git").is_dir() {
+        return Err(e2e_error(
+            "E2E_NOT_A_REPOSITORY",
+            "E2E fixture target is not a Git repository",
+        ));
+    }
+
+    let target = safe_e2e_join(&repo, relative)?;
+    let parent = target.parent().ok_or_else(|| {
+        e2e_error(
+            "E2E_PATH_OUTSIDE_ROOT",
+            "E2E fixture file has no parent directory",
+        )
+    })?;
+    std::fs::create_dir_all(parent).map_err(|error| {
+        e2e_error(
+            "E2E_FIXTURE_FAILED",
+            format!("failed to create E2E fixture directory: {error}"),
+        )
+    })?;
+    let parent = parent.canonicalize().map_err(|error| {
+        e2e_error(
+            "E2E_FIXTURE_FAILED",
+            format!("failed to canonicalize E2E fixture directory: {error}"),
+        )
+    })?;
+    if !parent.starts_with(&repo) {
+        return Err(e2e_error(
+            "E2E_PATH_OUTSIDE_ROOT",
+            "E2E fixture file escaped its repository",
+        ));
+    }
+    if target.exists() {
+        let canonical_target = target.canonicalize().map_err(|error| {
+            e2e_error(
+                "E2E_FIXTURE_FAILED",
+                format!("failed to canonicalize existing E2E fixture file: {error}"),
+            )
+        })?;
+        if !canonical_target.starts_with(&repo) {
+            return Err(e2e_error(
+                "E2E_PATH_OUTSIDE_ROOT",
+                "E2E fixture file escaped its repository",
+            ));
+        }
+    }
+    std::fs::write(target, contents).map_err(|error| {
+        e2e_error(
+            "E2E_FIXTURE_FAILED",
+            format!("failed to write E2E fixture file: {error}"),
+        )
+    })
+}
+
+#[cfg(feature = "e2e")]
+#[tauri::command]
+async fn e2e_prepare_repo(root_path: String, run_id: String) -> Result<String, IpcError> {
+    tokio::task::spawn_blocking(move || {
+        prepare_e2e_repo_at(Path::new(&root_path), &run_id)
+            .map(|path| path.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(join_panic)?
+}
+
+#[cfg(feature = "e2e")]
+#[tauri::command]
+async fn e2e_write_file(
+    repo_path: String,
+    relative_path: String,
+    contents: String,
+) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        write_e2e_file_at(Path::new(&repo_path), &relative_path, &contents)
+    })
+    .await
+    .map_err(join_panic)?
+}
+
+#[cfg(all(test, feature = "e2e"))]
+mod e2e_fixture_tests {
+    use super::*;
+
+    #[test]
+    fn e2e_fixture_rejects_path_traversal() {
+        let root = tempfile::tempdir().unwrap();
+        let error = safe_e2e_join(root.path(), "../outside.txt").unwrap_err();
+
+        assert_eq!(error.code, "E2E_PATH_OUTSIDE_ROOT");
+    }
+
+    #[test]
+    fn e2e_fixture_initializes_repo_identity_and_file() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = prepare_e2e_repo_at(root.path(), "fixture-run").unwrap();
+
+        assert!(repo.join(".git").is_dir());
+        let config = std::fs::read_to_string(repo.join(".git/config")).unwrap();
+        assert!(config.contains("Git Client E2E"));
+        assert!(config.contains("e2e@git-client.invalid"));
+
+        write_e2e_file_at(&repo, "hello.txt", "hello from e2e\n").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.join("hello.txt")).unwrap(),
+            "hello from e2e\n"
+        );
     }
 }
 
@@ -1354,92 +1570,183 @@ pub fn run() {
         .manage(SearchGen::default());
 
     #[cfg(feature = "e2e")]
-    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    let builder = builder
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init());
+
+    #[cfg(feature = "e2e")]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        init_repo,
+        clone_repo,
+        get_head_commit,
+        get_status,
+        stage_file,
+        unstage_file,
+        stage_hunk,
+        unstage_hunk,
+        stage_lines,
+        commit,
+        amend_commit,
+        get_log,
+        file_history,
+        line_history,
+        pickaxe,
+        get_commit_files,
+        get_commit_file_diff,
+        get_commit_signature,
+        list_submodules,
+        update_submodule,
+        list_worktrees,
+        sparse_checkout_patterns,
+        get_working_diff,
+        get_commit_graph,
+        search_commits,
+        get_reflog,
+        compare_files,
+        compare_file_diff,
+        get_current_branch,
+        list_branches,
+        get_ahead_behind,
+        get_remotes,
+        list_refs,
+        set_upstream,
+        remote_list,
+        add_remote,
+        remove_remote,
+        rename_remote,
+        checkout_branch,
+        create_branch,
+        delete_branch,
+        merge_branch,
+        branch_delete_impact,
+        fetch,
+        pull,
+        push,
+        get_repo_state,
+        resolve_ours,
+        resolve_theirs,
+        continue_op,
+        abort_op,
+        cherry_pick,
+        revert,
+        create_tag,
+        delete_tag,
+        reset,
+        undo_state,
+        undo,
+        redo,
+        op_log,
+        op_goto,
+        interactive_rebase,
+        blame,
+        conflict_sides,
+        read_working_file,
+        read_image,
+        write_resolved,
+        stash_list,
+        stash_save,
+        stash_apply,
+        stash_pop,
+        stash_drop,
+        set_github_token,
+        has_github_token,
+        get_github_token,
+        clear_github_token,
+        set_gitlab_token,
+        has_gitlab_token,
+        get_gitlab_token,
+        clear_gitlab_token,
+        watch_repo,
+        e2e_prepare_repo,
+        e2e_write_file
+    ]);
+
+    #[cfg(not(feature = "e2e"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        init_repo,
+        clone_repo,
+        get_head_commit,
+        get_status,
+        stage_file,
+        unstage_file,
+        stage_hunk,
+        unstage_hunk,
+        stage_lines,
+        commit,
+        amend_commit,
+        get_log,
+        file_history,
+        line_history,
+        pickaxe,
+        get_commit_files,
+        get_commit_file_diff,
+        get_commit_signature,
+        list_submodules,
+        update_submodule,
+        list_worktrees,
+        sparse_checkout_patterns,
+        get_working_diff,
+        get_commit_graph,
+        search_commits,
+        get_reflog,
+        compare_files,
+        compare_file_diff,
+        get_current_branch,
+        list_branches,
+        get_ahead_behind,
+        get_remotes,
+        list_refs,
+        set_upstream,
+        remote_list,
+        add_remote,
+        remove_remote,
+        rename_remote,
+        checkout_branch,
+        create_branch,
+        delete_branch,
+        merge_branch,
+        branch_delete_impact,
+        fetch,
+        pull,
+        push,
+        get_repo_state,
+        resolve_ours,
+        resolve_theirs,
+        continue_op,
+        abort_op,
+        cherry_pick,
+        revert,
+        create_tag,
+        delete_tag,
+        reset,
+        undo_state,
+        undo,
+        redo,
+        op_log,
+        op_goto,
+        interactive_rebase,
+        blame,
+        conflict_sides,
+        read_working_file,
+        read_image,
+        write_resolved,
+        stash_list,
+        stash_save,
+        stash_apply,
+        stash_pop,
+        stash_drop,
+        set_github_token,
+        has_github_token,
+        get_github_token,
+        clear_github_token,
+        set_gitlab_token,
+        has_gitlab_token,
+        get_gitlab_token,
+        clear_gitlab_token,
+        watch_repo
+    ]);
 
     builder
-        .invoke_handler(tauri::generate_handler![
-            init_repo,
-            clone_repo,
-            get_head_commit,
-            get_status,
-            stage_file,
-            unstage_file,
-            stage_hunk,
-            unstage_hunk,
-            stage_lines,
-            commit,
-            amend_commit,
-            get_log,
-            file_history,
-            line_history,
-            pickaxe,
-            get_commit_files,
-            get_commit_file_diff,
-            get_commit_signature,
-            list_submodules,
-            update_submodule,
-            list_worktrees,
-            sparse_checkout_patterns,
-            get_working_diff,
-            get_commit_graph,
-            search_commits,
-            get_reflog,
-            compare_files,
-            compare_file_diff,
-            get_current_branch,
-            list_branches,
-            get_ahead_behind,
-            get_remotes,
-            list_refs,
-            set_upstream,
-            remote_list,
-            add_remote,
-            remove_remote,
-            rename_remote,
-            checkout_branch,
-            create_branch,
-            delete_branch,
-            merge_branch,
-            branch_delete_impact,
-            fetch,
-            pull,
-            push,
-            get_repo_state,
-            resolve_ours,
-            resolve_theirs,
-            continue_op,
-            abort_op,
-            cherry_pick,
-            revert,
-            create_tag,
-            delete_tag,
-            reset,
-            undo_state,
-            undo,
-            redo,
-            op_log,
-            op_goto,
-            interactive_rebase,
-            blame,
-            conflict_sides,
-            read_working_file,
-            read_image,
-            write_resolved,
-            stash_list,
-            stash_save,
-            stash_apply,
-            stash_pop,
-            stash_drop,
-            set_github_token,
-            has_github_token,
-            get_github_token,
-            clear_github_token,
-            set_gitlab_token,
-            has_gitlab_token,
-            get_gitlab_token,
-            clear_gitlab_token,
-            watch_repo
-        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

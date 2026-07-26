@@ -713,7 +713,7 @@ export default function App() {
 
       {/* 主体 */}
       {repo ? (
-        <div className="flex min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1" data-testid="repo-shell">
           <Sidebar
             active={tab}
             onChange={setTab}
@@ -1033,6 +1033,7 @@ function EmptyState({ onPick, onClone, onInit, lastRepo, onResume }: { onPick: (
             <button
               onClick={() => onResume(lastRepo)}
               title={lastRepo}
+              data-testid="resume-repo"
               className="group -ml-2 flex max-w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
             >
               <HistoryIcon width={13} height={13} className="shrink-0 text-fg-subtle transition-colors group-hover:text-accent" />

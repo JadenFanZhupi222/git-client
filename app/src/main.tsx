@@ -39,15 +39,25 @@ const queryClient = new QueryClient({
   },
 });
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <ToastProvider>
-        <>
-          <GlassFilter />
-          <App />
-        </>
-      </ToastProvider>
-    </QueryClientProvider>
-  </React.StrictMode>,
-);
+async function bootstrap() {
+  // The bridge is excluded from normal production builds; only the dedicated
+  // `vite --mode e2e` bundle imports and initializes it.
+  if (import.meta.env.MODE === "e2e") {
+    await import("@wdio/tauri-plugin");
+  }
+
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <>
+            <GlassFilter />
+            <App />
+          </>
+        </ToastProvider>
+      </QueryClientProvider>
+    </React.StrictMode>,
+  );
+}
+
+void bootstrap();

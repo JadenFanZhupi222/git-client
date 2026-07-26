@@ -1,5 +1,23 @@
 {
+  "build": {
+    "beforeBuildCommand": "pnpm build:e2e"
+  },
   "app": {
-    "withGlobalTauri": true
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        {
+          "identifier": "desktop-e2e",
+          "description": "Test-only permissions for the WebdriverIO bridge.",
+          "windows": ["main"],
+          "permissions": [
+            "core:default",
+            "opener:default",
+            "dialog:default",
+            "wdio:default"
+          ]
+        }
+      ]
+    }
   }
 }

@@ -55,6 +55,7 @@ export function Sidebar({
         return (
           <button
             key={it.id}
+            data-testid={`nav-${it.id}`}
             onClick={() => onChange(it.id)}
             title={collapsed ? it.label : undefined}
             className={cx(

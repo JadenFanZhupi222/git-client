@@ -193,12 +193,15 @@ export function ChangesView({ repo }: { repo: string }) {
     return (
       <li
         data-fkey={`${entry.path}|${isStaged}`}
+        data-testid={isStaged ? "staged-file" : "unstaged-file"}
+        data-file-path={entry.path}
         onClick={() => setSel({ path: entry.path, staged: isStaged })}
         className={`group relative flex cursor-pointer items-center gap-2.5 rounded-md px-3 py-1.5 ${on ? "bg-accent/10" : "hover:bg-elevated"}`}
       >
         {on && <Spine />}
         {/* 暂存复选框:勾选 = 已暂存(accent 实心 + 白勾),空 = 未暂存。点击切换暂存态。 */}
         <button
+          data-testid="stage-action"
           title={isStaged ? t("changes.unstage") : t("changes.stage")}
           disabled={busy}
           onClick={(e) => { e.stopPropagation(); run(() => (isStaged ? unstageFile(repo, entry.path) : stageFile(repo, entry.path))); }}
@@ -324,6 +327,7 @@ export function ChangesView({ repo }: { repo: string }) {
         <div className="shrink-0 border-t border-line p-3">
           <div className="overflow-hidden rounded-md border border-line bg-elevated/50">
             <textarea
+              data-testid="commit-message"
               className="w-full resize-none border-none bg-transparent p-2.5 text-[13px] text-fg placeholder:text-fg-subtle focus:outline-none"
               rows={3}
               placeholder={t("changes.commitPlaceholder")}
@@ -347,7 +351,7 @@ export function ChangesView({ repo }: { repo: string }) {
                 {t("changes.amend")}
               </label>
               <span className="font-mono text-[10.5px] tabular-nums text-fg-subtle">{t("changes.stagedCount", { n: staged.length })}</span>
-              <Button variant="commit" size="md" disabled={!canCommit} onClick={doCommit} className="ml-auto">
+              <Button data-testid="commit-action" variant="commit" size="md" disabled={!canCommit} onClick={doCommit} className="ml-auto">
                 <CheckIcon width={13} height={13} /> {amend ? t("changes.amendCommit") : t("changes.commitTo", { branch })}
               </Button>
             </div>

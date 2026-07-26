@@ -12,6 +12,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && node ../scripts/check-bundle-size.mjs dist 500000",
+    "build:e2e": "tsc && vite build --mode e2e && node ../scripts/check-bundle-size.mjs dist 500000",
     "test": "vitest run",
     "e2e": "wdio run ./wdio.conf.js",
     "e2e:build": "tauri build --ci --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json",
@@ -51,6 +52,7 @@
     "@wdio/mocha-framework": "^9.29.1",
     "@wdio/native-utils": "2.5.0",
     "@wdio/spec-reporter": "^9.29.1",
+    "@wdio/tauri-plugin": "1.2.0",
     "@wdio/tauri-service": "^1.2.0",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4.3.0",
