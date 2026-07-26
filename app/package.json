@@ -16,6 +16,7 @@
     "e2e": "wdio run ./wdio.conf.js",
     "e2e:build": "tauri build --ci --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json",
     "e2e:ci": "pnpm e2e:build && pnpm e2e",
+    "release:check": "node ../scripts/release-preflight.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

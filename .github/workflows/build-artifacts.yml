@@ -17,9 +17,32 @@ jobs:
   release:
     name: Prepare GitHub Release
     runs-on: ubuntu-latest
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+      AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+      AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
+      TAURI_UPDATER_ENDPOINT: ${{ secrets.TAURI_UPDATER_ENDPOINT }}
     outputs:
       should-release: ${{ steps.mode.outputs.should-release }}
     steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
       - name: Detect release mode
         id: mode
         run: |
@@ -28,6 +51,16 @@ jobs:
           else
             echo "should-release=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Validate release inputs
+        shell: pwsh
+        run: |
+          if ("${{ steps.mode.outputs.should-release }}" -eq "true") {
+            node scripts/release-preflight.mjs --platform=windows
+            node scripts/release-preflight.mjs --platform=macos
+          } else {
+            node scripts/release-preflight.mjs --allow-unsigned
+          }
 
       - name: Create or reuse prerelease
         if: steps.mode.outputs.should-release == 'true'
