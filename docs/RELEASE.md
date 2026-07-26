@@ -5,6 +5,9 @@ This project ships desktop builds through GitHub Actions.
 ## Workflows
 
 - `.github/workflows/ci.yml`: PR/push quality gate across Linux, macOS, and Windows.
+  It runs formatting, Clippy, Rust tests, dependency-boundary validation,
+  frontend tests/build/bundle budgets, release-validator tests, and the real
+  desktop init-to-history E2E workflow.
 - `.github/workflows/build-artifacts.yml`: manual artifact build and `app-v*` tag release.
   It builds Windows x64, Linux x86_64, macOS arm64 (`macos-15`), and
   macOS x86_64 (`macos-15-intel`) bundles.
@@ -41,7 +44,10 @@ macOS signing and notarization:
 - `APPLE_PASSWORD`
 - `APPLE_TEAM_ID`
 
-If code-signing secrets are missing, the workflow falls back to unsigned bundles when updater artifacts are not enabled. If updater signing secrets are missing, `latest.json` upload is disabled.
+Tagged releases do not fall back to unsigned output. If any updater, Windows
+signing, or macOS signing/notarization input required by the matrix is missing,
+the preflight fails before a GitHub prerelease is created. Use a manual workflow
+dispatch for explicitly unsigned inspection artifacts.
 
 ## Local Preflight
 
@@ -51,17 +57,21 @@ Run these before creating a release tag:
 pnpm -C app install --frozen-lockfile
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
+powershell -NoProfile -File scripts/check-dependency-boundaries.ps1
 cargo test --workspace
+node --test scripts/release-preflight.test.mjs
+node --test scripts/check-bundle-size.test.mjs
 pnpm -C app test
 pnpm -C app build
 pnpm -C app e2e:ci
+pnpm -C app release:check -- --allow-unsigned
 pnpm -C app tauri build --ci --no-sign
 ```
 
 Expected Windows unsigned bundle paths:
 
-- `target/release/bundle/msi/Git Client_0.1.0_x64_en-US.msi`
-- `target/release/bundle/nsis/Git Client_0.1.0_x64-setup.exe`
+- `target/release/bundle/msi/Git Client_0.1.3_x64_en-US.msi`
+- `target/release/bundle/nsis/Git Client_0.1.3_x64-setup.exe`
 
 ## Manual Artifact Dry Run
 
@@ -72,23 +82,32 @@ Check:
 - Linux, both macOS architecture jobs, and Windows finish successfully.
 - Artifact names are `tauri-linux`, `tauri-macos-arm64`,
   `tauri-macos-x64`, and `tauri-windows`.
-- Signed builds only appear when the relevant signing secrets are present.
+- Manual artifacts may be unsigned. Tagged releases must be signed and
+  notarized where applicable.
+- Install and launch each artifact on the matching architecture. CI coverage
+  does not replace this real-device acceptance step.
 
 ## Tag Release
 
-1. Update `app/src-tauri/tauri.conf.json` version and any release notes.
+1. Update the version in `app/package.json`, `app/src-tauri/Cargo.toml`, and
+   `app/src-tauri/tauri.conf.json`, then update release notes.
 2. Run the local preflight.
 3. Create and push a tag:
 
 ```powershell
-git tag app-v0.1.0
-git push origin app-v0.1.0
+git tag app-v0.1.3
+git push origin app-v0.1.3
 ```
 
 4. Wait for Build Artifacts to finish.
 5. Open the generated GitHub prerelease and inspect uploaded bundles.
 6. If updater secrets are configured, verify `latest.json` and `.sig` assets are present.
 7. Promote the prerelease to a normal release only after installing the bundles on real machines.
+
+The normal production frontend excludes the WDIO bridge and fixture commands.
+They are compiled and permitted only by the dedicated `e2e` feature/config.
+The production shell enforces a restrictive CSP, and the initial JavaScript
+entry chunk must stay at or below 500,000 bytes.
 
 ## Rollback
 

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   cargoPackageVersion,
@@ -163,4 +166,21 @@ name = "app_lib"
 `;
 
   assert.equal(cargoPackageVersion(cargoToml), "0.1.3");
+});
+
+test("release documentation does not retain completed hardening as pending work", async () => {
+  const root = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+  );
+  const text = (
+    await Promise.all([
+      readFile(path.join(root, "README.md"), "utf8"),
+      readFile(path.join(root, "docs", "RELEASE.md"), "utf8"),
+      readFile(path.join(root, "docs", "HANDOFF.md"), "utf8"),
+    ])
+  ).join("\n");
+
+  assert.doesNotMatch(text, /Cross-platform CI should be tightened/i);
+  assert.doesNotMatch(text, /main 领先 origin/);
 });

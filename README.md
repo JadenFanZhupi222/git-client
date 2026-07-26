@@ -20,7 +20,12 @@ The app already covers the core daily Git workflow and several advanced workflow
 - GitHub and GitLab collaboration panels for tokens, PR/MR creation, and PR/MR review details
 - Frontend test coverage for the major UI slices added during development
 
-Some production hardening work is still pending, especially cross-platform CI, signing/notarization, auto-update release plumbing, and full real-device visual QA for the newer advanced diff and image-diff flows.
+The 0.1.3 line now has release-candidate hardening: Linux/macOS/Windows CI,
+a real desktop init-to-commit E2E loop, fail-closed tagged releases, a restrictive
+CSP, dependency-boundary checks, complete GitLab MR detail localization, and an
+enforced initial JavaScript bundle budget. A public production release still
+requires operator-owned signing/notarization credentials, updater keys and
+endpoint, plus final installation and visual acceptance on supported hardware.
 
 ## Tech Stack
 
@@ -143,6 +148,15 @@ End-to-end checks:
 pnpm --dir app e2e:ci
 ```
 
+Release and architecture gates:
+
+```bash
+node --test scripts/release-preflight.test.mjs
+node --test scripts/check-bundle-size.test.mjs
+powershell -NoProfile -File scripts/check-dependency-boundaries.ps1
+pnpm --dir app release:check -- --allow-unsigned
+```
+
 When a DTO changes, regenerate TypeScript bindings by running:
 
 ```bash
@@ -174,11 +188,15 @@ The current repository still contains older Chinese handoff notes and some Chine
 
 ## Known Gaps
 
-- Cross-platform CI should be tightened with formatting, Clippy, tests, frontend type checks, and build gates.
-- Release signing and notarization are not finished.
-- Tauri updater and production release distribution still need final wiring.
-- Some newer advanced UI flows still need real-device visual QA.
-- Collaboration panels are being progressively internationalized; GitLab MR detail copy is still a natural next slice.
+- Production signing/notarization credentials and updater key material are
+  intentionally not stored in the repository; a release operator must provision
+  them before an `app-v*` tag can publish.
+- The updater endpoint remains a development placeholder until the production
+  release channel exists.
+- Installation, updater, and advanced diff/image-diff acceptance still need to
+  be completed on real Windows, Linux, Intel Mac, and Apple Silicon machines.
+- GitHub PR detail API-provided statuses and some collaboration strings remain
+  candidates for further localization.
 
 ## Useful Project Docs
 

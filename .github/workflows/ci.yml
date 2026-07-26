@@ -71,6 +71,12 @@ jobs:
       - name: Install deps
         run: pnpm -C app install --frozen-lockfile
 
+      - name: Release validator tests
+        run: node --test scripts/release-preflight.test.mjs
+
+      - name: Bundle budget tests
+        run: node --test scripts/check-bundle-size.test.mjs
+
       - name: Test
         run: pnpm -C app test
 
@@ -113,10 +119,13 @@ jobs:
       - name: Install deps
         run: pnpm -C app install --frozen-lockfile
 
+      - name: Test E2E fixtures
+        run: cargo test -p app --features e2e e2e_fixture
+
       - name: Build desktop test binary
         run: pnpm -C app e2e:build
 
-      - name: Run desktop smoke
+      - name: Run desktop commit workflow
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then

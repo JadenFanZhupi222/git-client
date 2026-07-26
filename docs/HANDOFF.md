@@ -2,15 +2,16 @@
 
 > 这份文件在 git 仓库里,会随 push/pull 跟到新机器。记录当前进度、铁律、下一步。
 > 配套必读:`CLAUDE.md`(铁律)、`ARCHITECTURE.md`(架构)、`README.md`(启动)。
-> 最近更新:2026-06-17(**Tier 0 硬门槛补全**:远程管理 add/remove/rename + 独立 merge + clone/init 启动屏正门;均已合 main 待 push)。
+> 最近更新:2026-07-26(**0.1.3 发布候选加固**:严格发布预检、CSP、跨平台 CI、核心桌面 E2E、依赖边界、GitLab MR i18n、前端拆包与体积门禁)。
 > 前次:2026-06-13(M6 · Polish & Harden 全部完成:M6.1 并排虚拟化/M6.2 图片去 base64+对比/M6.3 CLI 读缓存/M6.4 ts-rs 自动类型/M6.6 面板 a11y)。
 
 ## 当前状态
 - 阶段 0/1/2/3 全部完成,**阶段 4 核心(交互式 rebase)已落地**。
-- 后端 `cargo test --workspace` 全绿、`cargo clippy --workspace` 零警告、`cargo fmt --check` 干净。
-- 前端 `npx tsc --noEmit` 干净、`npm run build` 通过。
-- ⚠️ **main 领先 origin 若干 commit**;push 由用户手动做(铁律:代码 push 到 origin 必须用户发话)。
-  换机器前请先在旧机 push,新机器再 pull。
+- Linux/macOS/Windows CI 已覆盖 fmt、Clippy、Rust/前端测试、构建、依赖边界和真实桌面 E2E。
+- E2E 不再只测启动:会初始化临时仓库、写文件、经 UI 暂存/提交,并在历史页断言提交标题。
+- `app-v*` 标签发布已 fail-closed;缺 updater、Windows 签名或 macOS 签名/公证输入时不会创建 prerelease。
+- 正式前端已启用 CSP,首入口 JS 预算 500,000 bytes;WDIO 桥和 fixture 命令只在 `e2e` feature/config 中存在。
+- 当前 Git 同步状态不要写死在本文;换机器或交接前以 `git status -sb`、`git log --oneline --decorate -10` 为准。
 
 ## 竖切模式(每个 git 功能都这么走)
 git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfile 测试) → fake.rs
@@ -159,22 +160,27 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
   - ✅ **GitLab MR 面板外壳 i18n 切片**(2026-07-06,纯前端):`GitlabMrPanel` 的 dialog 名称、标题、
     远程/分支 fallback、缺远程/缺分支错误、loading/empty 状态、列表打开/详情按钮、底部 token/refresh/close
     接入 `gitlabMr.*`;详情区 approvals、notes、discussions、pipeline jobs、merge/comment 控件仍留给后续切片。
-  - **Tier 0 仍剩**:跨平台 CI/签名(属 infra)。下一刀候选见
-    `2026-06-17-path-to-number-one.md` 的「5 件事」:③ i18n 骨架 ④ AI 提交信息(BYOK+Haiku,
-    用户已认可方向但本轮暂不做)⑤ M7 GitHub PR。
+  - **Tier 0 自动化门禁已补齐**:跨平台 CI、严格标签发布预检、双架构 macOS、CSP、
+    依赖边界、核心桌面 E2E 和包体预算均已落地。真正公开发布仍需发布负责人配置
+    Windows/macOS/updater 密钥与生产 endpoint,并完成各架构安装验收。
 - **下一里程碑:M7 · 协作/PR**(原 roadmap M6,见 `2026-06-08-world-class-roadmap.md`)。
 - ⚠️ **真机视觉/交互验收欠账**(自动门 test/clippy/fmt/tsc/build 全过):M5 各刀、图片 diff、
   **M6.1**(大 diff 虚拟化滚动/并排联动/折叠)、**M6.2**(图片字节流加载/滑块/洋葱皮)、
   **M6.6**(面板键盘)都需真机过一遍。M6.3/M6.4 是后端/类型纯逻辑,无需真机视觉验收。
-  push 节奏:M5+M6.1 已 push;**M6.2/M6.3/M6.4/M6.6 + Tier 0 三刀已合 main 待 push**(等用户发话)。
+  Git 同步与分支状态以命令实时检查为准,不要继续维护易过期的 ahead/push 文本快照。
 - 零散续做:worktree 切换/新建(M4.5 只做展示);log 里 ctrl-多选两提交→比较。
-- 工程收尾:真机验收交互式 rebase(尤其中途冲突的继续/中止、大仓库 cp/exec 路径);CI 加 `fmt --check` + `clippy -D warnings` 卡口(属 infra,之前没动 .github);push 到 origin。
+- 工程收尾:真机验收交互式 rebase(尤其中途冲突的继续/中止、大仓库 cp/exec 路径);
+  为 updater 配生产公钥/endpoint,由发布负责人注入签名/公证 secrets,并在 Windows/Linux/Intel Mac/Apple Silicon 安装验收。
 - 已知小项:composite 40+ 透传样板(Rust 固有税,可选 delegate crate)。
 
 ## 验证命令
-- 后端:`cargo test --workspace`、`cargo clippy --workspace`、`cargo fmt --check`、`cargo check -p app`
-- 前端(在 app/ 下或 `--prefix app`):`npx tsc -p tsconfig.json --noEmit`、`npm run build`
-- 真机:`cd app && npm run tauri dev`
+- 后端:`cargo test --workspace`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all --check`
+- 边界:`powershell -NoProfile -File scripts/check-dependency-boundaries.ps1`
+- 前端:`pnpm -C app test`、`pnpm -C app build`
+- 发布门:`node --test scripts/release-preflight.test.mjs`、`node --test scripts/check-bundle-size.test.mjs`、
+  `pnpm -C app release:check -- --allow-unsigned`
+- 桌面 E2E:`pnpm -C app e2e:ci`
+- 真机开发:`pnpm -C app tauri dev`
 
 ## superpowers 产物
 `docs/superpowers/plans/` 下有各功能的 spec/plan(remote-fetch、interactive-rebase、post-sync-marks-roadmap 等)。
