@@ -103,8 +103,10 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact-name: tauri-linux
-          - os: macos-latest
-            artifact-name: tauri-macos
+          - os: macos-15
+            artifact-name: tauri-macos-arm64
+          - os: macos-15-intel
+            artifact-name: tauri-macos-x64
           - os: windows-latest
             artifact-name: tauri-windows
 

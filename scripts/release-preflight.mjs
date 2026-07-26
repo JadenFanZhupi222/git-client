@@ -40,6 +40,21 @@ export function validateRelease(input) {
     );
   }
 
+  const csp = String(input.csp ?? "");
+  const requiredCspDirectives = [
+    "default-src 'self'",
+    "object-src 'none'",
+    "frame-src 'none'",
+  ];
+  if (
+    !csp ||
+    requiredCspDirectives.some((directive) => !csp.includes(directive))
+  ) {
+    errors.push(
+      "Content Security Policy must enable self-only defaults and disable objects and frames.",
+    );
+  }
+
   if (!input.release) return errors;
 
   const version = input.versions.package;
@@ -130,6 +145,7 @@ export async function loadReleaseInput({
         ? [envEndpoint]
         : tauriConfig.plugins?.updater?.endpoints || [],
     },
+    csp: tauriConfig.app?.security?.csp,
     env,
     platform,
     release,

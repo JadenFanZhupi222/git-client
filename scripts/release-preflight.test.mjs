@@ -11,6 +11,9 @@ const updater = {
   endpoints: ["https://example.test/latest.json"],
 };
 
+const secureCsp =
+  "default-src 'self'; connect-src ipc: http://ipc.localhost https://api.github.com https://gitlab.com https:; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; frame-src 'none'; base-uri 'none'";
+
 const completeEnv = {
   TAURI_SIGNING_PRIVATE_KEY: "updater-private-key",
   TAURI_SIGNING_PRIVATE_KEY_PASSWORD: "updater-password",
@@ -33,6 +36,7 @@ function validInput(overrides = {}) {
     versions: { package: "0.1.3", tauri: "0.1.3", cargo: "0.1.3" },
     tag: "app-v0.1.3",
     updater,
+    csp: secureCsp,
     env: completeEnv,
     platform: "windows",
     release: true,
@@ -114,6 +118,19 @@ test("accepts a complete production release configuration", () => {
   assert.deepEqual(
     validateRelease(validInput({ platform: "macos" })),
     [],
+  );
+});
+
+test("rejects a disabled or permissive content security policy", () => {
+  assert.match(
+    validateRelease(validInput({ csp: null })).join("\n"),
+    /content security policy/i,
+  );
+  assert.match(
+    validateRelease(
+      validInput({ csp: "default-src *; object-src *; frame-src *" }),
+    ).join("\n"),
+    /content security policy/i,
   );
 });
 

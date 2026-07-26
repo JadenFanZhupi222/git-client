@@ -6,8 +6,13 @@ This project ships desktop builds through GitHub Actions.
 
 - `.github/workflows/ci.yml`: PR/push quality gate across Linux, macOS, and Windows.
 - `.github/workflows/build-artifacts.yml`: manual artifact build and `app-v*` tag release.
+  It builds Windows x64, Linux x86_64, macOS arm64 (`macos-15`), and
+  macOS x86_64 (`macos-15-intel`) bundles.
 
-Manual runs upload unsigned or signed workflow artifacts for inspection. Pushing a tag named `app-vX.Y.Z` creates or reuses a GitHub prerelease and uploads platform bundles.
+Manual runs may upload unsigned workflow artifacts for inspection. Pushing a tag
+named `app-vX.Y.Z` is fail-closed: application versions, updater configuration,
+updater signing, Windows signing, and macOS signing/notarization inputs must all
+pass `pnpm -C app release:check` before a GitHub prerelease is created.
 
 ## Required Secrets
 
@@ -64,8 +69,9 @@ Use GitHub Actions > Build Artifacts > Run workflow. This does not create a rele
 
 Check:
 
-- Linux, macOS, and Windows jobs finish successfully.
-- Artifact names are `tauri-linux`, `tauri-macos`, and `tauri-windows`.
+- Linux, both macOS architecture jobs, and Windows finish successfully.
+- Artifact names are `tauri-linux`, `tauri-macos-arm64`,
+  `tauri-macos-x64`, and `tauri-windows`.
 - Signed builds only appear when the relevant signing secrets are present.
 
 ## Tag Release
