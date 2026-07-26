@@ -1,32 +1,16 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import type { Tab } from "./components/TabBar";
 import { Sidebar } from "./components/Sidebar";
-import { ChangesView } from "./views/ChangesView";
-import { HistoryView } from "./views/HistoryView";
-import { CompareView } from "./views/CompareView";
-import { BlameView } from "./views/BlameView";
-import { SubmodulesView } from "./views/SubmodulesView";
-import { WorktreesView } from "./views/WorktreesView";
-import { SparseCheckoutView } from "./views/SparseCheckoutView";
 import { useQueryClient } from "@tanstack/react-query";
 import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, checkoutBranch, initRepo, type IpcError } from "./ipc";
 import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon, MoreIcon, DropletIcon, CloudIcon, PlusIcon, FileDiffIcon, BlameIcon, SubmoduleIcon, WorktreeIcon, BranchIcon } from "./components/icons";
-import { RemoteManager } from "./components/RemoteManager";
-import { GithubCreatePrDialog } from "./components/GithubCreatePrDialog";
-import { GitlabCreateMrDialog } from "./components/GitlabCreateMrDialog";
-import { GitHubTokenDialog } from "./components/GitHubTokenDialog";
-import { GitLabTokenDialog } from "./components/GitLabTokenDialog";
-import { GithubPrPanel } from "./components/GithubPrPanel";
-import { GitlabMrPanel } from "./components/GitlabMrPanel";
-import { CloneDialog } from "./components/CloneDialog";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
 import { StashMenu } from "./components/StashMenu";
-import { OpLogPanel } from "./components/OpLogPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import type { Command } from "./lib/commands";
 import { useToast } from "./components/Toast";
@@ -39,6 +23,23 @@ import { useT, useLang, toggleLang, nextLangLabel } from "./lib/i18n";
 import { GlobeIcon } from "./components/icons";
 import { checkForAppUpdate } from "./lib/updater";
 import { buildCreateChangeRequestUrl, buildFindChangeRequestUrl } from "./lib/hosting";
+
+const ChangesView = lazy(() => import("./views/ChangesView").then((m) => ({ default: m.ChangesView })));
+const HistoryView = lazy(() => import("./views/HistoryView").then((m) => ({ default: m.HistoryView })));
+const CompareView = lazy(() => import("./views/CompareView").then((m) => ({ default: m.CompareView })));
+const BlameView = lazy(() => import("./views/BlameView").then((m) => ({ default: m.BlameView })));
+const SubmodulesView = lazy(() => import("./views/SubmodulesView").then((m) => ({ default: m.SubmodulesView })));
+const WorktreesView = lazy(() => import("./views/WorktreesView").then((m) => ({ default: m.WorktreesView })));
+const SparseCheckoutView = lazy(() => import("./views/SparseCheckoutView").then((m) => ({ default: m.SparseCheckoutView })));
+const RemoteManager = lazy(() => import("./components/RemoteManager").then((m) => ({ default: m.RemoteManager })));
+const GithubCreatePrDialog = lazy(() => import("./components/GithubCreatePrDialog").then((m) => ({ default: m.GithubCreatePrDialog })));
+const GitlabCreateMrDialog = lazy(() => import("./components/GitlabCreateMrDialog").then((m) => ({ default: m.GitlabCreateMrDialog })));
+const GitHubTokenDialog = lazy(() => import("./components/GitHubTokenDialog").then((m) => ({ default: m.GitHubTokenDialog })));
+const GitLabTokenDialog = lazy(() => import("./components/GitLabTokenDialog").then((m) => ({ default: m.GitLabTokenDialog })));
+const GithubPrPanel = lazy(() => import("./components/GithubPrPanel").then((m) => ({ default: m.GithubPrPanel })));
+const GitlabMrPanel = lazy(() => import("./components/GitlabMrPanel").then((m) => ({ default: m.GitlabMrPanel })));
+const CloneDialog = lazy(() => import("./components/CloneDialog").then((m) => ({ default: m.CloneDialog })));
+const OpLogPanel = lazy(() => import("./components/OpLogPanel").then((m) => ({ default: m.OpLogPanel })));
 
 /** 把 git fetch 的原始摘要提炼成简洁细节:优先取 "->" 更新行。 */
 function fetchDetail(summary: string): string | undefined {
@@ -723,7 +724,9 @@ export default function App() {
             hasSparse={hasSparse}
           />
           <div className="min-h-0 min-w-0 flex-1">
-            {tab === "changes" ? <ChangesView repo={repo} /> : tab === "history" ? <HistoryView repo={repo} /> : tab === "compare" ? <CompareView repo={repo} /> : tab === "submodules" ? <SubmodulesView repo={repo} /> : tab === "worktrees" ? <WorktreesView repo={repo} /> : tab === "sparse" ? <SparseCheckoutView repo={repo} /> : <BlameView repo={repo} />}
+            <Suspense fallback={<LazyFallback />}>
+              {tab === "changes" ? <ChangesView repo={repo} /> : tab === "history" ? <HistoryView repo={repo} /> : tab === "compare" ? <CompareView repo={repo} /> : tab === "submodules" ? <SubmodulesView repo={repo} /> : tab === "worktrees" ? <WorktreesView repo={repo} /> : tab === "sparse" ? <SparseCheckoutView repo={repo} /> : <BlameView repo={repo} />}
+            </Suspense>
           </div>
         </div>
       ) : (
@@ -769,6 +772,7 @@ export default function App() {
 
       {paletteOpen && <CommandPalette commands={commands} onClose={() => setPaletteOpen(false)} />}
 
+      <Suspense fallback={<LazyFallback overlay />}>
       {repo && opLogOpen && (
         <OpLogPanel
           repo={repo}
@@ -856,6 +860,20 @@ export default function App() {
           onCloned={(path) => { setCloneOpen(false); setRepo(path); }}
         />
       )}
+      </Suspense>
+    </div>
+  );
+}
+
+function LazyFallback({ overlay = false }: { overlay?: boolean }) {
+  return (
+    <div
+      data-testid="lazy-loading"
+      className={overlay
+        ? "fixed inset-0 z-50 grid place-items-center bg-black/20 text-fg-muted"
+        : "grid h-full min-h-24 place-items-center text-fg-muted"}
+    >
+      <SpinnerIcon width={16} height={16} />
     </div>
   );
 }

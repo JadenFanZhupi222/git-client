@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   stageFile, unstageFile, stageHunk, unstageHunk, stageLines, commit, amendCommit,
@@ -9,7 +9,6 @@ import { useStatus, useWorkingDiff, useRepoState, useCurrentBranch, invalidateWo
 import { useListKeyboardNav, isTypingTarget } from "../lib/listNav";
 import { RefreshIcon, CheckIcon, FileDiffIcon } from "../components/icons";
 import { DiffView } from "../components/DiffView";
-import { ConflictEditor } from "../components/ConflictEditor";
 import { ConflictBanner } from "../components/ConflictBanner";
 import { Resizer, useResizableWidth } from "../components/Resizer";
 import { useToast } from "../components/Toast";
@@ -18,6 +17,10 @@ import { FloatBar, FLOAT_BAR_INSET } from "../components/ui/FloatBar";
 import { Spine } from "../components/ui/Spine";
 import { useT } from "../lib/i18n";
 import type { MessageKey } from "../lib/locales/zh";
+
+const ConflictEditor = lazy(() =>
+  import("../components/ConflictEditor").then((m) => ({ default: m.ConflictEditor })),
+);
 
 /** 工作区状态 → 语义色(CSS 变量,供 16×16 色块徽章 color-mix)+ 单字母 + i18n key(tooltip)。
  *  对齐原型 statBadge:M=warning、A=success、D=danger、R=accent、冲突=danger。 */
@@ -368,7 +371,9 @@ export function ChangesView({ repo }: { repo: string }) {
           ) : "Diff"}
         </div>
         {isConflict && sel ? (
-          <ConflictEditor repo={repo} file={sel.path} />
+          <Suspense fallback={<div className="grid h-full place-items-center text-xs text-fg-muted">{t("common.loading")}</div>}>
+            <ConflictEditor repo={repo} file={sel.path} />
+          </Suspense>
         ) : (
           <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!sel} repo={repo} hunkAction={hunkAction} lineStage={lineStage} />
         )}

@@ -11,7 +11,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node ../scripts/check-bundle-size.mjs dist 500000",
     "test": "vitest run",
     "e2e": "wdio run ./wdio.conf.js",
     "e2e:build": "tauri build --ci --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json",
