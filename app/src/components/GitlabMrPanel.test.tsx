@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { setLang } from "../lib/i18n";
+import { setLang, translate } from "../lib/i18n";
 import { GitlabMrPanel } from "./GitlabMrPanel";
 import { ToastProvider } from "./Toast";
 
@@ -31,6 +31,22 @@ describe("GitlabMrPanel", () => {
     vi.clearAllMocks();
     localStorage.clear();
     setLang("en");
+  });
+
+  it("provides complete Chinese copy for merge request details", () => {
+    const t = (key: string, params?: Record<string, string | number>) =>
+      translate("zh", key as never, params);
+
+    expect(t("gitlabMrDetail.metricPipeline")).toBe("流水线");
+    expect(t("gitlabMrDetail.metricApprovals")).toBe("批准");
+    expect(t("gitlabMrDetail.approvalProgress", { approved: 1, required: 2 }))
+      .toBe("已批准 1/2");
+    expect(t("gitlabMrDetail.pipelineJobs")).toBe("流水线任务");
+    expect(t("gitlabMrDetail.retryJob", { name: "test-windows" }))
+      .toBe("重试 test-windows");
+    expect(t("gitlabMrDetail.squash")).toBe("压缩提交");
+    expect(t("gitlabMrDetail.commentPlaceholder")).toBe("写一条评论");
+    expect(t("gitlabMrDetail.tokenRequired")).toBe("需要 GitLab token");
   });
 
   it("renders panel shell copy in Chinese", async () => {
