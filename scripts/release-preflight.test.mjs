@@ -260,6 +260,6 @@ test("desktop E2E explicitly refreshes status after an external fixture write", 
   );
   assert.match(
     spec,
-    /e2e_write_file[\s\S]*data-testid=['"]refresh-status['"][\s\S]*\.click\(\)[\s\S]*data-testid='unstaged-file'/,
+    /e2e_write_file[\s\S]*data-testid=['"]refresh-status['"][\s\S]*waitForEnabled[\s\S]*\.click\(\)[\s\S]*data-testid='unstaged-file'/,
   );
 });
