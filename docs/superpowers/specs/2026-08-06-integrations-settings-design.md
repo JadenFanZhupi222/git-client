@@ -29,8 +29,15 @@ credential identity are separate UI concepts.
 ## Layout
 
 Keep the existing modal, backdrop, header, token system, and restrained developer-tool
-visual language. Increase the desktop modal width to approximately 780 pixels while
-keeping the existing viewport and height constraints.
+visual language. The desktop modal is approximately 780 pixels wide and uses a stable,
+responsive height: 620 pixels when space permits, capped at the viewport height minus
+48 pixels. Switching providers must never resize the outer dialog.
+
+The dialog header remains fixed. The category rail and provider content occupy the remaining
+height. The provider content area is the only vertical scroll owner, so longer DeepSeek
+details scroll without moving the header, category navigation, provider tabs, or dialog
+boundary. The action row remains part of the provider content rather than becoming a sticky
+footer.
 
 The desktop layout has a 150-pixel category rail and a content pane:
 
@@ -45,7 +52,8 @@ The desktop layout has a 150-pixel category rail and a content pane:
 Below 640 pixels, the category rail becomes a compact row below the dialog header. Provider
 tabs remain visible and may scroll horizontally. Content padding reduces to 16 pixels.
 Provider headings and status may wrap. At narrow phone widths, actions stack into full-width
-buttons while preserving logical focus order.
+buttons while preserving logical focus order. On short viewports, the same 48-pixel outer
+inset applies; the dialog never exceeds the available viewport height.
 
 ## Provider Detail
 
