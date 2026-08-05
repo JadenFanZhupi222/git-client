@@ -18,6 +18,8 @@ The app already covers the core daily Git workflow and several advanced workflow
 - Conflict handling with a three-pane CodeMirror merge editor
 - Word-level diff, side-by-side diff, syntax highlighting, image diff, Git LFS pointer handling, submodule/worktree/sparse-checkout awareness
 - GitHub and GitLab collaboration panels for tokens, PR/MR creation, and PR/MR review details
+- GitHub PR AI Review workspace with fixed-SHA analysis, editable line comments, and one-review publishing
+- Unified credential settings for DeepSeek, GitHub, and GitLab secrets stored by the Rust backend
 - Frontend test coverage for the major UI slices added during development
 
 The 0.1.4 line now has release-candidate hardening: Linux/macOS/Windows CI,
@@ -48,6 +50,7 @@ git-client/
     git-engine/           git2 / CLI backend implementations and routing
     app-service/          Use cases, repository context, cache, operation orchestration
     ipc-types/            DTOs shared across Rust and TypeScript
+    review-agent/         Sandboxed PR review orchestration, providers, validation, and traces
   docs/                   Handoff notes, feature plans, implementation specs
   Cargo.toml              Rust workspace
 ```
@@ -197,10 +200,13 @@ The current repository still contains older Chinese handoff notes and some Chine
   be completed on real Windows, Linux, Intel Mac, and Apple Silicon machines.
 - GitHub PR detail API-provided statuses and some collaboration strings remain
   candidates for further localization.
+- AI Review currently supports GitHub pull requests only. GitLab merge-request review,
+  issue triage, and local code-editing agents are planned as separate milestones.
 
 ## Useful Project Docs
 
 - `docs/HANDOFF.md` records the latest implementation state and next-step context.
+- `docs/HANDOFF-pr-review-agent.md` records the AI Review implementation and follow-up roadmap.
 - `ARCHITECTURE.md` contains the original full architecture write-up. Parts of it are older than the current codebase.
 - `PRODUCT.md` describes product direction.
 - `docs/superpowers/specs/` and `docs/superpowers/plans/` contain feature-level design and implementation notes.
