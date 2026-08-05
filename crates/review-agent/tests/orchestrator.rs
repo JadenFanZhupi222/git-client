@@ -28,6 +28,7 @@ struct FakeSource {
     files: Vec<ReviewFile>,
     tool_io: Arc<AtomicUsize>,
     race_on_pull: bool,
+    read_output_bytes: usize,
 }
 
 #[async_trait]
@@ -71,7 +72,11 @@ impl ReviewSource for FakeSource {
         assert_eq!(sha, "abc");
         assert_eq!(path, "src/lib.rs");
         assert_eq!((start, end), (1, 2));
-        Ok("one\ntwo".into())
+        if self.read_output_bytes == 0 {
+            Ok("one\ntwo".into())
+        } else {
+            Ok("x".repeat(self.read_output_bytes))
+        }
     }
     async fn publish(&self, _: &SubmitReview) -> Result<PublishedReview, ReviewError> {
         unreachable!()
@@ -164,6 +169,7 @@ fn source() -> FakeSource {
         ],
         tool_io: Arc::new(AtomicUsize::new(0)),
         race_on_pull: false,
+        read_output_bytes: 0,
     }
 }
 fn finding(id: &str, line: u32) -> ReviewFinding {
@@ -183,9 +189,12 @@ fn finding(id: &str, line: u32) -> ReviewFinding {
 #[tokio::test]
 async fn performs_stateless_multi_turn_tool_loop() {
     let model = FakeModel(Mutex::new(VecDeque::from([
-        ModelResponse::tool_calls(vec![ToolCall::list_tree("src")], ReviewUsage::default()),
         ModelResponse::tool_calls(
-            vec![ToolCall::read_file("src/lib.rs", 1, 2)],
+            vec![ToolCall::list_tree("c1", "src")],
+            ReviewUsage::default(),
+        ),
+        ModelResponse::tool_calls(
+            vec![ToolCall::read_file("c2", "src/lib.rs", 1, 2)],
             ReviewUsage::default(),
         ),
         ModelResponse::final_findings(
@@ -314,9 +323,9 @@ async fn rejects_unknown_tool_and_oversized_read() {
     for call in [
         ToolCall {
             name: "shell".into(),
-            arguments: serde_json::json!({}),
+            arguments: serde_json::json!({"_call_id":"unknown"}),
         },
-        ToolCall::read_file("src/lib.rs", 1, 402),
+        ToolCall::read_file("oversized", "src/lib.rs", 1, 402),
     ] {
         let model = FakeModel(Mutex::new(VecDeque::from([ModelResponse::tool_calls(
             vec![call],
@@ -338,25 +347,62 @@ async fn rejects_malformed_or_extra_tool_arguments_without_source_io() {
     let calls = [
         ToolCall {
             name: "list_repository_tree".into(),
-            arguments: serde_json::json!({"prefix": 42}),
+            arguments: serde_json::json!({"_call_id":"bad1", "prefix": 42}),
         },
         ToolCall {
             name: "list_repository_tree".into(),
-            arguments: serde_json::json!({"prefix": "src", "recursive": true}),
+            arguments: serde_json::json!({"_call_id":"bad2", "prefix": "src", "recursive": true}),
         },
         ToolCall {
             name: "read_file".into(),
-            arguments: serde_json::json!({"path": "src/lib.rs", "start_line": 1, "end_line": 2, "bytes": true}),
+            arguments: serde_json::json!({"_call_id":"bad3", "path": "src/lib.rs", "start_line": 1, "end_line": 2, "bytes": true}),
         },
         ToolCall {
             name: "read_file".into(),
-            arguments: serde_json::json!({"path": 7, "start_line": "1", "end_line": 2}),
+            arguments: serde_json::json!({"_call_id":"bad4", "path": 7, "start_line": "1", "end_line": 2}),
         },
     ];
     for call in calls {
         let source = source();
         let model = FakeModel(Mutex::new(VecDeque::from([ModelResponse::tool_calls(
             vec![call],
+            ReviewUsage::default(),
+        )])));
+        let error = ReviewOrchestrator::new(&model, &source, &NoTrace, &NeverCancel)
+            .run(input())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ReviewError::InvalidModelOutput(_)));
+        assert_eq!(source.tool_io.load(Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
+async fn rejects_missing_empty_or_duplicate_call_ids_before_source_io() {
+    let responses = [
+        vec![ToolCall {
+            name: "list_repository_tree".into(),
+            arguments: serde_json::json!({}),
+        }],
+        vec![ToolCall {
+            name: "list_repository_tree".into(),
+            arguments: serde_json::json!({"_call_id":""}),
+        }],
+        vec![
+            ToolCall {
+                name: "list_repository_tree".into(),
+                arguments: serde_json::json!({"_call_id":"same"}),
+            },
+            ToolCall {
+                name: "list_repository_tree".into(),
+                arguments: serde_json::json!({"_call_id":"same"}),
+            },
+        ],
+    ];
+    for calls in responses {
+        let source = source();
+        let model = FakeModel(Mutex::new(VecDeque::from([ModelResponse::tool_calls(
+            calls,
             ReviewUsage::default(),
         )])));
         let error = ReviewOrchestrator::new(&model, &source, &NoTrace, &NeverCancel)
@@ -458,6 +504,79 @@ async fn rejects_changed_head_and_selection_budget() {
 }
 
 #[tokio::test]
+async fn stops_after_eight_model_rounds_without_ninth_model_or_source_call() {
+    let responses = (0..9)
+        .map(|round| {
+            ModelResponse::tool_calls(
+                vec![ToolCall::list_tree(format!("round-{round}"), "src")],
+                ReviewUsage::default(),
+            )
+        })
+        .collect();
+    let model = FakeModel(Mutex::new(responses));
+    let source = source();
+    let error = ReviewOrchestrator::new(&model, &source, &NoTrace, &NeverCancel)
+        .run(input())
+        .await
+        .unwrap_err();
+    assert_eq!(error, ReviewError::ReviewBudgetExceeded);
+    assert_eq!(source.tool_io.load(Ordering::SeqCst), 8);
+    assert_eq!(model.0.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn stops_before_executing_twenty_first_tool_call() {
+    let first_twenty = (0..20)
+        .map(|call| ToolCall::list_tree(format!("call-{call}"), "src"))
+        .collect();
+    let model = FakeModel(Mutex::new(VecDeque::from([
+        ModelResponse::tool_calls(first_twenty, ReviewUsage::default()),
+        ModelResponse::tool_calls(
+            vec![ToolCall::list_tree("call-20", "src")],
+            ReviewUsage::default(),
+        ),
+        ModelResponse::final_findings(vec![], ReviewUsage::default()),
+    ])));
+    let source = source();
+    let error = ReviewOrchestrator::new(&model, &source, &NoTrace, &NeverCancel)
+        .run(input())
+        .await
+        .unwrap_err();
+    assert_eq!(error, ReviewError::ReviewBudgetExceeded);
+    assert_eq!(source.tool_io.load(Ordering::SeqCst), 20);
+    assert_eq!(model.0.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn stops_when_cumulative_tool_output_exceeds_three_hundred_kilobytes() {
+    let model = FakeModel(Mutex::new(VecDeque::from([
+        ModelResponse::tool_calls(
+            vec![
+                ToolCall::read_file("read-1", "src/lib.rs", 1, 2),
+                ToolCall::read_file("read-2", "src/lib.rs", 1, 2),
+            ],
+            ReviewUsage::default(),
+        ),
+        ModelResponse::tool_calls(
+            vec![ToolCall::read_file("read-3", "src/lib.rs", 1, 2)],
+            ReviewUsage::default(),
+        ),
+        ModelResponse::final_findings(vec![], ReviewUsage::default()),
+    ])));
+    let source = FakeSource {
+        read_output_bytes: 150_001,
+        ..source()
+    };
+    let error = ReviewOrchestrator::new(&model, &source, &NoTrace, &NeverCancel)
+        .run(input())
+        .await
+        .unwrap_err();
+    assert_eq!(error, ReviewError::ReviewBudgetExceeded);
+    assert_eq!(source.tool_io.load(Ordering::SeqCst), 2);
+    assert_eq!(model.0.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn patch_fetch_head_race_returns_pr_updated_before_model_analysis() {
     let model = FakeModel(Mutex::new(VecDeque::from([ModelResponse::final_findings(
         vec![],
@@ -531,7 +650,7 @@ async fn trace_records_cancelled_and_error_exits_once_with_stable_codes() {
     let bad_model = FakeModel(Mutex::new(VecDeque::from([ModelResponse::tool_calls(
         vec![ToolCall {
             name: "shell".into(),
-            arguments: serde_json::json!({}),
+            arguments: serde_json::json!({"_call_id":"trace-error"}),
         }],
         ReviewUsage::default(),
     )])));

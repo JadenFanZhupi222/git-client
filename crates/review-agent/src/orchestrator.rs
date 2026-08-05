@@ -15,7 +15,7 @@ pub enum TranscriptItem {
     AssistantToolCalls(Vec<ToolCall>),
     ToolResult {
         name: String,
-        call_id: Option<String>,
+        call_id: String,
         content: String,
     },
 }
@@ -27,16 +27,21 @@ pub struct ToolCall {
 }
 
 impl ToolCall {
-    pub fn list_tree(prefix: impl Into<String>) -> Self {
+    pub fn list_tree(call_id: impl Into<String>, prefix: impl Into<String>) -> Self {
         Self {
             name: "list_repository_tree".into(),
-            arguments: json!({"prefix": prefix.into()}),
+            arguments: json!({"_call_id": call_id.into(), "prefix": prefix.into()}),
         }
     }
-    pub fn read_file(path: impl Into<String>, start_line: u32, end_line: u32) -> Self {
+    pub fn read_file(
+        call_id: impl Into<String>,
+        path: impl Into<String>,
+        start_line: u32,
+        end_line: u32,
+    ) -> Self {
         Self {
             name: "read_file".into(),
-            arguments: json!({"path": path.into(), "start_line": start_line, "end_line": end_line}),
+            arguments: json!({"_call_id": call_id.into(), "path": path.into(), "start_line": start_line, "end_line": end_line}),
         }
     }
 }
@@ -253,6 +258,7 @@ impl<'a> ReviewOrchestrator<'a> {
                     if telemetry.usage.tool_calls as usize + calls.len() > MAX_TOOL_CALLS {
                         return Err(ReviewError::ReviewBudgetExceeded);
                     }
+                    validate_call_ids(&calls)?;
                     transcript.push(TranscriptItem::AssistantToolCalls(calls.clone()));
                     for call in calls {
                         self.check_cancelled()?;
@@ -267,7 +273,8 @@ impl<'a> ReviewOrchestrator<'a> {
                             .arguments
                             .get("_call_id")
                             .and_then(Value::as_str)
-                            .map(str::to_owned);
+                            .expect("call ids were validated")
+                            .to_owned();
                         transcript.push(TranscriptItem::ToolResult {
                             name: call.name,
                             call_id,
@@ -382,6 +389,24 @@ fn strict_arguments<'a>(
         ));
     }
     Ok(object)
+}
+
+fn validate_call_ids(calls: &[ToolCall]) -> Result<(), ReviewError> {
+    let mut seen = HashSet::new();
+    for call in calls {
+        let call_id = call
+            .arguments
+            .get("_call_id")
+            .and_then(Value::as_str)
+            .filter(|call_id| !call_id.is_empty())
+            .ok_or_else(|| ReviewError::InvalidModelOutput("function call id missing".into()))?;
+        if !seen.insert(call_id) {
+            return Err(ReviewError::InvalidModelOutput(
+                "duplicate function call id".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_findings(findings: Vec<ReviewFinding>, files: &[ReviewFile]) -> Vec<ReviewFinding> {

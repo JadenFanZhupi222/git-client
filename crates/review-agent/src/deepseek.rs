@@ -5,6 +5,7 @@ use crate::{
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 
 const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
 const DEEPSEEK_MODEL: &str = "deepseek-v4-flash";
@@ -37,7 +38,7 @@ impl DeepSeekResponsesProvider {
         }
     }
 
-    fn request_body(&self, transcript: &[TranscriptItem]) -> Value {
+    fn request_body(&self, transcript: &[TranscriptItem]) -> Result<Value, ReviewError> {
         let mut input = Vec::new();
         for item in transcript {
             match item {
@@ -46,14 +47,32 @@ impl DeepSeekResponsesProvider {
                 TranscriptItem::AssistantToolCalls(calls) => {
                     for call in calls {
                         let mut arguments = call.arguments.clone();
-                        let call_id = arguments.as_object_mut().and_then(|o| o.remove("_call_id")).and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_else(|| "call".into());
+                        let call_id = arguments
+                            .as_object_mut()
+                            .and_then(|object| object.remove("_call_id"))
+                            .and_then(|value| value.as_str().map(str::to_owned))
+                            .filter(|call_id| !call_id.is_empty())
+                            .ok_or_else(|| {
+                                ReviewError::InvalidModelOutput("function call id missing".into())
+                            })?;
                         input.push(json!({"type":"function_call","call_id":call_id,"name":call.name,"arguments":arguments.to_string()}));
                     }
                 }
-                TranscriptItem::ToolResult { call_id, content, .. } => input.push(json!({"type":"function_call_output","call_id":call_id.as_deref().unwrap_or("call"),"output":content})),
+                TranscriptItem::ToolResult {
+                    call_id, content, ..
+                } => {
+                    if call_id.is_empty() {
+                        return Err(ReviewError::InvalidModelOutput(
+                            "function call id missing".into(),
+                        ));
+                    }
+                    input.push(
+                        json!({"type":"function_call_output","call_id":call_id,"output":content}),
+                    );
+                }
             }
         }
-        json!({
+        Ok(json!({
             "model": DEEPSEEK_MODEL,
             "stream": false,
             "store": false,
@@ -63,7 +82,7 @@ impl DeepSeekResponsesProvider {
                 {"type":"function","name":"read_file","description":"Read at most 400 UTF-8 lines at the fixed PR head SHA","parameters":{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer"},"end_line":{"type":"integer"}},"required":["path","start_line","end_line"],"additionalProperties":false}}
             ],
             "text": {"format":{"type":"json_schema","name":"review_findings","strict":true,"schema":finding_schema()}}
-        })
+        }))
     }
 }
 
@@ -74,7 +93,7 @@ impl ModelProvider for DeepSeekResponsesProvider {
             .client
             .post(format!("{}/responses", self.base_url.trim_end_matches('/')))
             .bearer_auth(&self.api_key)
-            .json(&self.request_body(transcript))
+            .json(&self.request_body(transcript)?)
             .send()
             .await
             .map_err(|_| ReviewError::NetworkError("request failed".into()))?;
@@ -113,6 +132,7 @@ fn parse_response(body: Value) -> Result<ModelResponse, ReviewError> {
         .and_then(Value::as_array)
         .ok_or_else(|| ReviewError::InvalidModelOutput("missing response output".into()))?;
     let mut calls = Vec::new();
+    let mut call_ids = HashSet::new();
     let mut findings = None;
     for item in output {
         match item.get("type").and_then(Value::as_str) {
@@ -120,6 +140,18 @@ fn parse_response(body: Value) -> Result<ModelResponse, ReviewError> {
                 let name = item.get("name").and_then(Value::as_str).ok_or_else(|| {
                     ReviewError::InvalidModelOutput("function name missing".into())
                 })?;
+                let call_id = item
+                    .get("call_id")
+                    .and_then(Value::as_str)
+                    .filter(|call_id| !call_id.is_empty())
+                    .ok_or_else(|| {
+                        ReviewError::InvalidModelOutput("function call id missing".into())
+                    })?;
+                if !call_ids.insert(call_id) {
+                    return Err(ReviewError::InvalidModelOutput(
+                        "duplicate function call id".into(),
+                    ));
+                }
                 let encoded = item
                     .get("arguments")
                     .and_then(Value::as_str)
@@ -129,10 +161,7 @@ fn parse_response(body: Value) -> Result<ModelResponse, ReviewError> {
                 let mut arguments: Value = serde_json::from_str(encoded).map_err(|_| {
                     ReviewError::InvalidModelOutput("invalid function arguments".into())
                 })?;
-                if let (Some(object), Some(call_id)) = (
-                    arguments.as_object_mut(),
-                    item.get("call_id").and_then(Value::as_str),
-                ) {
+                if let Some(object) = arguments.as_object_mut() {
                     object.insert("_call_id".into(), Value::String(call_id.into()));
                 }
                 calls.push(ToolCall {
@@ -272,5 +301,28 @@ mod tests {
                 .unwrap_err(),
             ReviewError::InvalidModelOutput(_)
         ));
+    }
+
+    #[test]
+    fn rejects_missing_empty_and_duplicate_function_call_ids() {
+        let function_call = |call_id: Option<&str>| {
+            let mut call = json!({
+                "type":"function_call",
+                "name":"list_repository_tree",
+                "arguments":"{}"
+            });
+            if let Some(call_id) = call_id {
+                call["call_id"] = json!(call_id);
+            }
+            call
+        };
+        for output in [
+            vec![function_call(None)],
+            vec![function_call(Some(""))],
+            vec![function_call(Some("same")), function_call(Some("same"))],
+        ] {
+            let error = parse_response(json!({"output":output})).unwrap_err();
+            assert!(matches!(error, ReviewError::InvalidModelOutput(_)));
+        }
     }
 }

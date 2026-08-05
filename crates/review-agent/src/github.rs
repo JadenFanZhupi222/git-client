@@ -1,7 +1,7 @@
 use crate::*;
 use async_trait::async_trait;
 use base64::Engine;
-use reqwest::{Client, Response, StatusCode};
+use reqwest::{Client, Response, StatusCode, Url};
 use serde_json::{json, Value};
 
 const GITHUB_API_BASE: &str = "https://api.github.com";
@@ -53,17 +53,33 @@ impl GithubReviewSource {
         })
     }
 
-    fn endpoint(&self, target: &ReviewTarget, suffix: &str) -> String {
-        format!(
-            "{}/repos/{}/{}/{}",
-            self.base_url.trim_end_matches('/'),
-            target.owner,
-            target.repo,
-            suffix.trim_start_matches('/')
-        )
+    fn endpoint<'segment>(
+        &self,
+        target: &ReviewTarget,
+        suffix_segments: impl IntoIterator<Item = &'segment str>,
+    ) -> Result<Url, ReviewError> {
+        let mut url = Url::parse(&self.base_url)
+            .map_err(|_| ReviewError::NetworkError("invalid GitHub API endpoint".into()))?;
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| ReviewError::NetworkError("invalid GitHub API endpoint".into()))?;
+        segments.pop_if_empty();
+        segments
+            .push("repos")
+            .push(&target.owner)
+            .push(&target.repo);
+        for segment in suffix_segments {
+            segments.push(segment);
+        }
+        drop(segments);
+        Ok(url)
     }
 
-    fn request(&self, method: reqwest::Method, url: String) -> reqwest::RequestBuilder {
+    fn request(
+        &self,
+        method: reqwest::Method,
+        url: impl reqwest::IntoUrl,
+    ) -> reqwest::RequestBuilder {
         self.client
             .request(method, url)
             .bearer_auth(&self.token)
@@ -77,10 +93,11 @@ impl ReviewSource for GithubReviewSource {
     async fn head_sha(&self, target: &ReviewTarget) -> Result<String, ReviewError> {
         validate_repository_path(&target.owner)?;
         validate_repository_path(&target.repo)?;
+        let pull_number = target.pull_number.to_string();
         let response = self
             .request(
                 reqwest::Method::GET,
-                self.endpoint(target, &format!("pulls/{}", target.pull_number)),
+                self.endpoint(target, ["pulls", pull_number.as_str()])?,
             )
             .send()
             .await
@@ -101,11 +118,12 @@ impl ReviewSource for GithubReviewSource {
     ) -> Result<Vec<ReviewFile>, ReviewError> {
         validate_sha(expected_head_sha)?;
         let mut result = Vec::new();
+        let pull_number = target.pull_number.to_string();
         for page in 1..=100u32 {
             let response = self
                 .request(
                     reqwest::Method::GET,
-                    self.endpoint(target, &format!("pulls/{}/files", target.pull_number)),
+                    self.endpoint(target, ["pulls", pull_number.as_str(), "files"])?,
                 )
                 .query(&[("per_page", 100u32), ("page", page)])
                 .send()
@@ -161,7 +179,7 @@ impl ReviewSource for GithubReviewSource {
         let response = self
             .request(
                 reqwest::Method::GET,
-                self.endpoint(target, &format!("git/trees/{head_sha}")),
+                self.endpoint(target, ["git", "trees", head_sha])?,
             )
             .query(&[("recursive", "1")])
             .send()
@@ -201,7 +219,7 @@ impl ReviewSource for GithubReviewSource {
         let response = self
             .request(
                 reqwest::Method::GET,
-                self.endpoint(target, &format!("contents/{path}")),
+                self.endpoint(target, std::iter::once("contents").chain(path.split('/')))?,
             )
             .query(&[("ref", head_sha)])
             .send()
@@ -237,13 +255,11 @@ impl ReviewSource for GithubReviewSource {
             return Err(ReviewError::PrUpdated);
         }
         let comments: Vec<_> = review.findings.iter().map(|finding| json!({"path":finding.path,"side":match finding.side { ReviewSide::LEFT => "LEFT", ReviewSide::RIGHT => "RIGHT" },"line":finding.line,"body":finding.draft_comment})).collect();
+        let pull_number = review.target.pull_number.to_string();
         let response = self
             .request(
                 reqwest::Method::POST,
-                self.endpoint(
-                    &review.target,
-                    &format!("pulls/{}/reviews", review.target.pull_number),
-                ),
+                self.endpoint(&review.target, ["pulls", pull_number.as_str(), "reviews"])?,
             )
             .json(&json!({"event":"COMMENT","commit_id":review.head_sha,"comments":comments}))
             .send()
@@ -336,6 +352,32 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(content, "two\nthree");
+    }
+
+    #[tokio::test]
+    async fn encodes_owner_repo_and_reserved_file_path_segments() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/repos/o%3Fx/r%23y/contents/dir/a%20%3F%23%25%20%E4%BD%A0%E5%A5%BD.rs",
+            ))
+            .and(query_param("ref", "abc"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"encoding":"base64","content":"b2s="})),
+            )
+            .mount(&server)
+            .await;
+        let target = ReviewTarget {
+            owner: "o?x".into(),
+            repo: "r#y".into(),
+            pull_number: 1,
+        };
+        let content = source(&server)
+            .read_file(&target, "abc", "dir/a ?#% 你好.rs", 1, 1)
+            .await
+            .unwrap();
+        assert_eq!(content, "ok");
     }
 
     #[tokio::test]
