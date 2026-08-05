@@ -194,6 +194,29 @@ describe("SettingsPanel", () => {
     trigger.remove();
   });
 
+  it("restores focus to a stable supplied target when the opener disconnects", async () => {
+    const stableTarget = document.createElement("button");
+    const transientOpener = document.createElement("button");
+    document.body.append(stableTarget, transientOpener);
+    transientOpener.focus();
+    const returnFocusRef = { current: stableTarget };
+    const { unmount } = render(
+      <ToastProvider>
+        <SettingsPanel
+          onClose={vi.fn()}
+          initialSection="github"
+          returnFocusRef={returnFocusRef}
+        />
+      </ToastProvider>,
+    );
+    transientOpener.remove();
+
+    unmount();
+
+    expect(stableTarget).toHaveFocus();
+    stableTarget.remove();
+  });
+
   it("keeps and restores focus while statuses load", async () => {
     const trigger = document.createElement("button");
     trigger.textContent = "Open settings";
@@ -282,5 +305,58 @@ describe("SettingsPanel", () => {
     await waitFor(() =>
       expect(within(dialog).getByRole("button", { name: "Close" })).toBeEnabled(),
     );
+  });
+
+  it.each(["save", "test", "clear"] as const)(
+    "ignores a pending %s completion after unmount",
+    async (operation) => {
+      let resolveOperation!: () => void;
+      ipc[`${operation}Credential`].mockImplementation(
+        () => new Promise<void>((resolve) => { resolveOperation = resolve; }),
+      );
+      const user = userEvent.setup();
+      const stableTarget = document.createElement("button");
+      document.body.appendChild(stableTarget);
+      stableTarget.focus();
+      const view = render(
+        <ToastProvider>
+          <SettingsPanel onClose={vi.fn()} initialSection="github" />
+        </ToastProvider>,
+      );
+      await screen.findByText("Configured");
+      if (operation === "save") {
+        await user.type(screen.getByLabelText("GitHub personal access token"), "secret");
+      }
+      await user.click(screen.getByRole("button", { name: operation === "clear" ? "Clear" : operation === "test" ? "Test" : "Save" }));
+      view.rerender(<ToastProvider><div /></ToastProvider>);
+      stableTarget.focus();
+
+      resolveOperation();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(screen.queryByText(/GitHub credential (saved|is valid|cleared)/)).not.toBeInTheDocument();
+      expect(stableTarget).toHaveFocus();
+      stableTarget.remove();
+    },
+  );
+
+  it("does not toast when status loading rejects after unmount", async () => {
+    let rejectStatus!: (reason: unknown) => void;
+    ipc.credentialStatus.mockImplementation(
+      () => new Promise<boolean>((_resolve, reject) => { rejectStatus = reject; }),
+    );
+    const view = render(
+      <ToastProvider>
+        <SettingsPanel onClose={vi.fn()} />
+      </ToastProvider>,
+    );
+    view.rerender(<ToastProvider><div /></ToastProvider>);
+
+    rejectStatus({ code: "STATUS_FAILED", message: "late failure" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(screen.queryByText("late failure")).not.toBeInTheDocument();
   });
 });

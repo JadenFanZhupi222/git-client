@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type { CredentialKindDto, IpcError } from "../bindings";
 import {
   clearCredential,
@@ -20,9 +20,11 @@ type Operation = "save" | "test" | "clear";
 export function SettingsPanel({
   onClose,
   initialSection = "deepseek",
+  returnFocusRef,
 }: {
   onClose: () => void;
   initialSection?: SettingsSection;
+  returnFocusRef?: RefObject<HTMLElement | null>;
 }) {
   const t = useT();
   const toast = useToast();
@@ -31,6 +33,10 @@ export function SettingsPanel({
   const previousFocusRef = useRef<HTMLElement | null>(
     document.activeElement instanceof HTMLElement ? document.activeElement : null,
   );
+  const mountedRef = useRef(true);
+  const statusGenerationRef = useRef(0);
+  const operationGenerationRef = useRef(0);
+  const sectionRef = useRef<SettingsSection>(initialSection);
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [statuses, setStatuses] = useState<CredentialStatuses>({});
   const [statusErrors, setStatusErrors] = useState<SettingsSection[]>([]);
@@ -40,10 +46,19 @@ export function SettingsPanel({
   const busy = loading || activeOperation !== null;
 
   useEffect(() => {
-    let alive = true;
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      statusGenerationRef.current += 1;
+      operationGenerationRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    const generation = ++statusGenerationRef.current;
     Promise.allSettled(SECTIONS.map((kind) => credentialStatus(kind)))
       .then((results) => {
-        if (!alive) return;
+        if (!mountedRef.current || statusGenerationRef.current !== generation) return;
         const nextStatuses: CredentialStatuses = {};
         const nextErrors: SettingsSection[] = [];
         results.forEach((result, index) => {
@@ -59,18 +74,22 @@ export function SettingsPanel({
         setStatusErrors(nextErrors);
       })
       .finally(() => {
-        if (alive) setLoading(false);
+        if (mountedRef.current && statusGenerationRef.current === generation) setLoading(false);
       });
     return () => {
-      alive = false;
+      statusGenerationRef.current += 1;
     };
   }, [toast]);
 
   useLayoutEffect(() => {
     const previousFocus = previousFocusRef.current;
     dialogRef.current?.focus();
-    return () => previousFocus?.focus();
-  }, []);
+    return () => {
+      const target = returnFocusRef?.current;
+      if (target?.isConnected) target.focus();
+      else if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [returnFocusRef]);
 
   useEffect(() => {
     if (!loading) inputRef.current?.focus();
@@ -91,6 +110,8 @@ export function SettingsPanel({
 
   function selectSection(next: SettingsSection) {
     if (busy || next === section) return;
+    operationGenerationRef.current += 1;
+    sectionRef.current = next;
     setSecret("");
     setSection(next);
   }
@@ -98,26 +119,36 @@ export function SettingsPanel({
   async function runOperation(operation: Operation) {
     if (busy) return;
     if (operation === "save" && !secret.trim()) return;
+    const operationGeneration = ++operationGenerationRef.current;
+    const operationSection = section;
+    const isCurrent = () =>
+      mountedRef.current &&
+      operationGenerationRef.current === operationGeneration &&
+      sectionRef.current === operationSection;
     setActiveOperation(operation);
     try {
       if (operation === "save") {
-        await saveCredential(section, secret);
+        await saveCredential(operationSection, secret);
+        if (!isCurrent()) return;
         setSecret("");
-        setStatuses((current) => ({ ...current, [section]: true }));
-        toast({ kind: "success", title: t(providerMessageKey(section, "saved")) });
+        setStatuses((current) => ({ ...current, [operationSection]: true }));
+        toast({ kind: "success", title: t(providerMessageKey(operationSection, "saved")) });
       } else if (operation === "test") {
-        await testCredential(section);
-        toast({ kind: "success", title: t(providerMessageKey(section, "valid")) });
+        await testCredential(operationSection);
+        if (!isCurrent()) return;
+        toast({ kind: "success", title: t(providerMessageKey(operationSection, "valid")) });
       } else {
-        await clearCredential(section);
+        await clearCredential(operationSection);
+        if (!isCurrent()) return;
         setSecret("");
-        setStatuses((current) => ({ ...current, [section]: false }));
-        toast({ kind: "success", title: t(providerMessageKey(section, "cleared")) });
+        setStatuses((current) => ({ ...current, [operationSection]: false }));
+        toast({ kind: "success", title: t(providerMessageKey(operationSection, "cleared")) });
       }
     } catch (error) {
+      if (!isCurrent()) return;
       toast({ kind: "error", title: errorMessage(error) });
     } finally {
-      setActiveOperation(null);
+      if (isCurrent()) setActiveOperation(null);
     }
   }
 

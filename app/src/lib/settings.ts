@@ -11,6 +11,15 @@ export type SettingsEntryPoint =
   | "gitlabCreateMrDialog"
   | "moreMenu";
 
+export const APP_SETTINGS_ENTRY_POINTS = {
+  githubCommand: "githubCommand",
+  githubPrPanel: "githubPrPanel",
+  githubCreatePrDialog: "githubCreatePrDialog",
+  gitlabCommand: "gitlabCommand",
+  gitlabMrPanel: "gitlabMrPanel",
+  gitlabCreateMrDialog: "gitlabCreateMrDialog",
+} as const satisfies Record<string, SettingsEntryPoint>;
+
 const ENTRY_POINT_SECTIONS: Record<SettingsEntryPoint, SettingsSection> = {
   githubCommand: "github",
   githubPrPanel: "github",
