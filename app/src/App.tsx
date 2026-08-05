@@ -864,6 +864,10 @@ export default function App() {
             setGithubPrOpen(false);
             openSettingsFor(APP_SETTINGS_ENTRY_POINTS.githubPrPanel);
           }}
+          onConfigureCredential={(kind) => {
+            setGithubPrOpen(false);
+            setSettingsSection(kind);
+          }}
         />
       )}
 

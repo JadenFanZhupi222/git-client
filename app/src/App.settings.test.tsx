@@ -29,8 +29,12 @@ vi.mock("./components/BranchSwitcher", () => ({ BranchSwitcher: () => <div /> })
 vi.mock("./components/SyncBadge", () => ({ SyncBadge: () => <div /> }));
 vi.mock("./components/StashMenu", () => ({ StashMenu: () => <div /> }));
 vi.mock("./components/GithubPrPanel", () => ({
-  GithubPrPanel: ({ onConfigureToken }: { onConfigureToken: () => void }) => (
-    <button onClick={onConfigureToken}>Configure token from GitHub PR panel</button>
+  GithubPrPanel: ({ onConfigureToken, onConfigureCredential }: { onConfigureToken: () => void; onConfigureCredential: (kind: "deepseek" | "github") => void }) => (
+    <>
+      <button onClick={onConfigureToken}>Configure token from GitHub PR panel</button>
+      <button onClick={() => onConfigureCredential("deepseek")}>Configure DeepSeek from AI Review</button>
+      <button onClick={() => onConfigureCredential("github")}>Configure GitHub from AI Review</button>
+    </>
   ),
 }));
 vi.mock("./components/GithubCreatePrDialog", () => ({
@@ -68,7 +72,7 @@ vi.mock("./lib/queries", () => ({
 type SettingsPath = {
   command: string;
   configureAction?: string;
-  selectedTab: "GitHub" | "GitLab";
+  selectedTab: "DeepSeek" | "GitHub" | "GitLab";
 };
 
 const SETTINGS_PATHS: readonly SettingsPath[] = [
@@ -83,6 +87,16 @@ const SETTINGS_PATHS: readonly SettingsPath[] = [
   {
     command: "查看当前分支 GitHub PR",
     configureAction: "Configure token from GitHub PR panel",
+    selectedTab: "GitHub",
+  },
+  {
+    command: "查看当前分支 GitHub PR",
+    configureAction: "Configure DeepSeek from AI Review",
+    selectedTab: "DeepSeek",
+  },
+  {
+    command: "查看当前分支 GitHub PR",
+    configureAction: "Configure GitHub from AI Review",
     selectedTab: "GitHub",
   },
   {

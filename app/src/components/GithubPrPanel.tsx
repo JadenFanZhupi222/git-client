@@ -18,6 +18,7 @@ import {
 import { CloseIcon, SpinnerIcon } from "./icons";
 import { useToast } from "./Toast";
 import { useT } from "../lib/i18n";
+import { PrReviewWorkspace } from "./PrReviewWorkspace";
 
 export function GithubPrPanel({
   remotes,
@@ -25,12 +26,14 @@ export function GithubPrPanel({
   preferredRemote,
   onClose,
   onConfigureToken,
+  onConfigureCredential,
 }: {
   remotes: RemoteLike[];
   branch: string | null;
   preferredRemote: string | null;
   onClose: () => void;
   onConfigureToken: () => void;
+  onConfigureCredential?: (kind: "deepseek" | "github") => void;
 }) {
   const toast = useToast();
   const t = useT();
@@ -43,6 +46,7 @@ export function GithubPrPanel({
   const [mergingPull, setMergingPull] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reviewTarget, setReviewTarget] = useState<{ owner: string; repo: string; pull_number: number } | null>(null);
 
   const remote = useMemo(
     () => findGithubRemote(remotes, preferredRemote),
@@ -51,11 +55,11 @@ export function GithubPrPanel({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !reviewTarget) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, reviewTarget]);
 
   useEffect(() => {
     let alive = true;
@@ -286,6 +290,7 @@ export function GithubPrPanel({
                       onCreateComment={createPullComment}
                       mergingPull={mergingPull === pr.number}
                       onMerge={mergePull}
+                      onAiReview={() => remote && setReviewTarget({ owner: remote.owner, repo: remote.repo, pull_number: pr.number })}
                     />
                   )}
                 </li>
@@ -318,6 +323,13 @@ export function GithubPrPanel({
           </button>
         </div>
       </div>
+      {reviewTarget && (
+        <PrReviewWorkspace
+          target={reviewTarget}
+          onClose={() => setReviewTarget(null)}
+          onConfigureCredential={(kind) => (onConfigureCredential ?? ((next) => { if (next === "github") onConfigureToken(); }))(kind)}
+        />
+      )}
     </div>
   );
 }
@@ -328,6 +340,7 @@ function PullRequestDetailsView({
   onCreateComment,
   mergingPull,
   onMerge,
+  onAiReview,
 }: {
   detail: GithubPullRequestDetails;
   creatingComment: boolean;
@@ -340,6 +353,7 @@ function PullRequestDetailsView({
     detail: GithubPullRequestDetails,
     method: GithubPullMergeMethod,
   ) => void;
+  onAiReview: () => void;
 }) {
   const t = useT();
   const [commentBody, setCommentBody] = useState("");
@@ -485,6 +499,13 @@ function PullRequestDetailsView({
           </div>
         </div>
       )}
+      <div className="grid gap-1.5 border-t border-line pt-2">
+        <div className="flex justify-end">
+          <button onClick={onAiReview} className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent">
+            {t("githubPrDetail.aiReview")}
+          </button>
+        </div>
+      </div>
       <div className="grid gap-1.5 border-t border-line pt-2">
         <div className="flex flex-wrap items-center gap-2">
           <label

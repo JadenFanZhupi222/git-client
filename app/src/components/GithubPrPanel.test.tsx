@@ -8,6 +8,7 @@ import { ToastProvider } from "./Toast";
 const { openUrl } = vi.hoisted(() => ({
   openUrl: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
 }));
+const reviewWorkspace = vi.hoisted(() => ({ props: null as null | Record<string, unknown> }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl,
@@ -16,6 +17,12 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 vi.mock("../ipc", () => ({
   hasGithubToken: vi.fn().mockResolvedValue(true),
   getGithubToken: vi.fn().mockResolvedValue("ghp_secret"),
+}));
+vi.mock("./PrReviewWorkspace", () => ({
+  PrReviewWorkspace: (props: Record<string, unknown>) => {
+    reviewWorkspace.props = props;
+    return <div role="dialog" aria-label="AI Review workspace">AI Review workspace</div>;
+  },
 }));
 
 const remotes = [
@@ -27,10 +34,32 @@ const remotes = [
 
 describe("GithubPrPanel", () => {
   afterEach(() => {
+    reviewWorkspace.props = null;
     vi.unstubAllGlobals();
     vi.clearAllMocks();
     localStorage.clear();
     setLang("en");
+  });
+
+  it("opens AI Review for the exact remote PR and forwards credential routing", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ number: 17, title: "Review me", html_url: "https://github.com/team/project/pull/17", user: { login: "dev" }, head: { ref: "feature", sha: "abc" }, base: { ref: "main" } }])))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ number: 17, title: "Review me", html_url: "https://github.com/team/project/pull/17", mergeable: true, mergeable_state: "clean", comments: 0, review_comments: 0, commits: 1, changed_files: 1, additions: 1, deletions: 0, user: { login: "dev" }, head: { ref: "feature", sha: "abc" }, base: { ref: "main" } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify([])))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ state: "success", total_count: 0, statuses: [] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ total_count: 0, check_runs: [] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify([])))
+      .mockResolvedValueOnce(new Response(JSON.stringify([])));
+    vi.stubGlobal("fetch", fetchMock);
+    const onConfigureCredential = vi.fn();
+    const user = userEvent.setup();
+    render(<ToastProvider><GithubPrPanel remotes={remotes} branch="feature" preferredRemote="origin" onClose={vi.fn()} onConfigureToken={vi.fn()} onConfigureCredential={onConfigureCredential} /></ToastProvider>);
+    await user.click(await screen.findByRole("button", { name: "Details" }));
+    await user.click(await screen.findByRole("button", { name: "AI Review" }));
+    expect(await screen.findByRole("dialog", { name: "AI Review workspace" })).toBeInTheDocument();
+    expect(reviewWorkspace.props?.target).toEqual({ owner: "team", repo: "project", pull_number: 17 });
+    (reviewWorkspace.props?.onConfigureCredential as (kind: string) => void)("deepseek");
+    expect(onConfigureCredential).toHaveBeenCalledWith("deepseek");
   });
 
   it("renders panel shell copy in Chinese", async () => {
