@@ -101,6 +101,24 @@ struct ControllableCancel {
     notify: Notify,
 }
 
+struct PollingOnlyCancel(std::sync::atomic::AtomicBool);
+
+impl PollingOnlyCancel {
+    fn new() -> Self {
+        Self(std::sync::atomic::AtomicBool::new(false))
+    }
+
+    fn cancel(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+impl CancelSignal for PollingOnlyCancel {
+    fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
 impl ControllableCancel {
     fn new() -> Self {
         Self {
@@ -254,6 +272,27 @@ async fn cancellation_interrupts_in_flight_model_response() {
     })
     .await
     .expect("cancellation should interrupt pending model IO");
+    assert_eq!(result.unwrap_err(), ReviewError::Cancelled);
+}
+
+#[tokio::test]
+async fn default_cancel_signal_interrupts_after_request_starts() {
+    let started = Arc::new(Notify::new());
+    let model = PendingModel {
+        started: started.clone(),
+    };
+    let cancel = PollingOnlyCancel::new();
+    let source = source();
+    let orchestrator = ReviewOrchestrator::new(&model, &source, &NoTrace, &cancel);
+    let cancel_when_started = async {
+        started.notified().await;
+        cancel.cancel();
+    };
+    let (result, ()) = tokio::time::timeout(Duration::from_millis(250), async {
+        tokio::join!(orchestrator.run(input()), cancel_when_started)
+    })
+    .await
+    .expect("default cancellation should interrupt pending model IO");
     assert_eq!(result.unwrap_err(), ReviewError::Cancelled);
 }
 

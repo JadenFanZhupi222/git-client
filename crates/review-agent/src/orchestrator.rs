@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
@@ -109,7 +109,9 @@ pub trait CancelSignal: Send + Sync {
     fn is_cancelled(&self) -> bool;
 
     async fn cancelled(&self) {
-        std::future::pending::<()>().await;
+        while !self.is_cancelled() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 }
 

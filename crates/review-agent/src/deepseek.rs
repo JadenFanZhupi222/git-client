@@ -6,9 +6,12 @@ use async_trait::async_trait;
 use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use std::time::Duration;
 
 const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
 const DEEPSEEK_MODEL: &str = "deepseek-v4-flash";
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct DeepSeekResponsesProvider {
     client: Client,
@@ -23,7 +26,7 @@ impl DeepSeekResponsesProvider {
             return Err(ReviewError::AiKeyMissing);
         }
         Ok(Self {
-            client: Client::new(),
+            client: build_client(CONNECT_TIMEOUT, REQUEST_TIMEOUT)?,
             api_key,
             base_url: DEEPSEEK_BASE_URL.into(),
         })
@@ -32,7 +35,8 @@ impl DeepSeekResponsesProvider {
     #[cfg(test)]
     fn new_with_base_for_test(api_key: impl Into<String>, base_url: String) -> Self {
         Self {
-            client: Client::new(),
+            client: build_client(Duration::from_millis(50), Duration::from_millis(100))
+                .expect("test HTTP client should build"),
             api_key: api_key.into(),
             base_url,
         }
@@ -84,6 +88,17 @@ impl DeepSeekResponsesProvider {
             "text": {"format":{"type":"json_schema","name":"review_findings","strict":true,"schema":finding_schema()}}
         }))
     }
+}
+
+fn build_client(
+    connect_timeout: Duration,
+    request_timeout: Duration,
+) -> Result<Client, ReviewError> {
+    Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(request_timeout)
+        .build()
+        .map_err(|_| ReviewError::NetworkError("could not initialize HTTP client".into()))
 }
 
 #[async_trait]
@@ -301,6 +316,25 @@ mod tests {
                 .unwrap_err(),
             ReviewError::InvalidModelOutput(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn maps_hanging_response_timeout_to_network_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_millis(250))
+                    .set_body_json(json!({"output":[]})),
+            )
+            .mount(&server)
+            .await;
+        let error = DeepSeekResponsesProvider::new_with_base_for_test("k", server.uri())
+            .respond(&[])
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ReviewError::NetworkError(_)));
     }
 
     #[test]

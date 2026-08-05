@@ -1,68 +1,87 @@
 use crate::{ReviewError, TraceEntry, TraceSink};
 use async_trait::async_trait;
-use std::path::PathBuf;
-use tokio::sync::Mutex;
+use fs2::FileExt;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 pub struct SanitizedTraceStore {
     path: PathBuf,
-    write_lock: Mutex<()>,
 }
 
 impl SanitizedTraceStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self {
-            path: path.into(),
-            write_lock: Mutex::new(()),
-        }
+        Self { path: path.into() }
     }
 }
 
 #[async_trait]
 impl TraceSink for SanitizedTraceStore {
     async fn record(&self, entry: TraceEntry) -> Result<(), ReviewError> {
-        let _guard = self.write_lock.lock().await;
-        let mut entries: Vec<TraceEntry> = match tokio::fs::read(&self.path).await {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(_) => {
-                return Err(ReviewError::NetworkError(
-                    "trace file could not be read".into(),
-                ))
-            }
-        };
-        entries.push(sanitize(entry));
-        if entries.len() > 100 {
-            entries.drain(..entries.len() - 100);
-        }
-        let bytes = serde_json::to_vec(&entries)
-            .map_err(|_| ReviewError::NetworkError("trace metadata could not be encoded".into()))?;
-        if let Some(parent) = self.path.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|_| {
-                ReviewError::NetworkError("trace directory could not be created".into())
-            })?;
-        }
-        let temporary = self.path.with_extension("tmp");
-        tokio::fs::write(&temporary, bytes)
+        let path = self.path.clone();
+        tokio::task::spawn_blocking(move || record_locked(&path, entry))
             .await
-            .map_err(|_| ReviewError::NetworkError("trace file could not be written".into()))?;
-        if tokio::fs::rename(&temporary, &self.path).await.is_err() {
-            match tokio::fs::remove_file(&self.path).await {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(_) => {
-                    return Err(ReviewError::NetworkError(
-                        "trace file could not be replaced".into(),
-                    ))
-                }
-            }
-            tokio::fs::rename(&temporary, &self.path)
-                .await
-                .map_err(|_| {
-                    ReviewError::NetworkError("trace file could not be replaced".into())
-                })?;
-        }
-        Ok(())
+            .map_err(|_| ReviewError::NetworkError("trace writer task failed".into()))?
     }
+}
+
+fn record_locked(path: &Path, entry: TraceEntry) -> Result<(), ReviewError> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)
+        .map_err(|_| ReviewError::NetworkError("trace directory could not be created".into()))?;
+    let lock_path = lock_path(path);
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)
+        .map_err(|_| ReviewError::NetworkError("trace lock could not be opened".into()))?;
+    lock_file
+        .lock_exclusive()
+        .map_err(|_| ReviewError::NetworkError("trace lock could not be acquired".into()))?;
+    let result = rewrite_trace(path, parent, entry);
+    let _ = FileExt::unlock(&lock_file);
+    result
+}
+
+fn rewrite_trace(path: &Path, parent: &Path, entry: TraceEntry) -> Result<(), ReviewError> {
+    let mut entries: Vec<TraceEntry> = match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| {
+            ReviewError::NetworkError("trace file is corrupted or incompatible".into())
+        })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(_) => {
+            return Err(ReviewError::NetworkError(
+                "trace file could not be read".into(),
+            ))
+        }
+    };
+    entries.push(sanitize(entry));
+    if entries.len() > 100 {
+        entries.drain(..entries.len() - 100);
+    }
+    let bytes = serde_json::to_vec(&entries)
+        .map_err(|_| ReviewError::NetworkError("trace metadata could not be encoded".into()))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|_| ReviewError::NetworkError("trace temp file could not be created".into()))?;
+    temporary
+        .write_all(&bytes)
+        .and_then(|_| temporary.as_file_mut().sync_all())
+        .map_err(|_| ReviewError::NetworkError("trace temp file could not be written".into()))?;
+    temporary.persist(path).map_err(|_| {
+        ReviewError::NetworkError("trace file could not be atomically replaced".into())
+    })?;
+    Ok(())
+}
+
+fn lock_path(path: &Path) -> PathBuf {
+    let mut value = path.as_os_str().to_owned();
+    value.push(".lock");
+    PathBuf::from(value)
 }
 
 fn sanitize(mut entry: TraceEntry) -> TraceEntry {
@@ -111,6 +130,8 @@ mod tests {
     use super::*;
     use crate::{TraceEntry, TraceSink};
     use chrono::Utc;
+    use std::collections::HashSet;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn keeps_only_100_metadata_entries_and_sanitizes_values() {
@@ -139,5 +160,88 @@ mod tests {
         assert!(!serialized.contains("SECRET_KEY"));
         assert!(!serialized.contains("CODE_MARKER"));
         assert!(!serialized.contains("prompt"));
+    }
+
+    #[tokio::test]
+    async fn corrupted_trace_returns_error_without_overwriting_original() {
+        for original in [b"{corrupted trace".as_slice(), b"{}".as_slice()] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("trace.json");
+            std::fs::write(&path, original).unwrap();
+            let store = SanitizedTraceStore::new(path.clone());
+            let error = store
+                .record(entry(1))
+                .await
+                .expect_err("invalid trace metadata must not be treated as empty");
+            assert!(matches!(error, ReviewError::NetworkError(_)));
+            assert_eq!(std::fs::read(path).unwrap(), original);
+        }
+    }
+
+    #[tokio::test]
+    async fn separate_store_instances_serialize_concurrent_writers_without_loss() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("trace.json");
+        let first = Arc::new(SanitizedTraceStore::new(path.clone()));
+        let second = Arc::new(SanitizedTraceStore::new(path.clone()));
+        let mut tasks = Vec::new();
+        for number in 0..100 {
+            let store = if number % 2 == 0 {
+                first.clone()
+            } else {
+                second.clone()
+            };
+            tasks.push(tokio::spawn(
+                async move { store.record(entry(number)).await },
+            ));
+        }
+        for task in tasks {
+            task.await.unwrap().unwrap();
+        }
+        let entries: Vec<TraceEntry> =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(entries.len(), 100);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.duration_ms)
+                .collect::<HashSet<_>>()
+                .len(),
+            100
+        );
+
+        let mut overflow_tasks = Vec::new();
+        for number in 100..120 {
+            let store = if number % 2 == 0 {
+                first.clone()
+            } else {
+                second.clone()
+            };
+            overflow_tasks.push(tokio::spawn(
+                async move { store.record(entry(number)).await },
+            ));
+        }
+        for task in overflow_tasks {
+            task.await.unwrap().unwrap();
+        }
+        let entries: Vec<TraceEntry> =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let durations: HashSet<_> = entries.iter().map(|entry| entry.duration_ms).collect();
+        assert_eq!(entries.len(), 100);
+        assert_eq!(durations.len(), 100);
+        assert!((100..120).all(|number| durations.contains(&number)));
+    }
+
+    fn entry(duration_ms: u64) -> TraceEntry {
+        TraceEntry {
+            timestamp: Utc::now(),
+            model: "deepseek-v4-flash".into(),
+            duration_ms,
+            input_tokens: 1,
+            output_tokens: 2,
+            tool_names: vec!["read_file".into()],
+            status: "completed".into(),
+            error_code: None,
+        }
     }
 }

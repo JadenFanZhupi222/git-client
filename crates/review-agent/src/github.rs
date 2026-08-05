@@ -3,8 +3,11 @@ use async_trait::async_trait;
 use base64::Engine;
 use reqwest::{Client, Response, StatusCode, Url};
 use serde_json::{json, Value};
+use std::time::Duration;
 
 const GITHUB_API_BASE: &str = "https://api.github.com";
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct GithubReviewSource {
     client: Client,
@@ -20,6 +23,8 @@ impl GithubReviewSource {
         }
         let client = Client::builder()
             .user_agent("git-client-review-agent")
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
             .build()
             .map_err(|_| ReviewError::NetworkError("could not initialize HTTP client".into()))?;
         Ok(Self {
@@ -32,7 +37,11 @@ impl GithubReviewSource {
     #[cfg(test)]
     fn new_with_base_for_test(token: impl Into<String>, base_url: String) -> Self {
         Self {
-            client: Client::new(),
+            client: Client::builder()
+                .connect_timeout(Duration::from_millis(50))
+                .timeout(Duration::from_millis(100))
+                .build()
+                .expect("test HTTP client should build"),
             token: token.into(),
             base_url,
         }
@@ -186,6 +195,9 @@ impl ReviewSource for GithubReviewSource {
             .await
             .map_err(network_error)?;
         let body = checked_json(response, false).await?;
+        if body.get("truncated").and_then(Value::as_bool) == Some(true) {
+            return Err(ReviewError::ReviewBudgetExceeded);
+        }
         let tree = body.get("tree").and_then(Value::as_array).ok_or_else(|| {
             ReviewError::InvalidModelOutput("GitHub tree response was invalid".into())
         })?;
@@ -293,7 +305,21 @@ fn network_error(_: reqwest::Error) -> ReviewError {
 
 async fn checked_json(response: Response, publish: bool) -> Result<Value, ReviewError> {
     match response.status() {
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => return Err(ReviewError::AuthFailed),
+        StatusCode::UNAUTHORIZED => return Err(ReviewError::AuthFailed),
+        StatusCode::FORBIDDEN => {
+            if response
+                .headers()
+                .contains_key(reqwest::header::RETRY_AFTER)
+                || response
+                    .headers()
+                    .get("x-ratelimit-remaining")
+                    .and_then(|value| value.to_str().ok())
+                    == Some("0")
+            {
+                return Err(ReviewError::RateLimited);
+            }
+            return Err(ReviewError::AuthFailed);
+        }
         StatusCode::TOO_MANY_REQUESTS => return Err(ReviewError::RateLimited),
         status if !status.is_success() => {
             return Err(if publish {
@@ -352,6 +378,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(content, "two\nthree");
+    }
+
+    #[tokio::test]
+    async fn maps_hanging_response_timeout_to_network_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/contents/src/lib.rs"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_millis(250))
+                    .set_body_json(json!({"encoding":"base64","content":"b2s="})),
+            )
+            .mount(&server)
+            .await;
+        let error = source(&server)
+            .read_file(&target(), "abc", "src/lib.rs", 1, 1)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ReviewError::NetworkError(_)));
     }
 
     #[tokio::test]
@@ -423,6 +468,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_truncated_git_tree_instead_of_returning_partial_paths() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/git/trees/abc"))
+            .and(query_param("recursive", "1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "truncated":true,
+                "tree":[{"path":"partial.rs","type":"blob"}]
+            })))
+            .mount(&server)
+            .await;
+        assert_eq!(
+            source(&server)
+                .list_repository_tree(&target(), "abc", None)
+                .await
+                .unwrap_err(),
+            ReviewError::ReviewBudgetExceeded
+        );
+    }
+
+    #[tokio::test]
     async fn publish_rechecks_head_and_rejects_race() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -438,6 +504,54 @@ mod tests {
         assert_eq!(
             source(&server).publish(&review).await.unwrap_err(),
             ReviewError::PrUpdated
+        );
+    }
+
+    #[tokio::test]
+    async fn distinguishes_rate_limited_and_authorization_forbidden_responses() {
+        for (header_name, header_value) in [("Retry-After", "30"), ("X-RateLimit-Remaining", "0")] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/repos/o/r/pulls/1"))
+                .respond_with(
+                    ResponseTemplate::new(403)
+                        .insert_header(header_name, header_value)
+                        .set_body_json(json!({"message":"request denied"})),
+                )
+                .mount(&server)
+                .await;
+            assert_eq!(
+                source(&server).head_sha(&target()).await.unwrap_err(),
+                ReviewError::RateLimited
+            );
+        }
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/pulls/1"))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .set_body_json(json!({"message":"API rate limit exceeded"})),
+            )
+            .mount(&server)
+            .await;
+        assert_eq!(
+            source(&server).head_sha(&target()).await.unwrap_err(),
+            ReviewError::RateLimited
+        );
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/pulls/1"))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .set_body_json(json!({"message":"Resource not accessible"})),
+            )
+            .mount(&server)
+            .await;
+        assert_eq!(
+            source(&server).head_sha(&target()).await.unwrap_err(),
+            ReviewError::AuthFailed
         );
     }
 
