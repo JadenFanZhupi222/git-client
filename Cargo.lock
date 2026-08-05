@@ -69,6 +69,7 @@ name = "app"
 version = "0.1.4"
 dependencies = [
  "app-service",
+ "async-trait",
  "git-core",
  "git-engine",
  "ipc-types",
@@ -87,6 +88,7 @@ dependencies = [
  "tauri-plugin-wdio-webdriver",
  "tempfile",
  "tokio",
+ "wiremock",
 ]
 
 [[package]]

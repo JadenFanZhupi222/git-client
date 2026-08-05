@@ -247,6 +247,33 @@ impl From<review_agent::PublishedReview> for PublishedReviewDto {
 mod review_dto_contract_tests {
     use super::*;
 
+    fn assert_public_shape_has_no_sensitive_fields(value: &serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, child) in map {
+                    assert!(
+                        ![
+                            "secret",
+                            "token",
+                            "key",
+                            "patch",
+                            "prompt",
+                            "content",
+                            "reasoning"
+                        ]
+                        .contains(&key.as_str()),
+                        "sensitive field {key}"
+                    );
+                    assert_public_shape_has_no_sensitive_fields(child);
+                }
+            }
+            serde_json::Value::Array(values) => values
+                .iter()
+                .for_each(assert_public_shape_has_no_sensitive_fields),
+            _ => {}
+        }
+    }
+
     #[test]
     fn review_file_dto_omits_raw_patch_and_secrets() {
         let source =
@@ -291,6 +318,128 @@ mod review_dto_contract_tests {
         let json = serde_json::to_string(&input).unwrap();
         for forbidden in ["token", "key", "prompt", "content", "patch"] {
             assert!(!json.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn every_review_dto_has_the_expected_public_shape_and_converts() {
+        let target = review_agent::ReviewTarget {
+            owner: "owner".into(),
+            repo: "repo".into(),
+            pull_number: 42,
+        };
+        let target_dto = ReviewTargetDto::from(target.clone());
+        assert_eq!(
+            serde_json::to_value(&target_dto).unwrap(),
+            serde_json::json!({"owner":"owner","repo":"repo","pull_number":42})
+        );
+        assert_eq!(review_agent::ReviewTarget::from(target_dto.clone()), target);
+
+        let file =
+            review_agent::ReviewFile::from_patch("src/lib.rs", "@@ -1 +1 @@\n-a\n+b").unwrap();
+        let file_dto = ReviewFileDto::from(file.clone());
+        assert_eq!(
+            serde_json::to_value(&file_dto).unwrap(),
+            serde_json::json!({"path":"src/lib.rs","patch_bytes":17,"reviewable":true})
+        );
+        let preflight_dto = ReviewPreflightDto::from(review_agent::ReviewPreflight {
+            head_sha: "abc".into(),
+            files: vec![file],
+            total_patch_bytes: 17,
+            requires_selection: false,
+        });
+        assert_eq!(
+            serde_json::to_value(&preflight_dto).unwrap(),
+            serde_json::json!({"head_sha":"abc","files":[{"path":"src/lib.rs","patch_bytes":17,"reviewable":true}],"total_patch_bytes":17,"requires_selection":false})
+        );
+
+        let run_input = ReviewRunInputDto {
+            run_id: "run".into(),
+            target: target_dto.clone(),
+            expected_head_sha: "abc".into(),
+            selected_files: vec!["src/lib.rs".into()],
+        };
+        let domain_input = review_agent::ReviewRunInput::from(run_input.clone());
+        assert_eq!(domain_input.run_id, "run");
+        assert_eq!(
+            serde_json::to_value(&run_input).unwrap()["selected_files"],
+            serde_json::json!(["src/lib.rs"])
+        );
+
+        let finding = review_agent::ReviewFinding {
+            id: "finding".into(),
+            severity: review_agent::Severity::High,
+            path: "src/lib.rs".into(),
+            side: review_agent::ReviewSide::RIGHT,
+            line: 2,
+            title: "Title".into(),
+            failure_scenario: "Scenario".into(),
+            explanation: "Explanation".into(),
+            draft_comment: "Draft".into(),
+        };
+        let finding_dto = ReviewFindingDto::from(finding.clone());
+        assert_eq!(
+            serde_json::to_value(&finding_dto).unwrap(),
+            serde_json::json!({"id":"finding","severity":"high","path":"src/lib.rs","side":"RIGHT","line":2,"title":"Title","failure_scenario":"Scenario","explanation":"Explanation","draft_comment":"Draft"})
+        );
+        assert_eq!(
+            review_agent::ReviewFinding::try_from(finding_dto.clone()).unwrap(),
+            finding
+        );
+
+        let usage = review_agent::ReviewUsage {
+            input_tokens: 10,
+            output_tokens: 4,
+            tool_calls: 1,
+        };
+        let usage_dto = ReviewUsageDto::from(usage.clone());
+        assert_eq!(
+            serde_json::to_value(&usage_dto).unwrap(),
+            serde_json::json!({"input_tokens":10,"output_tokens":4,"tool_calls":1})
+        );
+        let result_dto = ReviewRunResultDto::from(review_agent::ReviewRunResult {
+            run_id: "run".into(),
+            head_sha: "abc".into(),
+            findings: vec![finding.clone()],
+            usage,
+        });
+        assert_eq!(serde_json::to_value(&result_dto).unwrap()["run_id"], "run");
+
+        let submit_dto = SubmitReviewDto {
+            target: target_dto,
+            head_sha: "abc".into(),
+            findings: vec![finding_dto],
+        };
+        let submit = review_agent::SubmitReview::try_from(submit_dto.clone()).unwrap();
+        assert_eq!(submit.findings, vec![finding]);
+        let published_dto = PublishedReviewDto::from(review_agent::PublishedReview {
+            review_id: 7,
+            html_url: Some("https://example.invalid/7".into()),
+        });
+        assert_eq!(
+            serde_json::to_value(&published_dto).unwrap(),
+            serde_json::json!({"review_id":7,"html_url":"https://example.invalid/7"})
+        );
+        let progress = ReviewProgressEventDto {
+            run_id: "run".into(),
+            stage: "tool_call".into(),
+            tool_name: Some("read_file".into()),
+            tool_calls: Some(1),
+        };
+        assert_eq!(
+            serde_json::to_value(&progress).unwrap(),
+            serde_json::json!({"run_id":"run","stage":"tool_call","tool_name":"read_file","tool_calls":1})
+        );
+
+        for value in [
+            serde_json::to_value(preflight_dto).unwrap(),
+            serde_json::to_value(run_input).unwrap(),
+            serde_json::to_value(result_dto).unwrap(),
+            serde_json::to_value(submit_dto).unwrap(),
+            serde_json::to_value(published_dto).unwrap(),
+            serde_json::to_value(progress).unwrap(),
+        ] {
+            assert_public_shape_has_no_sensitive_fields(&value);
         }
     }
 }

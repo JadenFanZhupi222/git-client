@@ -84,6 +84,7 @@ pub(crate) fn http_status_error(status: StatusCode) -> IpcError {
     let (code, recoverable) = match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => ("AUTH_FAILED", false),
         StatusCode::TOO_MANY_REQUESTS => ("RATE_LIMITED", true),
+        status if status.is_server_error() => ("NETWORK_ERROR", true),
         _ => ("CREDENTIAL_TEST_FAILED", true),
     };
     IpcError {
@@ -93,22 +94,46 @@ pub(crate) fn http_status_error(status: StatusCode) -> IpcError {
     }
 }
 
-async fn test_with_client(
+struct EndpointConfig {
+    deepseek: String,
+    github: String,
+    gitlab: String,
+}
+
+impl EndpointConfig {
+    fn production() -> Self {
+        Self {
+            deepseek: "https://api.deepseek.com/models".into(),
+            github: "https://api.github.com/user".into(),
+            gitlab: "https://gitlab.com/api/v4/user".into(),
+        }
+    }
+
+    #[cfg(test)]
+    fn for_test(base: &str) -> Self {
+        Self {
+            deepseek: format!("{base}/models"),
+            github: format!("{base}/user"),
+            gitlab: format!("{base}/api/v4/user"),
+        }
+    }
+}
+
+async fn validate_credential(
     client: &Client,
+    endpoints: &EndpointConfig,
     kind: CredentialKindDto,
     secret: &str,
 ) -> Result<(), IpcError> {
     let request = match kind {
         CredentialKindDto::Github => client
-            .get("https://api.github.com/user")
+            .get(&endpoints.github)
             .bearer_auth(secret)
             .header("User-Agent", "git-client"),
         CredentialKindDto::Gitlab => client
-            .get("https://gitlab.com/api/v4/user")
+            .get(&endpoints.gitlab)
             .header("PRIVATE-TOKEN", secret),
-        CredentialKindDto::Deepseek => client
-            .get("https://api.deepseek.com/models")
-            .bearer_auth(secret),
+        CredentialKindDto::Deepseek => client.get(&endpoints.deepseek).bearer_auth(secret),
     };
     let response = request.send().await.map_err(|_| IpcError {
         code: "NETWORK_ERROR".into(),
@@ -117,6 +142,14 @@ async fn test_with_client(
     })?;
     if response.status().is_success() {
         Ok(())
+    } else if kind == CredentialKindDto::Github
+        && response.status() == StatusCode::FORBIDDEN
+        && response
+            .headers()
+            .get("x-ratelimit-remaining")
+            .is_some_and(|value| value == "0")
+    {
+        Err(http_status_error(StatusCode::TOO_MANY_REQUESTS))
     } else {
         Err(http_status_error(response.status()))
     }
@@ -127,12 +160,15 @@ pub(crate) async fn test_credential(kind: CredentialKindDto) -> Result<(), IpcEr
     let secret = tokio::task::spawn_blocking(move || read_credential(kind))
         .await
         .map_err(crate::join_panic)??;
-    test_with_client(&Client::new(), kind, &secret).await
+    validate_credential(&Client::new(), &EndpointConfig::production(), kind, &secret).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn credential_kind_preserves_legacy_keyring_names() {
@@ -160,6 +196,127 @@ mod tests {
         assert_eq!(
             http_status_error(reqwest::StatusCode::TOO_MANY_REQUESTS).code,
             "RATE_LIMITED"
+        );
+    }
+
+    #[tokio::test]
+    async fn validates_each_provider_at_fixed_path_with_expected_auth_header() {
+        for (kind, expected_path, header_name, header_value) in [
+            (
+                CredentialKindDto::Deepseek,
+                "/models",
+                "authorization",
+                "Bearer fixture-secret",
+            ),
+            (
+                CredentialKindDto::Github,
+                "/user",
+                "authorization",
+                "Bearer fixture-secret",
+            ),
+            (
+                CredentialKindDto::Gitlab,
+                "/api/v4/user",
+                "private-token",
+                "fixture-secret",
+            ),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path(expected_path))
+                .and(header(header_name, header_value))
+                .respond_with(ResponseTemplate::new(200))
+                .expect(1)
+                .mount(&server)
+                .await;
+            validate_credential(
+                &Client::new(),
+                &EndpointConfig::for_test(&server.uri()),
+                kind,
+                "fixture-secret",
+            )
+            .await
+            .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn maps_auth_rate_limit_server_and_timeout_without_leaking_secret() {
+        for (status, headers, expected) in [
+            (401, vec![], "AUTH_FAILED"),
+            (403, vec![], "AUTH_FAILED"),
+            (403, vec![("x-ratelimit-remaining", "0")], "RATE_LIMITED"),
+            (429, vec![], "RATE_LIMITED"),
+            (500, vec![], "NETWORK_ERROR"),
+        ] {
+            let server = MockServer::start().await;
+            let mut response = ResponseTemplate::new(status);
+            for (name, value) in headers {
+                response = response.insert_header(name, value);
+            }
+            Mock::given(method("GET"))
+                .and(path("/user"))
+                .respond_with(response)
+                .mount(&server)
+                .await;
+            let error = validate_credential(
+                &Client::new(),
+                &EndpointConfig::for_test(&server.uri()),
+                CredentialKindDto::Github,
+                "fixture-secret",
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.code, expected);
+            assert!(
+                !serde_json::to_string(&error)
+                    .unwrap()
+                    .contains("fixture-secret")
+            );
+        }
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(100)))
+            .mount(&server)
+            .await;
+        let client = Client::builder()
+            .timeout(Duration::from_millis(20))
+            .build()
+            .unwrap();
+        let error = validate_credential(
+            &client,
+            &EndpointConfig::for_test(&server.uri()),
+            CredentialKindDto::Deepseek,
+            "fixture-secret",
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "NETWORK_ERROR");
+        assert!(
+            !serde_json::to_string(&error)
+                .unwrap()
+                .contains("fixture-secret")
+        );
+
+        let client = Client::builder()
+            .timeout(Duration::from_millis(100))
+            .build()
+            .unwrap();
+        let error = validate_credential(
+            &client,
+            &EndpointConfig::for_test("http://127.0.0.1:9"),
+            CredentialKindDto::Gitlab,
+            "fixture-secret",
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "NETWORK_ERROR");
+        assert!(
+            !serde_json::to_string(&error)
+                .unwrap()
+                .contains("fixture-secret")
         );
     }
 }
