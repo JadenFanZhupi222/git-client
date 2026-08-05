@@ -122,6 +122,50 @@ describe("SettingsPanel", () => {
     expect(screen.queryByRole("heading", { name: "Service details" })).not.toBeInTheDocument();
   });
 
+  it("associates credential inputs with helper copy and the DeepSeek disclosure", async () => {
+    const user = userEvent.setup();
+    renderPanel({ initialSection: "deepseek" });
+    await screen.findByText("Not configured");
+
+    const deepseekInput = screen.getByLabelText("DeepSeek API key");
+    const deepseekDescriptions = deepseekInput.getAttribute("aria-describedby")!.split(" ");
+    expect(deepseekDescriptions).toHaveLength(2);
+    expect(document.getElementById(deepseekDescriptions[0])).toHaveTextContent(
+      "Stored securely in your system credential store.",
+    );
+    expect(document.getElementById(deepseekDescriptions[1])).toHaveTextContent(
+      /PR patches and only the code excerpts/,
+    );
+
+    await user.click(screen.getByRole("tab", { name: "GitHub" }));
+    const githubInput = screen.getByLabelText("GitHub personal access token");
+    const githubDescriptions = githubInput.getAttribute("aria-describedby")!.split(" ");
+    expect(githubDescriptions).toHaveLength(1);
+    expect(document.getElementById(githubDescriptions[0])).toHaveTextContent(
+      "Stored securely in your system credential store.",
+    );
+  });
+
+  it("marks the active provider detail busy while statuses load and while an operation runs", async () => {
+    let resolveStatuses!: (configured: boolean) => void;
+    const statusPromise = new Promise<boolean>((resolve) => { resolveStatuses = resolve; });
+    ipc.credentialStatus.mockImplementation(() => statusPromise);
+    const user = userEvent.setup();
+    renderPanel({ initialSection: "github" });
+    const panel = screen.getByRole("tabpanel", { name: "GitHub" });
+    expect(panel).toHaveAttribute("aria-busy", "true");
+
+    resolveStatuses(true);
+    await waitFor(() => expect(panel).toHaveAttribute("aria-busy", "false"));
+
+    let resolveTest!: () => void;
+    ipc.testCredential.mockImplementation(() => new Promise<void>((resolve) => { resolveTest = resolve; }));
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
+    expect(panel).toHaveAttribute("aria-busy", "true");
+    resolveTest();
+    await waitFor(() => expect(panel).toHaveAttribute("aria-busy", "false"));
+  });
+
   it("renders Chinese credential labels and configured actions", async () => {
     setLang("zh");
     renderPanel({ initialSection: "github" });
@@ -152,6 +196,7 @@ describe("SettingsPanel", () => {
     const categories = screen.getByRole("navigation", { name: "Settings categories" });
     const layout = categories.parentElement;
     const providers = screen.getByRole("tablist", { name: "Integration providers" });
+    expect(screen.getByRole("dialog", { name: "Settings" })).toHaveClass("w-[780px]", "max-w-[94vw]");
     expect(layout).toHaveClass(
       "grid-cols-1",
       "grid-rows-[auto_minmax(0,1fr)]",

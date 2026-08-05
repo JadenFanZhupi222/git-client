@@ -185,7 +185,7 @@ export function SettingsPanel({
         tabIndex={-1}
         aria-modal="true"
         aria-labelledby="settings-title"
-        className="panel-in popover relative flex max-h-[82vh] w-[680px] max-w-[94vw] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
+        className="panel-in popover relative flex max-h-[82vh] w-[780px] max-w-[94vw] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
       >
         <header className="flex items-center gap-2 border-b border-line px-4 py-3">
           <h2 id="settings-title" className="text-sm font-semibold text-fg">
@@ -261,6 +261,7 @@ export function SettingsPanel({
                   role="tabpanel"
                   id={`settings-panel-${kind}`}
                   aria-labelledby={`settings-tab-${kind}`}
+                  aria-busy={provider === kind && busy}
                   hidden={provider !== kind}
                   className="min-h-0 px-3 py-4 sm:px-5 sm:py-5"
                 >
@@ -306,7 +307,7 @@ export function SettingsPanel({
                           value="deepseek-v4-flash"
                         />
                       </dl>
-                      <p className="mt-3 text-xs leading-relaxed text-fg-muted">
+                      <p id="settings-deepseek-disclosure" className="mt-3 text-xs leading-relaxed text-fg-muted">
                         {t("settings.deepseek.disclosure")}
                       </p>
                     </section>
@@ -324,7 +325,7 @@ export function SettingsPanel({
                       disabled={busy}
                       onChange={(event) => setSecret(event.target.value)}
                       placeholder={t(providerMessageKey(provider, configured ? "replacementPlaceholder" : "placeholder"))}
-                      aria-describedby={`settings-${provider}-credential-helper`}
+                      aria-describedby={`settings-${provider}-credential-helper${provider === "deepseek" ? " settings-deepseek-disclosure" : ""}`}
                       className="field h-9 rounded bg-canvas px-2.5 font-mono text-xs text-fg placeholder:text-fg-subtle disabled:opacity-50"
                     />
                   </label>
