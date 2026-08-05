@@ -36,24 +36,74 @@ fn entry(kind: CredentialKindDto) -> Result<keyring::Entry, IpcError> {
     keyring::Entry::new(SERVICE, credential_user(kind)).map_err(keyring_error)
 }
 
-pub(crate) fn read_credential(kind: CredentialKindDto) -> Result<String, IpcError> {
-    match entry(kind)?.get_password() {
-        Ok(secret) => Ok(secret),
-        Err(keyring::Error::NoEntry) => Err(IpcError {
+trait CredentialStore: Send + Sync {
+    fn get(&self, kind: CredentialKindDto) -> Result<Option<String>, IpcError>;
+    fn set(&self, kind: CredentialKindDto, secret: &str) -> Result<(), IpcError>;
+    fn clear(&self, kind: CredentialKindDto) -> Result<(), IpcError>;
+}
+
+struct KeyringCredentialStore;
+
+impl CredentialStore for KeyringCredentialStore {
+    fn get(&self, kind: CredentialKindDto) -> Result<Option<String>, IpcError> {
+        match entry(kind)?.get_password() {
+            Ok(secret) => Ok(Some(secret)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(keyring_error(error)),
+        }
+    }
+
+    fn set(&self, kind: CredentialKindDto, secret: &str) -> Result<(), IpcError> {
+        entry(kind)?.set_password(secret).map_err(keyring_error)
+    }
+
+    fn clear(&self, kind: CredentialKindDto) -> Result<(), IpcError> {
+        match entry(kind)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(keyring_error(error)),
+        }
+    }
+}
+
+struct CredentialService<'a> {
+    store: &'a dyn CredentialStore,
+}
+
+impl<'a> CredentialService<'a> {
+    fn new(store: &'a dyn CredentialStore) -> Self {
+        Self { store }
+    }
+
+    fn status(&self, kind: CredentialKindDto) -> Result<bool, IpcError> {
+        self.store.get(kind).map(|secret| secret.is_some())
+    }
+
+    fn read(&self, kind: CredentialKindDto) -> Result<String, IpcError> {
+        self.store.get(kind)?.ok_or_else(|| IpcError {
             code: "CREDENTIAL_MISSING".into(),
             message: "Credential is not configured".into(),
             recoverable: true,
-        }),
-        Err(error) => Err(keyring_error(error)),
+        })
     }
+
+    fn save(&self, kind: CredentialKindDto, secret: String) -> Result<(), IpcError> {
+        let secret = normalize_secret(secret)?;
+        self.store.set(kind, &secret)
+    }
+
+    fn clear(&self, kind: CredentialKindDto) -> Result<(), IpcError> {
+        self.store.clear(kind)
+    }
+}
+
+pub(crate) fn read_credential(kind: CredentialKindDto) -> Result<String, IpcError> {
+    CredentialService::new(&KeyringCredentialStore).read(kind)
 }
 
 #[tauri::command]
 pub(crate) async fn credential_status(kind: CredentialKindDto) -> Result<bool, IpcError> {
-    tokio::task::spawn_blocking(move || match entry(kind)?.get_password() {
-        Ok(_) => Ok(true),
-        Err(keyring::Error::NoEntry) => Ok(false),
-        Err(e) => Err(keyring_error(e)),
+    tokio::task::spawn_blocking(move || {
+        CredentialService::new(&KeyringCredentialStore).status(kind)
     })
     .await
     .map_err(crate::join_panic)?
@@ -64,20 +114,18 @@ pub(crate) async fn save_credential(
     kind: CredentialKindDto,
     secret: String,
 ) -> Result<(), IpcError> {
-    let secret = normalize_secret(secret)?;
-    tokio::task::spawn_blocking(move || entry(kind)?.set_password(&secret).map_err(keyring_error))
-        .await
-        .map_err(crate::join_panic)?
+    tokio::task::spawn_blocking(move || {
+        CredentialService::new(&KeyringCredentialStore).save(kind, secret)
+    })
+    .await
+    .map_err(crate::join_panic)?
 }
 
 #[tauri::command]
 pub(crate) async fn clear_credential(kind: CredentialKindDto) -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || match entry(kind)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(keyring_error(e)),
-    })
-    .await
-    .map_err(crate::join_panic)?
+    tokio::task::spawn_blocking(move || CredentialService::new(&KeyringCredentialStore).clear(kind))
+        .await
+        .map_err(crate::join_panic)?
 }
 
 pub(crate) fn http_status_error(status: StatusCode) -> IpcError {
@@ -166,6 +214,8 @@ pub(crate) async fn test_credential(kind: CredentialKindDto) -> Result<(), IpcEr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
     use std::time::Duration;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -177,6 +227,104 @@ mod tests {
         assert_eq!(
             credential_user(CredentialKindDto::Deepseek),
             "deepseek-token"
+        );
+    }
+
+    #[derive(Default)]
+    struct FakeStore {
+        values: Mutex<HashMap<&'static str, String>>,
+        fail: bool,
+    }
+
+    impl CredentialStore for FakeStore {
+        fn get(&self, kind: CredentialKindDto) -> Result<Option<String>, IpcError> {
+            if self.fail {
+                return Err(IpcError {
+                    code: "STORE_FAILED".into(),
+                    message: "store failed".into(),
+                    recoverable: true,
+                });
+            }
+            Ok(self
+                .values
+                .lock()
+                .unwrap()
+                .get(credential_user(kind))
+                .cloned())
+        }
+        fn set(&self, kind: CredentialKindDto, secret: &str) -> Result<(), IpcError> {
+            if self.fail {
+                return Err(IpcError {
+                    code: "STORE_FAILED".into(),
+                    message: "store failed".into(),
+                    recoverable: true,
+                });
+            }
+            self.values
+                .lock()
+                .unwrap()
+                .insert(credential_user(kind), secret.into());
+            Ok(())
+        }
+        fn clear(&self, kind: CredentialKindDto) -> Result<(), IpcError> {
+            if self.fail {
+                return Err(IpcError {
+                    code: "STORE_FAILED".into(),
+                    message: "store failed".into(),
+                    recoverable: true,
+                });
+            }
+            self.values.lock().unwrap().remove(credential_user(kind));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn injectable_store_drives_status_save_and_idempotent_clear_without_returning_secret() {
+        let store = FakeStore::default();
+        let service = CredentialService::new(&store);
+        assert!(!service.status(CredentialKindDto::Github).unwrap());
+        service
+            .save(CredentialKindDto::Github, "  private-value  ".into())
+            .unwrap();
+        assert!(service.status(CredentialKindDto::Github).unwrap());
+        assert_eq!(
+            store.values.lock().unwrap().get("github-token").unwrap(),
+            "private-value"
+        );
+        service.clear(CredentialKindDto::Github).unwrap();
+        service.clear(CredentialKindDto::Github).unwrap();
+        assert!(!service.status(CredentialKindDto::Github).unwrap());
+    }
+
+    #[test]
+    fn injectable_store_errors_are_propagated_without_secret_data() {
+        let store = FakeStore {
+            values: Mutex::new(HashMap::new()),
+            fail: true,
+        };
+        let error = CredentialService::new(&store)
+            .status(CredentialKindDto::Gitlab)
+            .unwrap_err();
+        assert_eq!(error.code, "STORE_FAILED");
+        assert!(
+            !serde_json::to_string(&error)
+                .unwrap()
+                .contains("private-value")
+        );
+        assert_eq!(
+            CredentialService::new(&store)
+                .save(CredentialKindDto::Gitlab, "private-value".into())
+                .unwrap_err()
+                .code,
+            "STORE_FAILED"
+        );
+        assert_eq!(
+            CredentialService::new(&store)
+                .clear(CredentialKindDto::Gitlab)
+                .unwrap_err()
+                .code,
+            "STORE_FAILED"
         );
     }
 
