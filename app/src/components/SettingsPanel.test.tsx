@@ -44,13 +44,14 @@ describe("SettingsPanel", () => {
     expect(within(categories).queryByText("DeepSeek")).not.toBeInTheDocument();
     expect(within(categories).queryByText("GitHub")).not.toBeInTheDocument();
     expect(within(categories).queryByText("GitLab")).not.toBeInTheDocument();
-    expect(screen.getByRole("tablist", { name: "Integration providers" })).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "Integration" })).toBeInTheDocument();
+    expect(screen.getByText("Manage credentials for AI review and code hosting.")).toBeInTheDocument();
   });
 
   it("selects the requested provider within the Integrations category", async () => {
     renderPanel({ initialSection: "github" });
 
-    const providers = screen.getByRole("tablist", { name: "Integration providers" });
+    const providers = screen.getByRole("tablist", { name: "Integration" });
     expect(within(providers).getByRole("tab", { name: "GitHub" })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -81,8 +82,9 @@ describe("SettingsPanel", () => {
 
     const input = screen.getByLabelText("GitHub personal access token");
     expect(input).toHaveValue("");
-    expect(input).toHaveAttribute("placeholder", "Enter a new credential to replace the saved one");
-    expect(screen.getByText("Stored securely in your system credential store.")).toBeInTheDocument();
+    expect(input).toHaveAttribute("placeholder", "Enter a new credential to replace the saved credential");
+    expect(screen.getByText("Stored securely in the system credential store.")).toBeInTheDocument();
+    expect(screen.getByText("Authenticates private repositories, pull requests, and review publishing.")).toBeInTheDocument();
     const save = screen.getByRole("button", { name: "Save replacement" });
     const test = screen.getByRole("button", { name: "Test connection" });
     const remove = screen.getByRole("button", { name: "Remove credential" });
@@ -99,6 +101,25 @@ describe("SettingsPanel", () => {
     expect(document.body).not.toHaveTextContent("stored-secret");
   });
 
+  it("renders the exact provider copy and replacement placeholder for every provider", async () => {
+    ipc.credentialStatus.mockResolvedValue(true);
+    const user = userEvent.setup();
+    renderPanel({ initialSection: "deepseek" });
+    await screen.findByText("Configured");
+
+    expect(screen.getByText("Powers AI-assisted pull request reviews.")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Enter a new credential to replace the saved credential")).toBeInTheDocument();
+    expect(screen.getByText("When AI Review runs, selected PR patches and code excerpts read during analysis are sent to DeepSeek.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "GitHub" }));
+    expect(screen.getByText("Authenticates private repositories, pull requests, and review publishing.")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Enter a new credential to replace the saved credential")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "GitLab" }));
+    expect(screen.getByText("Authenticates private repositories, merge requests, and review operations.")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Enter a new credential to replace the saved credential")).toBeInTheDocument();
+  });
+
   it("renders flat DeepSeek-only service details, sentence-case label, and credential helper", async () => {
     const user = userEvent.setup();
     renderPanel({ initialSection: "deepseek" });
@@ -110,13 +131,14 @@ describe("SettingsPanel", () => {
     expect(within(details).getByText("Endpoint").tagName).toBe("DT");
     expect(within(details).getByText("Model").tagName).toBe("DT");
     expect(within(details).getByText("https://api.deepseek.com").tagName).toBe("DD");
-    expect(within(details).getByText(/PR patches and only the code excerpts/)).toHaveClass("text-fg-muted");
+    expect(within(details).getByText("When AI Review runs, selected PR patches and code excerpts read during analysis are sent to DeepSeek.")).toHaveClass("text-fg-muted");
     expect(details).not.toHaveClass("rounded-md", "border", "bg-elevated");
     const label = screen.getByText("DeepSeek API key");
     expect(label).toHaveClass("text-xs");
     expect(label).not.toHaveClass("uppercase", "tracking-wide");
     expect(screen.getByLabelText("DeepSeek API key")).toHaveClass("h-9", "field");
-    expect(screen.getByText("Stored securely in your system credential store.")).toBeInTheDocument();
+    expect(screen.getByText("Powers AI-assisted pull request reviews.")).toBeInTheDocument();
+    expect(screen.getByText("Stored securely in the system credential store.")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "GitHub" }));
     expect(screen.queryByRole("heading", { name: "Service details" })).not.toBeInTheDocument();
@@ -131,10 +153,10 @@ describe("SettingsPanel", () => {
     const deepseekDescriptions = deepseekInput.getAttribute("aria-describedby")!.split(" ");
     expect(deepseekDescriptions).toHaveLength(2);
     expect(document.getElementById(deepseekDescriptions[0])).toHaveTextContent(
-      "Stored securely in your system credential store.",
+      "Stored securely in the system credential store.",
     );
     expect(document.getElementById(deepseekDescriptions[1])).toHaveTextContent(
-      /PR patches and only the code excerpts/,
+      "When AI Review runs, selected PR patches and code excerpts read during analysis are sent to DeepSeek.",
     );
 
     await user.click(screen.getByRole("tab", { name: "GitHub" }));
@@ -142,7 +164,7 @@ describe("SettingsPanel", () => {
     const githubDescriptions = githubInput.getAttribute("aria-describedby")!.split(" ");
     expect(githubDescriptions).toHaveLength(1);
     expect(document.getElementById(githubDescriptions[0])).toHaveTextContent(
-      "Stored securely in your system credential store.",
+      "Stored securely in the system credential store.",
     );
   });
 
@@ -168,15 +190,29 @@ describe("SettingsPanel", () => {
 
   it("renders Chinese credential labels and configured actions", async () => {
     setLang("zh");
+    ipc.credentialStatus.mockResolvedValue(true);
+    const user = userEvent.setup();
     renderPanel({ initialSection: "github" });
     await screen.findByText("已配置");
 
     expect(screen.getByLabelText("GitHub 个人访问令牌")).toHaveValue("");
-    expect(screen.getByPlaceholderText("输入新凭据将替换已保存的凭据")).toBeInTheDocument();
-    expect(screen.getByText("凭据将安全存储在系统凭据存储中。")).toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "集成服务" })).toBeInTheDocument();
+    expect(screen.getByText("管理 AI 评审与代码托管服务的凭据。")).toBeInTheDocument();
+    expect(screen.getByText("用于私有仓库、拉取请求与评审发布的身份验证。")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("输入新凭据以替换已保存的凭据")).toBeInTheDocument();
+    expect(screen.getByText("安全存储于系统凭据库中。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存替换凭据" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "测试连接" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "移除凭据" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "DeepSeek" }));
+    expect(screen.getByText("为 AI 拉取请求评审提供模型服务。")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("输入新凭据以替换已保存的凭据")).toBeInTheDocument();
+    expect(screen.getByText("运行 AI 评审时，所选 PR 补丁及分析过程中读取的代码摘录会发送至 DeepSeek。")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "GitLab" }));
+    expect(screen.getByText("用于私有仓库、合并请求与评审操作的身份验证。")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("输入新凭据以替换已保存的凭据")).toBeInTheDocument();
   });
 
   it("uses one constrained vertical scroll owner for provider content", () => {
@@ -195,7 +231,7 @@ describe("SettingsPanel", () => {
 
     const categories = screen.getByRole("navigation", { name: "Settings categories" });
     const layout = categories.parentElement;
-    const providers = screen.getByRole("tablist", { name: "Integration providers" });
+    const providers = screen.getByRole("tablist", { name: "Integration" });
     expect(screen.getByRole("dialog", { name: "Settings" })).toHaveClass("w-[780px]", "max-w-[94vw]");
     expect(layout).toHaveClass(
       "grid-cols-1",
@@ -240,7 +276,7 @@ describe("SettingsPanel", () => {
     expect(screen.getByRole("tab", { name: "GitLab" })).toHaveAttribute("aria-selected", "false");
     expect(screen.getByText("https://api.deepseek.com")).toBeInTheDocument();
     expect(screen.getByText("deepseek-v4-flash")).toBeInTheDocument();
-    expect(screen.getByText(/PR patches and only the code excerpts you request/)).toBeInTheDocument();
+    expect(screen.getByText("When AI Review runs, selected PR patches and code excerpts read during analysis are sent to DeepSeek.")).toBeInTheDocument();
 
     await waitFor(() => expect(ipc.credentialStatus).toHaveBeenCalledTimes(3));
     expect(ipc.credentialStatus).toHaveBeenCalledWith("deepseek");
