@@ -58,6 +58,83 @@ describe("SettingsPanel", () => {
     expect(document.getElementById("settings-panel-github")).not.toHaveAttribute("hidden");
   });
 
+  it("shows only a right-aligned Save credential action for an unconfigured provider", async () => {
+    const user = userEvent.setup();
+    renderPanel({ initialSection: "deepseek" });
+    await screen.findByText("Not configured");
+
+    const save = screen.getByRole("button", { name: "Save credential" });
+    expect(save).toBeDisabled();
+    expect(save).toHaveClass("ml-auto");
+    expect(screen.queryByRole("button", { name: "Remove credential" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Test connection" })).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("DeepSeek API key"), "new-key");
+    expect(save).toBeEnabled();
+  });
+
+  it("shows replacement actions and copy without exposing the configured credential", async () => {
+    const user = userEvent.setup();
+    renderPanel({ initialSection: "github" });
+    await screen.findByText("Configured");
+    expect(screen.queryByText("Connected")).not.toBeInTheDocument();
+
+    const input = screen.getByLabelText("GitHub personal access token");
+    expect(input).toHaveValue("");
+    expect(input).toHaveAttribute("placeholder", "Enter a new credential to replace the saved one");
+    expect(screen.getByText("Stored securely in your system credential store.")).toBeInTheDocument();
+    const save = screen.getByRole("button", { name: "Save replacement" });
+    const test = screen.getByRole("button", { name: "Test connection" });
+    const remove = screen.getByRole("button", { name: "Remove credential" });
+    const actions = save.parentElement!;
+    expect(within(actions).getAllByRole("button")).toEqual([save, test, remove]);
+    expect(actions).toHaveClass("flex-col", "min-[441px]:flex-row");
+    expect(remove).toHaveClass("min-[441px]:order-1");
+    expect(test).toHaveClass("min-[441px]:order-2", "min-[441px]:ml-auto");
+    expect(save).toHaveClass("min-[441px]:order-3");
+    expect(save).toBeDisabled();
+
+    await user.type(input, "replacement");
+    expect(save).toBeEnabled();
+    expect(document.body).not.toHaveTextContent("stored-secret");
+  });
+
+  it("renders flat DeepSeek-only service details, sentence-case label, and credential helper", async () => {
+    const user = userEvent.setup();
+    renderPanel({ initialSection: "deepseek" });
+    await screen.findByText("Not configured");
+
+    const heading = screen.getByRole("heading", { name: "Service details" });
+    const details = heading.parentElement!;
+    expect(details.querySelector("dl")).toBeInTheDocument();
+    expect(within(details).getByText("Endpoint").tagName).toBe("DT");
+    expect(within(details).getByText("Model").tagName).toBe("DT");
+    expect(within(details).getByText("https://api.deepseek.com").tagName).toBe("DD");
+    expect(within(details).getByText(/PR patches and only the code excerpts/)).toHaveClass("text-fg-muted");
+    expect(details).not.toHaveClass("rounded-md", "border", "bg-elevated");
+    const label = screen.getByText("DeepSeek API key");
+    expect(label).toHaveClass("text-xs");
+    expect(label).not.toHaveClass("uppercase", "tracking-wide");
+    expect(screen.getByLabelText("DeepSeek API key")).toHaveClass("h-9", "field");
+    expect(screen.getByText("Stored securely in your system credential store.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "GitHub" }));
+    expect(screen.queryByRole("heading", { name: "Service details" })).not.toBeInTheDocument();
+  });
+
+  it("renders Chinese credential labels and configured actions", async () => {
+    setLang("zh");
+    renderPanel({ initialSection: "github" });
+    await screen.findByText("已配置");
+
+    expect(screen.getByLabelText("GitHub 个人访问令牌")).toHaveValue("");
+    expect(screen.getByPlaceholderText("输入新凭据将替换已保存的凭据")).toBeInTheDocument();
+    expect(screen.getByText("凭据将安全存储在系统凭据存储中。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存替换凭据" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "测试连接" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "移除凭据" })).toBeInTheDocument();
+  });
+
   it("uses one constrained vertical scroll owner for provider content", () => {
     renderPanel();
 
@@ -152,7 +229,7 @@ describe("SettingsPanel", () => {
     const input = screen.getByLabelText("GitHub personal access token");
 
     await user.type(input, "  private-secret  ");
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("button", { name: "Save replacement" }));
 
     await waitFor(() =>
       expect(ipc.saveCredential).toHaveBeenCalledWith("github", "  private-secret  "),
@@ -167,15 +244,15 @@ describe("SettingsPanel", () => {
     renderPanel({ initialSection: "github" });
     await screen.findByText("Configured");
 
-    await user.click(screen.getByRole("button", { name: "Test" }));
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
     await waitFor(() => expect(ipc.testCredential).toHaveBeenCalledWith("github"));
     expect(await screen.findByText("GitHub credential is valid")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Clear" }));
+    await user.click(screen.getByRole("button", { name: "Remove credential" }));
     await waitFor(() => expect(ipc.clearCredential).toHaveBeenCalledWith("github"));
     expect(await screen.findByText("Not configured")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Test" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Clear" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Test connection" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove credential" })).not.toBeInTheDocument();
   });
 
   it("shows the IpcError message in an error toast", async () => {
@@ -186,7 +263,7 @@ describe("SettingsPanel", () => {
 
     const input = screen.getByLabelText("DeepSeek API key");
     await user.type(input, "private-secret");
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("button", { name: "Save credential" }));
 
     expect(await screen.findByText("Credential store unavailable")).toBeInTheDocument();
     expect(input).toHaveValue("private-secret");
@@ -203,6 +280,9 @@ describe("SettingsPanel", () => {
     expect(await screen.findByText("DeepSeek status unavailable")).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole("tab", { name: "DeepSeek" }));
     expect(screen.getByText("Status unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save credential" })).toBeDisabled();
+    await userEvent.setup().type(screen.getByLabelText("DeepSeek API key"), "recovery-key");
+    expect(screen.getByRole("button", { name: "Save credential" })).toBeEnabled();
   });
 
   it("supports tablist navigation, contains focus, and restores focus on close", async () => {
@@ -238,7 +318,7 @@ describe("SettingsPanel", () => {
     const close = within(screen.getByRole("dialog", { name: "Settings" })).getByRole("button", { name: "Close" });
     close.focus();
     await user.keyboard("{Shift>}{Tab}{/Shift}");
-    expect(screen.getByRole("button", { name: "Save" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Save credential" })).toHaveFocus();
     await user.keyboard("{Tab}");
     expect(close).toHaveFocus();
 
@@ -311,7 +391,7 @@ describe("SettingsPanel", () => {
     await screen.findByText("Configured");
     let resolveTest!: () => void;
     ipc.testCredential.mockImplementation(() => new Promise<void>((resolve) => { resolveTest = resolve; }));
-    await user.click(screen.getByRole("button", { name: "Test" }));
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
     const dialog = screen.getByRole("dialog", { name: "Settings" });
     expect(dialog).toHaveFocus();
     trigger.focus();
@@ -343,12 +423,12 @@ describe("SettingsPanel", () => {
     await screen.findByText("Configured");
 
     await user.type(screen.getByLabelText("GitHub personal access token"), "private-secret");
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("button", { name: "Save replacement" }));
 
     const dialog = screen.getByRole("dialog", { name: "Settings" });
-    expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
-    expect(within(dialog).getByRole("button", { name: "Test" })).toBeDisabled();
-    expect(within(dialog).getByRole("button", { name: "Clear" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Save replacement" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Test connection" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Remove credential" })).toBeDisabled();
     expect(within(dialog).getByRole("button", { name: "Close" })).toBeDisabled();
     await user.keyboard("{Escape}");
     await user.click(screen.getByTestId("settings-backdrop"));
@@ -380,7 +460,7 @@ describe("SettingsPanel", () => {
       if (operation === "save") {
         await user.type(screen.getByLabelText("GitHub personal access token"), "secret");
       }
-      await user.click(screen.getByRole("button", { name: operation === "clear" ? "Clear" : operation === "test" ? "Test" : "Save" }));
+      await user.click(screen.getByRole("button", { name: operation === "clear" ? "Remove credential" : operation === "test" ? "Test connection" : "Save replacement" }));
       view.rerender(<ToastProvider><div /></ToastProvider>);
       stableTarget.focus();
 

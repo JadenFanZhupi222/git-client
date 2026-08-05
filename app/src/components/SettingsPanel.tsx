@@ -290,23 +290,28 @@ export function SettingsPanel({
                   </div>
 
                   {provider === "deepseek" && (
-                    <div className="mt-4 grid gap-2 rounded-md border border-line bg-elevated p-3 text-xs">
-                      <ServiceDetail
-                        label={t("settings.deepseek.endpoint")}
-                        value="https://api.deepseek.com"
-                      />
-                      <ServiceDetail
-                        label={t("settings.deepseek.model")}
-                        value="deepseek-v4-flash"
-                      />
-                      <p className="mt-1 border-t border-line pt-2 leading-relaxed text-fg-muted">
+                    <section className="mt-4">
+                      <h4 className="text-xs font-semibold text-fg">
+                        {t("settings.serviceDetails")}
+                      </h4>
+                      <dl className="mt-2 grid gap-1.5 text-xs">
+                        <ServiceDetail
+                          label={t("settings.deepseek.endpoint")}
+                          value="https://api.deepseek.com"
+                        />
+                        <ServiceDetail
+                          label={t("settings.deepseek.model")}
+                          value="deepseek-v4-flash"
+                        />
+                      </dl>
+                      <p className="mt-3 text-xs leading-relaxed text-fg-muted">
                         {t("settings.deepseek.disclosure")}
                       </p>
-                    </div>
+                    </section>
                   )}
 
                   <label className="mt-5 flex flex-col gap-1.5">
-                    <span className="text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
+                    <span className="text-xs font-medium text-fg-subtle">
                       {t(providerMessageKey(provider, "credentialLabel"))}
                     </span>
                     <input
@@ -316,39 +321,51 @@ export function SettingsPanel({
                       value={secret}
                       disabled={busy}
                       onChange={(event) => setSecret(event.target.value)}
-                      placeholder={t(providerMessageKey(provider, "placeholder"))}
-                      className="field rounded bg-canvas px-2.5 py-2 font-mono text-xs text-fg placeholder:text-fg-subtle disabled:opacity-50"
+                      placeholder={t(providerMessageKey(provider, configured ? "replacementPlaceholder" : "placeholder"))}
+                      aria-describedby={`settings-${provider}-credential-helper`}
+                      className="field h-9 rounded bg-canvas px-2.5 font-mono text-xs text-fg placeholder:text-fg-subtle disabled:opacity-50"
                     />
                   </label>
+                  <p id={`settings-${provider}-credential-helper`} className="mt-1.5 text-xs text-fg-muted">
+                    {t("settings.credentialHelper")}
+                  </p>
 
-                  <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-line pt-4">
-                    <Button
-                      type="button"
-                      variant="danger"
-                      onClick={() => void runOperation("clear")}
-                      disabled={busy || !configured}
-                    >
-                      {activeOperation === "clear" && <SpinnerIcon width={13} height={13} />}
-                      {t("settings.action.clear")}
-                    </Button>
-                    <Button
-                      type="button"
-                      onClick={() => void runOperation("test")}
-                      disabled={busy || !configured}
-                      className="ml-auto"
-                    >
-                      {activeOperation === "test" && <SpinnerIcon width={13} height={13} />}
-                      {t("settings.action.test")}
-                    </Button>
+                  <div className="mt-5 flex flex-col items-stretch gap-2 border-t border-line pt-4 min-[441px]:flex-row min-[441px]:items-center">
                     <Button
                       type="button"
                       variant="primary"
                       onClick={() => void runOperation("save")}
                       disabled={busy || !secret.trim()}
+                      className={configured
+                        ? "w-full min-[441px]:order-3 min-[441px]:w-auto"
+                        : "ml-auto w-full min-[441px]:w-auto"}
                     >
                       {activeOperation === "save" && <SpinnerIcon width={13} height={13} />}
-                      {t("settings.action.save")}
+                      {t(configured ? "settings.action.saveReplacement" : "settings.action.saveCredential")}
                     </Button>
+                    {configured && (
+                      <>
+                        <Button
+                          type="button"
+                          onClick={() => void runOperation("test")}
+                          disabled={busy}
+                          className="w-full min-[441px]:order-2 min-[441px]:ml-auto min-[441px]:w-auto"
+                        >
+                          {activeOperation === "test" && <SpinnerIcon width={13} height={13} />}
+                          {t("settings.action.testConnection")}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="danger"
+                          onClick={() => void runOperation("clear")}
+                          disabled={busy}
+                          className="w-full min-[441px]:order-1 min-[441px]:w-auto"
+                        >
+                          {activeOperation === "clear" && <SpinnerIcon width={13} height={13} />}
+                          {t("settings.action.removeCredential")}
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </>
                   )}
@@ -365,8 +382,8 @@ export function SettingsPanel({
 function ServiceDetail({ label, value }: { label: string; value: string }) {
   return (
     <div className="grid grid-cols-[80px_minmax(0,1fr)] gap-3">
-      <span className="text-fg-subtle">{label}</span>
-      <span className="select-all font-mono text-fg">{value}</span>
+      <dt className="text-fg-subtle">{label}</dt>
+      <dd className="select-all font-mono text-fg">{value}</dd>
     </div>
   );
 }
@@ -376,6 +393,7 @@ type ProviderMessageSuffix =
   | "description"
   | "credentialLabel"
   | "placeholder"
+  | "replacementPlaceholder"
   | "saved"
   | "valid"
   | "cleared";
