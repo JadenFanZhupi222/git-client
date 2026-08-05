@@ -234,6 +234,7 @@ impl<'a> ReviewOrchestrator<'a> {
             TranscriptItem::User(selected_summary),
         ];
         let mut tool_output_bytes = 0usize;
+        let mut call_ids = HashSet::new();
         for _round in 0..MAX_MODEL_ROUNDS {
             self.check_cancelled()?;
             let response = self.cancellable(self.model.respond(&transcript)).await?;
@@ -258,7 +259,7 @@ impl<'a> ReviewOrchestrator<'a> {
                     if telemetry.usage.tool_calls as usize + calls.len() > MAX_TOOL_CALLS {
                         return Err(ReviewError::ReviewBudgetExceeded);
                     }
-                    validate_call_ids(&calls)?;
+                    validate_call_ids(&calls, &mut call_ids)?;
                     transcript.push(TranscriptItem::AssistantToolCalls(calls.clone()));
                     for call in calls {
                         self.check_cancelled()?;
@@ -391,8 +392,7 @@ fn strict_arguments<'a>(
     Ok(object)
 }
 
-fn validate_call_ids(calls: &[ToolCall]) -> Result<(), ReviewError> {
-    let mut seen = HashSet::new();
+fn validate_call_ids(calls: &[ToolCall], seen: &mut HashSet<String>) -> Result<(), ReviewError> {
     for call in calls {
         let call_id = call
             .arguments
@@ -400,7 +400,7 @@ fn validate_call_ids(calls: &[ToolCall]) -> Result<(), ReviewError> {
             .and_then(Value::as_str)
             .filter(|call_id| !call_id.is_empty())
             .ok_or_else(|| ReviewError::InvalidModelOutput("function call id missing".into()))?;
-        if !seen.insert(call_id) {
+        if !seen.insert(call_id.to_owned()) {
             return Err(ReviewError::InvalidModelOutput(
                 "duplicate function call id".into(),
             ));

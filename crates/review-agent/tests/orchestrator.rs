@@ -415,6 +415,27 @@ async fn rejects_missing_empty_or_duplicate_call_ids_before_source_io() {
 }
 
 #[tokio::test]
+async fn rejects_call_id_reused_in_later_round_before_duplicate_source_io() {
+    let model = FakeModel(Mutex::new(VecDeque::from([
+        ModelResponse::tool_calls(
+            vec![ToolCall::list_tree("c1", "src")],
+            ReviewUsage::default(),
+        ),
+        ModelResponse::tool_calls(
+            vec![ToolCall::list_tree("c1", "src")],
+            ReviewUsage::default(),
+        ),
+    ])));
+    let source = source();
+    let error = ReviewOrchestrator::new(&model, &source, &NoTrace, &NeverCancel)
+        .run(input())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ReviewError::InvalidModelOutput(_)));
+    assert_eq!(source.tool_io.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn deduplicates_and_drops_unmapped_findings_then_sorts() {
     let mut medium = finding("same", 1);
     medium.severity = Severity::Medium;
