@@ -87,11 +87,11 @@ describe("SettingsPanel", () => {
     const test = screen.getByRole("button", { name: "Test connection" });
     const remove = screen.getByRole("button", { name: "Remove credential" });
     const actions = save.parentElement!;
-    expect(within(actions).getAllByRole("button")).toEqual([save, test, remove]);
+    expect(within(actions).getAllByRole("button")).toEqual([remove, test, save]);
     expect(actions).toHaveClass("flex-col", "min-[441px]:flex-row");
-    expect(remove).toHaveClass("min-[441px]:order-1");
-    expect(test).toHaveClass("min-[441px]:order-2", "min-[441px]:ml-auto");
-    expect(save).toHaveClass("min-[441px]:order-3");
+    expect(remove).not.toHaveClass("min-[441px]:order-1");
+    expect(test).toHaveClass("min-[441px]:ml-auto");
+    expect(save).not.toHaveClass("min-[441px]:order-3");
     expect(save).toBeDisabled();
 
     await user.type(input, "replacement");
@@ -269,7 +269,7 @@ describe("SettingsPanel", () => {
     expect(input).toHaveValue("private-secret");
   });
 
-  it("keeps successful provider statuses when another status lookup fails", async () => {
+  it("recovers a failed provider status after a successful credential save", async () => {
     ipc.credentialStatus.mockImplementation(async (kind: string) => {
       if (kind === "deepseek") throw { code: "STATUS_FAILED", message: "DeepSeek status unavailable" };
       return kind === "github";
@@ -278,11 +278,16 @@ describe("SettingsPanel", () => {
 
     expect(await screen.findByText("Configured")).toBeInTheDocument();
     expect(await screen.findByText("DeepSeek status unavailable")).toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole("tab", { name: "DeepSeek" }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("tab", { name: "DeepSeek" }));
     expect(screen.getByText("Status unavailable")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save credential" })).toBeDisabled();
-    await userEvent.setup().type(screen.getByLabelText("DeepSeek API key"), "recovery-key");
+    await user.type(screen.getByLabelText("DeepSeek API key"), "recovery-key");
     expect(screen.getByRole("button", { name: "Save credential" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Save credential" }));
+
+    expect(await screen.findByText("Configured")).toBeInTheDocument();
+    expect(screen.queryByText("Status unavailable")).not.toBeInTheDocument();
   });
 
   it("supports tablist navigation, contains focus, and restores focus on close", async () => {

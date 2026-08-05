@@ -132,6 +132,7 @@ export function SettingsPanel({
         if (!isCurrent()) return;
         setSecret("");
         setStatuses((current) => ({ ...current, [operationProvider]: true }));
+        setStatusErrors((current) => current.filter((kind) => kind !== operationProvider));
         toast({ kind: "success", title: t(providerMessageKey(operationProvider, "saved")) });
       } else if (operation === "test") {
         await testCredential(operationProvider);
@@ -142,6 +143,7 @@ export function SettingsPanel({
         if (!isCurrent()) return;
         setSecret("");
         setStatuses((current) => ({ ...current, [operationProvider]: false }));
+        setStatusErrors((current) => current.filter((kind) => kind !== operationProvider));
         toast({ kind: "success", title: t(providerMessageKey(operationProvider, "cleared")) });
       }
     } catch (error) {
@@ -331,41 +333,41 @@ export function SettingsPanel({
                   </p>
 
                   <div className="mt-5 flex flex-col items-stretch gap-2 border-t border-line pt-4 min-[441px]:flex-row min-[441px]:items-center">
+                    {configured && (
+                      <>
+                        <Button
+                          type="button"
+                          variant="danger"
+                          onClick={() => void runOperation("clear")}
+                          disabled={busy}
+                          className="w-full min-[441px]:w-auto"
+                        >
+                          {activeOperation === "clear" && <SpinnerIcon width={13} height={13} />}
+                          {t("settings.action.removeCredential")}
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={() => void runOperation("test")}
+                          disabled={busy}
+                          className="w-full min-[441px]:ml-auto min-[441px]:w-auto"
+                        >
+                          {activeOperation === "test" && <SpinnerIcon width={13} height={13} />}
+                          {t("settings.action.testConnection")}
+                        </Button>
+                      </>
+                    )}
                     <Button
                       type="button"
                       variant="primary"
                       onClick={() => void runOperation("save")}
                       disabled={busy || !secret.trim()}
                       className={configured
-                        ? "w-full min-[441px]:order-3 min-[441px]:w-auto"
+                        ? "w-full min-[441px]:w-auto"
                         : "ml-auto w-full min-[441px]:w-auto"}
                     >
                       {activeOperation === "save" && <SpinnerIcon width={13} height={13} />}
                       {t(configured ? "settings.action.saveReplacement" : "settings.action.saveCredential")}
                     </Button>
-                    {configured && (
-                      <>
-                        <Button
-                          type="button"
-                          onClick={() => void runOperation("test")}
-                          disabled={busy}
-                          className="w-full min-[441px]:order-2 min-[441px]:ml-auto min-[441px]:w-auto"
-                        >
-                          {activeOperation === "test" && <SpinnerIcon width={13} height={13} />}
-                          {t("settings.action.testConnection")}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="danger"
-                          onClick={() => void runOperation("clear")}
-                          disabled={busy}
-                          className="w-full min-[441px]:order-1 min-[441px]:w-auto"
-                        >
-                          {activeOperation === "clear" && <SpinnerIcon width={13} height={13} />}
-                          {t("settings.action.removeCredential")}
-                        </Button>
-                      </>
-                    )}
                   </div>
                 </>
                   )}
