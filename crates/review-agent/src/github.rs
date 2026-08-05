@@ -318,6 +318,20 @@ async fn checked_json(response: Response, publish: bool) -> Result<Value, Review
             {
                 return Err(ReviewError::RateLimited);
             }
+            let message = response
+                .json::<Value>()
+                .await
+                .ok()
+                .and_then(|body| {
+                    body.get("message")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                .unwrap_or_default()
+                .to_lowercase();
+            if message.contains("rate limit") || message.contains("abuse detection") {
+                return Err(ReviewError::RateLimited);
+            }
             return Err(ReviewError::AuthFailed);
         }
         StatusCode::TOO_MANY_REQUESTS => return Err(ReviewError::RateLimited),
