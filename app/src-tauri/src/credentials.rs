@@ -1,7 +1,25 @@
 use ipc_types::{CredentialKindDto, IpcError};
 use reqwest::{Client, StatusCode};
+use std::time::Duration;
 
 const SERVICE: &str = "com.gitclient.desktop";
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn build_http_client(
+    connect_timeout: Duration,
+    request_timeout: Duration,
+) -> Result<Client, IpcError> {
+    Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(request_timeout)
+        .build()
+        .map_err(|_| IpcError {
+            code: "NETWORK_ERROR".into(),
+            message: "Credential validation client could not be initialized".into(),
+            recoverable: true,
+        })
+}
 
 pub(crate) fn credential_user(kind: CredentialKindDto) -> &'static str {
     match kind {
@@ -208,7 +226,8 @@ pub(crate) async fn test_credential(kind: CredentialKindDto) -> Result<(), IpcEr
     let secret = tokio::task::spawn_blocking(move || read_credential(kind))
         .await
         .map_err(crate::join_panic)??;
-    validate_credential(&Client::new(), &EndpointConfig::production(), kind, &secret).await
+    let client = build_http_client(CONNECT_TIMEOUT, REQUEST_TIMEOUT)?;
+    validate_credential(&client, &EndpointConfig::production(), kind, &secret).await
 }
 
 #[cfg(test)]
@@ -216,7 +235,6 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::Mutex;
-    use std::time::Duration;
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -465,6 +483,32 @@ mod tests {
             !serde_json::to_string(&error)
                 .unwrap()
                 .contains("fixture-secret")
+        );
+    }
+
+    #[tokio::test]
+    async fn centralized_http_client_enforces_total_timeout_without_leaking_secret() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(100)))
+            .mount(&server)
+            .await;
+        let client =
+            build_http_client(Duration::from_millis(10), Duration::from_millis(20)).unwrap();
+        let error = validate_credential(
+            &client,
+            &EndpointConfig::for_test(&server.uri()),
+            CredentialKindDto::Deepseek,
+            "constructor-secret",
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "NETWORK_ERROR");
+        assert!(
+            !serde_json::to_string(&error)
+                .unwrap()
+                .contains("constructor-secret")
         );
     }
 }

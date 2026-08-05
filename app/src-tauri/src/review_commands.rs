@@ -8,11 +8,12 @@ use review_agent::{
     CancelSignal, DeepSeekResponsesProvider, GithubReviewSource, ProgressSink, ProgressUpdate,
     ReviewOrchestrator, ReviewSource, SanitizedTraceStore,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
 #[async_trait]
@@ -102,6 +103,11 @@ impl<'a> ReviewCommandService<'a> {
     async fn start(&self, input: ReviewRunInputDto) -> Result<ReviewRunResultDto, IpcError> {
         let run_id = input.run_id.clone();
         let cancel = self.registry.register(&run_id)?;
+        if cancel.is_cancelled() {
+            self.registry.finish(&run_id);
+            self.progress(&run_id, "cancelled");
+            return Err(review_error(review_agent::ReviewError::Cancelled));
+        }
         self.progress(&run_id, "loading_pr");
         let result: Result<ReviewRunResultDto, IpcError> = async {
             let source = self.source().await?;
@@ -196,13 +202,40 @@ impl CancelSignal for ReviewCancellation {
     }
 }
 
+const MAX_PENDING_CANCELLATIONS: usize = 128;
+const PENDING_CANCELLATION_TTL: Duration = Duration::from_secs(60);
+
 #[derive(Default)]
-pub(crate) struct ReviewRunRegistry(Mutex<HashMap<String, ReviewCancellation>>);
+struct ReviewRunRegistryInner {
+    active: HashMap<String, ReviewCancellation>,
+    pending: VecDeque<(String, Instant)>,
+}
+
+#[derive(Default)]
+pub(crate) struct ReviewRunRegistry(Mutex<ReviewRunRegistryInner>);
 
 impl ReviewRunRegistry {
+    fn prune_pending(inner: &mut ReviewRunRegistryInner, now: Instant) {
+        while inner
+            .pending
+            .front()
+            .is_some_and(|(_, created)| now.duration_since(*created) >= PENDING_CANCELLATION_TTL)
+        {
+            inner.pending.pop_front();
+        }
+        while inner.pending.len() > MAX_PENDING_CANCELLATIONS {
+            inner.pending.pop_front();
+        }
+    }
+
     pub(crate) fn register(&self, run_id: &str) -> Result<ReviewCancellation, IpcError> {
-        let mut runs = self.0.lock().expect("review run registry lock poisoned");
-        if runs.contains_key(run_id) {
+        self.register_at(run_id, Instant::now())
+    }
+
+    fn register_at(&self, run_id: &str, now: Instant) -> Result<ReviewCancellation, IpcError> {
+        let mut inner = self.0.lock().expect("review run registry lock poisoned");
+        Self::prune_pending(&mut inner, now);
+        if inner.active.contains_key(run_id) {
             return Err(IpcError {
                 code: "REVIEW_ALREADY_RUNNING".into(),
                 message: "A review with this run id is already active".into(),
@@ -210,24 +243,52 @@ impl ReviewRunRegistry {
             });
         }
         let token = ReviewCancellation::new();
-        runs.insert(run_id.to_owned(), token.clone());
+        if let Some(index) = inner
+            .pending
+            .iter()
+            .position(|(pending_id, _)| pending_id == run_id)
+        {
+            inner.pending.remove(index);
+            token.cancel();
+        }
+        inner.active.insert(run_id.to_owned(), token.clone());
         Ok(token)
     }
     pub(crate) fn cancel(&self, run_id: &str) {
-        if let Some(token) = self
-            .0
-            .lock()
-            .expect("review run registry lock poisoned")
-            .get(run_id)
-        {
+        self.cancel_at(run_id, Instant::now());
+    }
+
+    fn cancel_at(&self, run_id: &str, now: Instant) {
+        let mut inner = self.0.lock().expect("review run registry lock poisoned");
+        Self::prune_pending(&mut inner, now);
+        if let Some(token) = inner.active.get(run_id) {
             token.cancel();
+            return;
+        }
+        if !inner
+            .pending
+            .iter()
+            .any(|(pending_id, _)| pending_id == run_id)
+        {
+            inner.pending.push_back((run_id.to_owned(), now));
+            Self::prune_pending(&mut inner, now);
         }
     }
     pub(crate) fn finish(&self, run_id: &str) {
         self.0
             .lock()
             .expect("review run registry lock poisoned")
+            .active
             .remove(run_id);
+    }
+
+    #[cfg(test)]
+    fn pending_count(&self) -> usize {
+        self.0
+            .lock()
+            .expect("review run registry lock poisoned")
+            .pending
+            .len()
     }
 }
 
@@ -395,6 +456,15 @@ mod tests {
     struct MissingCredentials {
         missing: CredentialKindDto,
     }
+
+    struct CountingCredentials(Arc<AtomicUsize>);
+    #[async_trait]
+    impl CredentialReader for CountingCredentials {
+        async fn read(&self, _: CredentialKindDto) -> Result<String, IpcError> {
+            self.0.fetch_add(1, AtomicOrdering::SeqCst);
+            Ok("injected-only".into())
+        }
+    }
     #[async_trait]
     impl CredentialReader for MissingCredentials {
         async fn read(&self, kind: CredentialKindDto) -> Result<String, IpcError> {
@@ -521,6 +591,24 @@ mod tests {
         source: FakeSource,
         responses:
             Arc<Mutex<VecDeque<Result<review_agent::ModelResponse, review_agent::ReviewError>>>>,
+    }
+
+    struct CountingFactory {
+        source_calls: Arc<AtomicUsize>,
+        model_calls: Arc<AtomicUsize>,
+    }
+    impl ReviewBackendFactory for CountingFactory {
+        fn source(&self, _: String) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError> {
+            self.source_calls.fetch_add(1, AtomicOrdering::SeqCst);
+            Ok(Box::new(fake_factory(vec![]).source))
+        }
+        fn model(
+            &self,
+            _: String,
+        ) -> Result<Box<dyn review_agent::ModelProvider>, review_agent::ReviewError> {
+            self.model_calls.fetch_add(1, AtomicOrdering::SeqCst);
+            Ok(Box::new(FakeModel(Arc::new(Mutex::new(VecDeque::new())))))
+        }
     }
     impl ReviewBackendFactory for FakeFactory {
         fn source(&self, _: String) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError> {
@@ -787,6 +875,67 @@ mod tests {
         let _ = registry.register("done").unwrap();
         registry.finish("done");
         registry.cancel("done");
+    }
+
+    #[test]
+    fn cancel_before_register_is_consumed_as_cancelled_and_tombstones_are_bounded() {
+        let registry = ReviewRunRegistry::default();
+        registry.cancel("before");
+        registry.cancel("before");
+        let token = registry.register("before").unwrap();
+        assert!(token.is_cancelled());
+        assert_eq!(registry.pending_count(), 0);
+        registry.finish("before");
+
+        for index in 0..(MAX_PENDING_CANCELLATIONS + 20) {
+            registry.cancel(&format!("unknown-{index}"));
+        }
+        assert_eq!(registry.pending_count(), MAX_PENDING_CANCELLATIONS);
+    }
+
+    #[test]
+    fn expired_pending_cancellation_does_not_cancel_a_later_run() {
+        let registry = ReviewRunRegistry::default();
+        let now = Instant::now();
+        registry.cancel_at("expired", now);
+        let token = registry
+            .register_at("expired", now + PENDING_CANCELLATION_TTL)
+            .unwrap();
+        assert!(!token.is_cancelled());
+        assert_eq!(registry.pending_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn cancel_before_start_prevents_all_credential_source_and_model_work() {
+        let registry = ReviewRunRegistry::default();
+        registry.cancel("cancel-first");
+        let credential_reads = Arc::new(AtomicUsize::new(0));
+        let source_calls = Arc::new(AtomicUsize::new(0));
+        let model_calls = Arc::new(AtomicUsize::new(0));
+        let credentials = CountingCredentials(credential_reads.clone());
+        let factory = CountingFactory {
+            source_calls: source_calls.clone(),
+            model_calls: model_calls.clone(),
+        };
+        let service = ReviewCommandService::new(
+            &credentials,
+            &factory,
+            &NoopProgressEmitter,
+            &NoopTraceSink,
+            &registry,
+        );
+        assert_eq!(
+            service
+                .start(run_input("cancel-first"))
+                .await
+                .unwrap_err()
+                .code,
+            "CANCELLED"
+        );
+        assert_eq!(credential_reads.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(source_calls.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(model_calls.load(AtomicOrdering::SeqCst), 0);
+        assert!(registry.register("cancel-first").is_ok());
     }
 
     #[test]
