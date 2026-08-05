@@ -48,6 +48,21 @@ describe("SettingsPanel", () => {
     expect(screen.getByRole("tab", { name: "DeepSeek" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "GitHub" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "GitLab" })).toBeInTheDocument();
+    const tabs = screen.getAllByRole("tab");
+    const panels = screen.getAllByRole("tabpanel", { hidden: true });
+    expect(panels).toHaveLength(3);
+    for (const tab of tabs) {
+      const panelId = tab.getAttribute("aria-controls");
+      expect(panelId).toBeTruthy();
+      expect(document.getElementById(panelId!)).toHaveAttribute("role", "tabpanel");
+      expect(document.getElementById(panelId!)).toHaveAttribute("aria-labelledby", tab.id);
+    }
+    expect(document.getElementById("settings-panel-deepseek")).not.toHaveAttribute("hidden");
+    expect(document.getElementById("settings-panel-github")).toHaveAttribute("hidden");
+    expect(document.getElementById("settings-panel-gitlab")).toHaveAttribute("hidden");
+    expect(screen.getByRole("tab", { name: "DeepSeek" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "GitHub" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: "GitLab" })).toHaveAttribute("aria-selected", "false");
     expect(screen.getByText("https://api.deepseek.com")).toBeInTheDocument();
     expect(screen.getByText("deepseek-v4-flash")).toBeInTheDocument();
     expect(screen.getByText(/PR patches and only the code excerpts you request/)).toBeInTheDocument();
@@ -155,6 +170,16 @@ describe("SettingsPanel", () => {
     await user.keyboard("{ArrowRight}");
     expect(screen.getByRole("tab", { name: "GitLab" })).toHaveFocus();
     expect(screen.getByRole("tab", { name: "GitLab" })).toHaveAttribute("aria-selected", "true");
+    expect(document.getElementById("settings-panel-github")).toHaveAttribute("hidden");
+    expect(document.getElementById("settings-panel-gitlab")).not.toHaveAttribute("hidden");
+
+    await user.keyboard("{Home}");
+    expect(screen.getByRole("tab", { name: "DeepSeek" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "DeepSeek" })).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("tab", { name: "GitLab" })).toHaveFocus();
+    await user.keyboard("{End}");
+    expect(screen.getByRole("tab", { name: "GitLab" })).toHaveFocus();
 
     await user.type(screen.getByLabelText("GitLab personal access token"), "secret");
     const close = within(screen.getByRole("dialog", { name: "Settings" })).getByRole("button", { name: "Close" });
@@ -167,6 +192,60 @@ describe("SettingsPanel", () => {
     unmount();
     expect(trigger).toHaveFocus();
     trigger.remove();
+  });
+
+  it("keeps and restores focus while statuses load", async () => {
+    const trigger = document.createElement("button");
+    trigger.textContent = "Open settings";
+    document.body.appendChild(trigger);
+    trigger.focus();
+    let resolveStatuses!: (value: boolean) => void;
+    const statusPromise = new Promise<boolean>((resolve) => { resolveStatuses = resolve; });
+    ipc.credentialStatus.mockImplementation(() => statusPromise);
+    const user = userEvent.setup();
+    const { unmount } = render(
+      <ToastProvider>
+        <SettingsPanel onClose={vi.fn()} initialSection="github" />
+      </ToastProvider>,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+
+    await waitFor(() => expect(dialog).toHaveFocus());
+    trigger.focus();
+    await user.keyboard("{Tab}");
+    expect(dialog).toHaveFocus();
+
+    unmount();
+    expect(trigger).toHaveFocus();
+    trigger.remove();
+    resolveStatuses(true);
+  });
+
+  it("keeps and restores focus while an operation is busy", async () => {
+    const trigger = document.createElement("button");
+    trigger.textContent = "Open settings";
+    document.body.appendChild(trigger);
+    trigger.focus();
+    const user = userEvent.setup();
+    const { unmount } = render(
+      <ToastProvider>
+        <SettingsPanel onClose={vi.fn()} initialSection="github" />
+      </ToastProvider>,
+    );
+    await screen.findByText("Configured");
+    let resolveTest!: () => void;
+    ipc.testCredential.mockImplementation(() => new Promise<void>((resolve) => { resolveTest = resolve; }));
+    await user.click(screen.getByRole("button", { name: "Test" }));
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    expect(dialog).toHaveFocus();
+    trigger.focus();
+    await user.keyboard("{Tab}");
+    expect(dialog).toHaveFocus();
+
+    unmount();
+    expect(trigger).toHaveFocus();
+    trigger.remove();
+    resolveTest();
   });
 
   it("closes with Escape or backdrop only while no operation is active", async () => {

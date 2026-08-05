@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CredentialKindDto, IpcError } from "../bindings";
 import {
   clearCredential,
@@ -66,14 +66,19 @@ export function SettingsPanel({
     };
   }, [toast]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previousFocus = previousFocusRef.current;
+    dialogRef.current?.focus();
     return () => previousFocus?.focus();
   }, []);
 
   useEffect(() => {
     if (!loading) inputRef.current?.focus();
   }, [loading]);
+
+  useLayoutEffect(() => {
+    if (activeOperation) dialogRef.current?.focus();
+  }, [activeOperation]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -144,6 +149,7 @@ export function SettingsPanel({
       <section
         ref={dialogRef}
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-labelledby="settings-title"
         className="panel-in popover relative flex max-h-[82vh] w-[680px] max-w-[94vw] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
@@ -194,93 +200,107 @@ export function SettingsPanel({
             ))}
           </nav>
 
-          <div
-            role="tabpanel"
-            id={`settings-panel-${section}`}
-            aria-labelledby={`settings-tab-${section}`}
-            className="min-h-0 overflow-y-auto px-5 py-5"
-          >
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h3 className="text-base font-semibold text-fg">
-                  {t(providerMessageKey(section, "name"))}
-                </h3>
-                <p className="mt-1 text-xs leading-relaxed text-fg-muted">
-                  {t(providerMessageKey(section, "description"))}
-                </p>
-              </div>
-              <span
-                aria-live="polite"
-                className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-medium ${
-                  configured ? "bg-success/15 text-success" : "bg-overlay text-fg-muted"
-                }`}
-              >
-                {statusFailed
-                  ? t("settings.status.unavailable")
-                  : statusKnown
-                  ? configured
-                    ? t("settings.status.configured")
-                    : t("settings.status.notConfigured")
-                  : t("settings.status.loading")}
-              </span>
+          {SECTIONS.map((kind) => (
+            <div
+              key={kind}
+              role="tabpanel"
+              id={`settings-panel-${kind}`}
+              aria-labelledby={`settings-tab-${kind}`}
+              hidden={section !== kind}
+              className="min-h-0 overflow-y-auto px-5 py-5"
+            >
+              {section === kind && (
+                <>
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-base font-semibold text-fg">
+                        {t(providerMessageKey(section, "name"))}
+                      </h3>
+                      <p className="mt-1 text-xs leading-relaxed text-fg-muted">
+                        {t(providerMessageKey(section, "description"))}
+                      </p>
+                    </div>
+                    <span
+                      aria-live="polite"
+                      className={`shrink-0 rounded-full px-2 py-1 text-[11px] font-medium ${
+                        configured ? "bg-success/15 text-success" : "bg-overlay text-fg-muted"
+                      }`}
+                    >
+                      {statusFailed
+                        ? t("settings.status.unavailable")
+                        : statusKnown
+                          ? configured
+                            ? t("settings.status.configured")
+                            : t("settings.status.notConfigured")
+                          : t("settings.status.loading")}
+                    </span>
+                  </div>
+
+                  {section === "deepseek" && (
+                    <div className="mt-4 grid gap-2 rounded-md border border-line bg-elevated p-3 text-xs">
+                      <ServiceDetail
+                        label={t("settings.deepseek.endpoint")}
+                        value="https://api.deepseek.com"
+                      />
+                      <ServiceDetail
+                        label={t("settings.deepseek.model")}
+                        value="deepseek-v4-flash"
+                      />
+                      <p className="mt-1 border-t border-line pt-2 leading-relaxed text-fg-muted">
+                        {t("settings.deepseek.disclosure")}
+                      </p>
+                    </div>
+                  )}
+
+                  <label className="mt-5 flex flex-col gap-1.5">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
+                      {t(providerMessageKey(section, "credentialLabel"))}
+                    </span>
+                    <input
+                      ref={inputRef}
+                      type="password"
+                      autoComplete="new-password"
+                      value={secret}
+                      disabled={busy}
+                      onChange={(event) => setSecret(event.target.value)}
+                      placeholder={t(providerMessageKey(section, "placeholder"))}
+                      className="field rounded bg-canvas px-2.5 py-2 font-mono text-xs text-fg placeholder:text-fg-subtle disabled:opacity-50"
+                    />
+                  </label>
+
+                  <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-line pt-4">
+                    <Button
+                      type="button"
+                      variant="danger"
+                      onClick={() => void runOperation("clear")}
+                      disabled={busy || !configured}
+                    >
+                      {activeOperation === "clear" && <SpinnerIcon width={13} height={13} />}
+                      {t("settings.action.clear")}
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => void runOperation("test")}
+                      disabled={busy || !configured}
+                      className="ml-auto"
+                    >
+                      {activeOperation === "test" && <SpinnerIcon width={13} height={13} />}
+                      {t("settings.action.test")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      onClick={() => void runOperation("save")}
+                      disabled={busy || !secret.trim()}
+                    >
+                      {activeOperation === "save" && <SpinnerIcon width={13} height={13} />}
+                      {t("settings.action.save")}
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
-
-            {section === "deepseek" && (
-              <div className="mt-4 grid gap-2 rounded-md border border-line bg-elevated p-3 text-xs">
-                <ServiceDetail label={t("settings.deepseek.endpoint")} value="https://api.deepseek.com" />
-                <ServiceDetail label={t("settings.deepseek.model")} value="deepseek-v4-flash" />
-                <p className="mt-1 border-t border-line pt-2 leading-relaxed text-fg-muted">
-                  {t("settings.deepseek.disclosure")}
-                </p>
-              </div>
-            )}
-
-            <label className="mt-5 flex flex-col gap-1.5">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
-                {t(providerMessageKey(section, "credentialLabel"))}
-              </span>
-              <input
-                ref={inputRef}
-                type="password"
-                autoComplete="new-password"
-                value={secret}
-                disabled={busy}
-                onChange={(event) => setSecret(event.target.value)}
-                placeholder={t(providerMessageKey(section, "placeholder"))}
-                className="field rounded bg-canvas px-2.5 py-2 font-mono text-xs text-fg placeholder:text-fg-subtle disabled:opacity-50"
-              />
-            </label>
-
-            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-line pt-4">
-              <Button
-                type="button"
-                variant="danger"
-                onClick={() => void runOperation("clear")}
-                disabled={busy || !configured}
-              >
-                {activeOperation === "clear" && <SpinnerIcon width={13} height={13} />}
-                {t("settings.action.clear")}
-              </Button>
-              <Button
-                type="button"
-                onClick={() => void runOperation("test")}
-                disabled={busy || !configured}
-                className="ml-auto"
-              >
-                {activeOperation === "test" && <SpinnerIcon width={13} height={13} />}
-                {t("settings.action.test")}
-              </Button>
-              <Button
-                type="button"
-                variant="primary"
-                onClick={() => void runOperation("save")}
-                disabled={busy || !secret.trim()}
-              >
-                {activeOperation === "save" && <SpinnerIcon width={13} height={13} />}
-                {t("settings.action.save")}
-              </Button>
-            </div>
-          </div>
+          ))}
         </div>
       </section>
     </div>
@@ -323,10 +343,14 @@ function containFocus(event: KeyboardEvent, dialog: HTMLElement | null) {
   if (!dialog) return;
   const focusable = Array.from(
     dialog.querySelectorAll<HTMLElement>(
-      'button:not([disabled]):not([tabindex="-1"]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      'button:not([disabled]):not([tabindex="-1"]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"]):not([disabled])',
     ),
   );
-  if (focusable.length === 0) return;
+  if (focusable.length === 0) {
+    event.preventDefault();
+    dialog.focus();
+    return;
+  }
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
   if (event.shiftKey && document.activeElement === first) {
