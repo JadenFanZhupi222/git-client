@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   cancelPrReview,
@@ -36,10 +36,12 @@ export function PrReviewWorkspace({
   target,
   onClose,
   onConfigureCredential,
+  onFocusReady,
 }: {
   target: ReviewTargetDto;
   onClose: () => void;
   onConfigureCredential: (kind: CredentialKind) => void;
+  onFocusReady?: () => void;
 }) {
   const t = useT();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -61,13 +63,13 @@ export function PrReviewWorkspace({
 
   const busy = phase === "running" || submitting;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     mountedRef.current = true;
     previousFocusRef.current = document.activeElement as HTMLElement | null;
-    const frame = requestAnimationFrame(() => dialogRef.current?.focus());
+    dialogRef.current?.focus();
+    onFocusReady?.();
     return () => {
       mountedRef.current = false;
-      cancelAnimationFrame(frame);
       cleanupListener();
       const runId = runIdRef.current;
       runIdRef.current = null;

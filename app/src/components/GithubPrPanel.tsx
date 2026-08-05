@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getGithubToken, hasGithubToken, type IpcError } from "../ipc";
 import {
@@ -48,6 +48,7 @@ export function GithubPrPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reviewTarget, setReviewTarget] = useState<{ owner: string; repo: string; pull_number: number } | null>(null);
+  const [reviewOwnsFocus, setReviewOwnsFocus] = useState(false);
 
   const remote = useMemo(
     () => findGithubRemote(remotes, preferredRemote),
@@ -210,7 +211,8 @@ export function GithubPrPanel({
         role="dialog"
         aria-modal="true"
         aria-label={t("githubPr.dialog")}
-        aria-hidden={reviewTarget ? true : undefined}
+        aria-hidden={reviewOwnsFocus ? true : undefined}
+        inert={reviewOwnsFocus ? true : undefined}
         className="panel-in popover flex max-h-[78vh] w-[560px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
         onClick={(e) => e.stopPropagation()}
       >
@@ -292,7 +294,11 @@ export function GithubPrPanel({
                       onCreateComment={createPullComment}
                       mergingPull={mergingPull === pr.number}
                       onMerge={mergePull}
-                      onAiReview={() => remote && setReviewTarget({ owner: remote.owner, repo: remote.repo, pull_number: pr.number })}
+                      onAiReview={() => {
+                        if (!remote) return;
+                        setReviewOwnsFocus(false);
+                        setReviewTarget({ owner: remote.owner, repo: remote.repo, pull_number: pr.number });
+                      }}
                     />
                   )}
                 </li>
@@ -328,8 +334,12 @@ export function GithubPrPanel({
       {reviewTarget && createPortal(
         <PrReviewWorkspace
           target={reviewTarget}
-          onClose={() => setReviewTarget(null)}
+          onClose={() => {
+            flushSync(() => setReviewOwnsFocus(false));
+            setReviewTarget(null);
+          }}
           onConfigureCredential={(kind) => (onConfigureCredential ?? ((next) => { if (next === "github") onConfigureToken(); }))(kind)}
+          onFocusReady={() => setReviewOwnsFocus(true)}
         />,
         document.body,
       )}

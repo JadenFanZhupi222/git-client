@@ -176,9 +176,13 @@ describe("PrReviewWorkspace", () => {
     const trigger = document.createElement("button");
     document.body.appendChild(trigger);
     trigger.focus();
-    const view = renderWorkspace();
+    const onFocusReady = vi.fn(() => {
+      expect(screen.getByRole("dialog", { name: "AI Review" })).toHaveFocus();
+    });
+    const view = renderWorkspace({ onFocusReady });
     const dialog = screen.getByRole("dialog", { name: "AI Review" });
     await waitFor(() => expect(dialog).toHaveFocus());
+    expect(onFocusReady).toHaveBeenCalledTimes(1);
     view.unmount();
     expect(trigger).toHaveFocus();
     trigger.remove();
