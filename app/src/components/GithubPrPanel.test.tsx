@@ -55,8 +55,10 @@ describe("GithubPrPanel", () => {
     const user = userEvent.setup();
     render(<ToastProvider><GithubPrPanel remotes={remotes} branch="feature" preferredRemote="origin" onClose={vi.fn()} onConfigureToken={vi.fn()} onConfigureCredential={onConfigureCredential} /></ToastProvider>);
     await user.click(await screen.findByRole("button", { name: "Details" }));
+    expect(screen.getByRole("dialog", { name: "GitHub pull requests" })).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "AI Review" }));
     expect(await screen.findByRole("dialog", { name: "AI Review workspace" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "GitHub pull requests" })).not.toBeInTheDocument();
     expect(reviewWorkspace.props?.target).toEqual({ owner: "team", repo: "project", pull_number: 17 });
     (reviewWorkspace.props?.onConfigureCredential as (kind: string) => void)("deepseek");
     expect(onConfigureCredential).toHaveBeenCalledWith("deepseek");

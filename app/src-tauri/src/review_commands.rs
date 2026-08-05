@@ -152,7 +152,7 @@ impl<'a> ReviewCommandService<'a> {
     async fn submit(&self, input: SubmitReviewDto) -> Result<PublishedReviewDto, IpcError> {
         let source = self.source().await?;
         let review: review_agent::SubmitReview = input.try_into().map_err(|message| IpcError {
-            code: "INVALID_REVIEW".into(),
+            code: "INVALID_MODEL_OUTPUT".into(),
             message,
             recoverable: false,
         })?;
@@ -855,6 +855,40 @@ mod tests {
             "PR_UPDATED"
         );
         assert_eq!(factory.source.published.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn service_submit_maps_tampered_finding_enums_to_stable_error() {
+        let factory = fake_factory(vec![]);
+        let registry = ReviewRunRegistry::default();
+        let service = ReviewCommandService::new(
+            &FakeCredentials,
+            &factory,
+            &NoopProgressEmitter,
+            &NoopTraceSink,
+            &registry,
+        );
+
+        for (severity, side) in [("critical", "RIGHT"), ("high", "CENTER")] {
+            let mut input = submit_input();
+            input.findings.push(ipc_types::ReviewFindingDto {
+                id: "tampered".into(),
+                severity: severity.into(),
+                path: "src/lib.rs".into(),
+                side: side.into(),
+                line: 1,
+                title: "Tampered finding".into(),
+                failure_scenario: "Invalid client input".into(),
+                explanation: "The enum value is outside the public contract.".into(),
+                draft_comment: "Do not publish this.".into(),
+            });
+
+            assert_eq!(
+                service.submit(input).await.unwrap_err().code,
+                "INVALID_MODEL_OUTPUT"
+            );
+        }
+        assert_eq!(factory.source.published.load(AtomicOrdering::SeqCst), 0);
     }
 
     #[test]

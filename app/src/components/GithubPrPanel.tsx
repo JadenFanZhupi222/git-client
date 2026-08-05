@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getGithubToken, hasGithubToken, type IpcError } from "../ipc";
 import {
@@ -209,6 +210,7 @@ export function GithubPrPanel({
         role="dialog"
         aria-modal="true"
         aria-label={t("githubPr.dialog")}
+        aria-hidden={reviewTarget ? true : undefined}
         className="panel-in popover flex max-h-[78vh] w-[560px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
         onClick={(e) => e.stopPropagation()}
       >
@@ -323,12 +325,13 @@ export function GithubPrPanel({
           </button>
         </div>
       </div>
-      {reviewTarget && (
+      {reviewTarget && createPortal(
         <PrReviewWorkspace
           target={reviewTarget}
           onClose={() => setReviewTarget(null)}
           onConfigureCredential={(kind) => (onConfigureCredential ?? ((next) => { if (next === "github") onConfigureToken(); }))(kind)}
-        />
+        />,
+        document.body,
       )}
     </div>
   );
