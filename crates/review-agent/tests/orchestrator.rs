@@ -247,7 +247,8 @@ async fn performs_stateless_multi_turn_tool_loop() {
             vec![ToolCall::read_file("c2", "src/lib.rs", 1, 2)],
             ReviewUsage::default(),
         ),
-        ModelResponse::final_findings(
+        ModelResponse::final_review(
+            "One correctness issue.",
             vec![finding("f1", 1)],
             ReviewUsage {
                 input_tokens: 3,
@@ -261,6 +262,8 @@ async fn performs_stateless_multi_turn_tool_loop() {
         .await
         .unwrap();
     assert_eq!(result.findings.len(), 1);
+    assert_eq!(result.summary, "One correctness issue.");
+    assert_eq!(result.reviewed_files, vec!["src/lib.rs"]);
     assert_eq!(result.usage.tool_calls, 2);
 }
 

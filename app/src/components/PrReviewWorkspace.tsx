@@ -96,7 +96,10 @@ export function PrReviewWorkspace({
       if (focusable.length === 0) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      if (document.activeElement === dialogRef.current) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
         event.preventDefault(); last.focus();
       } else if (!event.shiftKey && document.activeElement === last) {
         event.preventDefault(); first.focus();
@@ -307,7 +310,7 @@ export function PrReviewWorkspace({
           )}
 
           {phase === "results" && result && (
-            <Results result={result} reviewedFiles={Array.from(selectedFiles)} drafts={drafts} setDrafts={setDrafts} disabled={submitting} />
+            <Results result={result} drafts={drafts} setDrafts={setDrafts} disabled={submitting} />
           )}
 
           {phase === "published" && published && (
@@ -333,12 +336,12 @@ export function PrReviewWorkspace({
   );
 }
 
-function Results({ result, reviewedFiles, drafts, setDrafts, disabled }: { result: ReviewRunResultDto; reviewedFiles: string[]; drafts: FindingDraft[]; setDrafts: React.Dispatch<React.SetStateAction<FindingDraft[]>>; disabled: boolean }) {
+function Results({ result, drafts, setDrafts, disabled }: { result: ReviewRunResultDto; drafts: FindingDraft[]; setDrafts: React.Dispatch<React.SetStateAction<FindingDraft[]>>; disabled: boolean }) {
   const t = useT();
   return <section aria-labelledby="pr-review-findings">
     <h3 id="pr-review-findings" className="text-sm font-semibold text-fg">{t("prReview.findings")}</h3>
-    <p className="mt-1 text-xs text-fg-subtle">{t("prReview.summary", { count: result.findings.length })} · {t("prReview.usage", { input: result.usage.input_tokens, output: result.usage.output_tokens, tools: result.usage.tool_calls })}</p>
-    <p className="mt-1 break-words text-xs text-fg-subtle">{t("prReview.reviewedFiles", { files: reviewedFiles.join(", ") })}</p>
+    <p className="mt-1 text-xs text-fg-subtle">{result.summary} · {t("prReview.usage", { input: result.usage.input_tokens, output: result.usage.output_tokens, tools: result.usage.tool_calls })}</p>
+    <p className="mt-1 break-words text-xs text-fg-subtle">{t("prReview.reviewedFiles", { files: result.reviewed_files.join(", ") })}</p>
     {drafts.length === 0 ? <p className="mt-8 text-center text-sm text-fg-muted">{t("prReview.noFindings")}</p> : <div className="mt-4 grid gap-3">{drafts.map((draft, index) => <article key={draft.finding.id} role="group" aria-label={`${severityLabel(draft.finding.severity, t)}: ${draft.finding.title}`} className="rounded-md border border-line bg-elevated/50 p-4">
       <div className="flex items-start gap-3"><input aria-label={t("prReview.includeFinding", { title: draft.finding.title })} type="checkbox" checked={draft.selected} disabled={disabled} onChange={(event) => { const selected = event.currentTarget.checked; setDrafts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, selected } : item)); }} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="rounded bg-overlay px-1.5 py-0.5 text-[10px] font-semibold uppercase text-fg-muted">{severityLabel(draft.finding.severity, t)}</span><code className="text-[11px] text-fg-subtle">{draft.finding.path} · {draft.finding.side}:{draft.finding.line}</code></div><h4 className="mt-2 text-sm font-semibold text-fg">{draft.finding.title}</h4><p className="mt-2 text-xs text-fg"><strong>{t("prReview.failureScenario")}:</strong> {draft.finding.failure_scenario}</p><p className="mt-1 text-xs text-fg-muted">{draft.finding.explanation}</p><label className="mt-3 block text-[11px] font-medium text-fg-muted">{t("prReview.draftComment")}<textarea aria-label={t("prReview.draftComment")} rows={3} value={draft.comment} disabled={disabled} onChange={(event) => { const comment = event.currentTarget.value; setDrafts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, comment } : item)); }} className="mt-1 w-full resize-y rounded-md border border-line bg-canvas px-2 py-1.5 text-xs text-fg outline-none focus:border-accent disabled:opacity-60" /></label></div></div>
     </article>)}</div>}

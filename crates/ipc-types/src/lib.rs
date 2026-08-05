@@ -85,6 +85,8 @@ pub struct ReviewUsageDto {
 pub struct ReviewRunResultDto {
     pub run_id: String,
     pub head_sha: String,
+    pub summary: String,
+    pub reviewed_files: Vec<String>,
     pub findings: Vec<ReviewFindingDto>,
     pub usage: ReviewUsageDto,
 }
@@ -215,6 +217,8 @@ impl From<review_agent::ReviewRunResult> for ReviewRunResultDto {
         Self {
             run_id: v.run_id,
             head_sha: v.head_sha,
+            summary: v.summary,
+            reviewed_files: v.reviewed_files,
             findings: v.findings.into_iter().map(Into::into).collect(),
             usage: v.usage.into(),
         }
@@ -400,10 +404,22 @@ mod review_dto_contract_tests {
         let result_dto = ReviewRunResultDto::from(review_agent::ReviewRunResult {
             run_id: "run".into(),
             head_sha: "abc".into(),
+            summary: "One issue.".into(),
+            reviewed_files: vec!["src/lib.rs".into()],
             findings: vec![finding.clone()],
             usage,
         });
-        assert_eq!(serde_json::to_value(&result_dto).unwrap()["run_id"], "run");
+        assert_eq!(
+            serde_json::to_value(&result_dto).unwrap(),
+            serde_json::json!({
+                "run_id":"run",
+                "head_sha":"abc",
+                "summary":"One issue.",
+                "reviewed_files":["src/lib.rs"],
+                "findings":[{"id":"finding","severity":"high","path":"src/lib.rs","side":"RIGHT","line":2,"title":"Title","failure_scenario":"Scenario","explanation":"Explanation","draft_comment":"Draft"}],
+                "usage":{"input_tokens":10,"output_tokens":4,"tool_calls":1}
+            })
+        );
 
         let submit_dto = SubmitReviewDto {
             target: target_dto,

@@ -41,6 +41,8 @@ const finding = {
 const result = {
   run_id: "server-run",
   head_sha: normalPreflight.head_sha,
+  summary: "The review found one correctness risk.",
+  reviewed_files: ["src/a.ts", "src/b.ts"],
   findings: [finding],
   usage: { input_tokens: 100, output_tokens: 25, tool_calls: 1 },
 };
@@ -182,6 +184,18 @@ describe("PrReviewWorkspace", () => {
     trigger.remove();
   });
 
+  it("keeps forward and reverse tab navigation inside from initial dialog focus", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+    const dialog = screen.getByRole("dialog", { name: "AI Review" });
+    await waitFor(() => expect(dialog).toHaveFocus());
+
+    await user.tab({ shift: true });
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    await user.tab();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+  });
+
   it.each([
     ["AI_KEY_MISSING", "deepseek"],
     ["GITHUB_TOKEN_MISSING", "github"],
@@ -225,6 +239,24 @@ describe("PrReviewWorkspace", () => {
     expect(await screen.findByText("Review published")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Open on GitHub" }));
     expect(opener.openUrl).toHaveBeenCalledWith("https://github.com/acme/rocket/pull/17#pullrequestreview-88");
+  });
+
+  it("renders the backend summary and reviewed files instead of deriving them", async () => {
+    localStorage.setItem("pr-review-consent-v1", "accepted");
+    ipc.startPrReview.mockResolvedValue({
+      ...result,
+      summary: "Authoritative model summary.",
+      reviewed_files: ["src/authoritative.ts"],
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+    await screen.findByText("0123456");
+    await acceptAndStart(user);
+
+    expect(await screen.findByText(/Authoritative model summary\./)).toBeInTheDocument();
+    expect(screen.getByText("Reviewed files: src/authoritative.ts")).toBeInTheDocument();
+    expect(screen.queryByText("1 actionable findings")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reviewed files: src/a.ts, src/b.ts")).not.toBeInTheDocument();
   });
 
   it("locks finding edits while the submitted batch is pending", async () => {

@@ -671,7 +671,8 @@ mod tests {
                 vec![review_agent::ToolCall::list_tree("tree", "src")],
                 review_agent::ReviewUsage::default(),
             )),
-            Ok(review_agent::ModelResponse::final_findings(
+            Ok(review_agent::ModelResponse::final_review(
+                "No correctness issues found.",
                 vec![],
                 review_agent::ReviewUsage::default(),
             )),
@@ -688,7 +689,9 @@ mod tests {
         let preflight = service.preflight(target_dto()).await.unwrap();
         assert_eq!(preflight.head_sha, "abc");
         assert_eq!(preflight.files.len(), 1);
-        service.start(run_input("success")).await.unwrap();
+        let result = service.start(run_input("success")).await.unwrap();
+        assert_eq!(result.summary, "No correctness issues found.");
+        assert_eq!(result.reviewed_files, ["src/lib.rs"]);
         let events = emitter.0.lock().unwrap();
         assert_eq!(
             events

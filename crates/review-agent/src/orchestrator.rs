@@ -49,8 +49,13 @@ impl ToolCall {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ModelOutput {
-    ToolCalls { calls: Vec<ToolCall> },
-    Final { findings: Vec<ReviewFinding> },
+    ToolCalls {
+        calls: Vec<ToolCall>,
+    },
+    Final {
+        summary: String,
+        findings: Vec<ReviewFinding>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -67,8 +72,23 @@ impl ModelResponse {
         }
     }
     pub fn final_findings(findings: Vec<ReviewFinding>, usage: ReviewUsage) -> Self {
+        let summary = if findings.is_empty() {
+            "No actionable issues found.".into()
+        } else {
+            format!("Review found {} actionable issue(s).", findings.len())
+        };
+        Self::final_review(summary, findings, usage)
+    }
+    pub fn final_review(
+        summary: impl Into<String>,
+        findings: Vec<ReviewFinding>,
+        usage: ReviewUsage,
+    ) -> Self {
         Self {
-            output: ModelOutput::Final { findings },
+            output: ModelOutput::Final {
+                summary: summary.into(),
+                findings,
+            },
             usage,
         }
     }
@@ -270,11 +290,16 @@ impl<'a> ReviewOrchestrator<'a> {
             telemetry.usage.input_tokens += response.usage.input_tokens;
             telemetry.usage.output_tokens += response.usage.output_tokens;
             match response.output {
-                ModelOutput::Final { findings } => {
+                ModelOutput::Final { summary, findings } => {
                     let findings = validate_findings(findings, &selected_files);
                     return Ok(ReviewRunResult {
                         run_id: input.run_id,
                         head_sha: input.expected_head_sha,
+                        summary,
+                        reviewed_files: selected_files
+                            .iter()
+                            .map(|file| file.path.clone())
+                            .collect(),
                         findings,
                         usage: telemetry.usage.clone(),
                     });

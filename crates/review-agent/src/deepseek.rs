@@ -148,7 +148,7 @@ fn parse_response(body: Value) -> Result<ModelResponse, ReviewError> {
         .ok_or_else(|| ReviewError::InvalidModelOutput("missing response output".into()))?;
     let mut calls = Vec::new();
     let mut call_ids = HashSet::new();
-    let mut findings = None;
+    let mut final_result = None;
     for item in output {
         match item.get("type").and_then(Value::as_str) {
             Some("function_call") => {
@@ -197,18 +197,23 @@ fn parse_response(body: Value) -> Result<ModelResponse, ReviewError> {
                                     "structured output was invalid".into(),
                                 )
                             })?;
-                            findings = Some(
-                                serde_json::from_value::<Vec<ReviewFinding>>(
-                                    parsed.get("findings").cloned().ok_or_else(|| {
-                                        ReviewError::InvalidModelOutput("findings missing".into())
-                                    })?,
-                                )
-                                .map_err(|_| {
-                                    ReviewError::InvalidModelOutput(
-                                        "findings schema mismatch".into(),
-                                    )
+                            let summary = parsed
+                                .get("summary")
+                                .and_then(Value::as_str)
+                                .filter(|summary| !summary.trim().is_empty())
+                                .ok_or_else(|| {
+                                    ReviewError::InvalidModelOutput("summary missing".into())
+                                })?
+                                .to_string();
+                            let findings = serde_json::from_value::<Vec<ReviewFinding>>(
+                                parsed.get("findings").cloned().ok_or_else(|| {
+                                    ReviewError::InvalidModelOutput("findings missing".into())
                                 })?,
-                            );
+                            )
+                            .map_err(|_| {
+                                ReviewError::InvalidModelOutput("findings schema mismatch".into())
+                            })?;
+                            final_result = Some((summary, findings));
                         }
                     }
                 }
@@ -221,9 +226,9 @@ fn parse_response(body: Value) -> Result<ModelResponse, ReviewError> {
             output: ModelOutput::ToolCalls { calls },
             usage,
         })
-    } else if let Some(findings) = findings {
+    } else if let Some((summary, findings)) = final_result {
         Ok(ModelResponse {
-            output: ModelOutput::Final { findings },
+            output: ModelOutput::Final { summary, findings },
             usage,
         })
     } else {
@@ -234,9 +239,9 @@ fn parse_response(body: Value) -> Result<ModelResponse, ReviewError> {
 }
 
 fn finding_schema() -> Value {
-    json!({"type":"object","properties":{"findings":{"type":"array","items":{"type":"object","properties":{
+    json!({"type":"object","properties":{"summary":{"type":"string","minLength":1},"findings":{"type":"array","items":{"type":"object","properties":{
         "id":{"type":"string"},"severity":{"type":"string","enum":["high","medium","low"]},"path":{"type":"string"},"side":{"type":"string","enum":["LEFT","RIGHT"]},"line":{"type":"integer"},"title":{"type":"string"},"failure_scenario":{"type":"string"},"explanation":{"type":"string"},"draft_comment":{"type":"string"}},
-        "required":["id","severity","path","side","line","title","failure_scenario","explanation","draft_comment"],"additionalProperties":false}}},"required":["findings"],"additionalProperties":false})
+        "required":["id","severity","path","side","line","title","failure_scenario","explanation","draft_comment"],"additionalProperties":false}}},"required":["summary","findings"],"additionalProperties":false})
 }
 
 #[cfg(test)]
@@ -273,7 +278,7 @@ mod tests {
         let server = MockServer::start().await;
         let finding = json!({"id":"f","severity":"high","path":"src/lib.rs","side":"RIGHT","line":1,"title":"t","failure_scenario":"s","explanation":"e","draft_comment":"d"});
         Mock::given(method("POST")).and(path("/responses")).respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "output":[{"type":"reasoning","encrypted_content":"SECRET_REASONING"},{"type":"message","content":[{"type":"output_text","text":json!({"findings":[finding]}).to_string()}]}],
+            "output":[{"type":"reasoning","encrypted_content":"SECRET_REASONING"},{"type":"message","content":[{"type":"output_text","text":json!({"summary":"One correctness issue.","findings":[finding]}).to_string()}]}],
             "usage":{"input_tokens":1,"output_tokens":2}
         }))).mount(&server).await;
         let response = DeepSeekResponsesProvider::new_with_base_for_test("k", server.uri())
@@ -281,9 +286,34 @@ mod tests {
             .await
             .unwrap();
         match response.output {
-            ModelOutput::Final { findings } => assert_eq!(findings.len(), 1),
+            ModelOutput::Final { summary, findings } => {
+                assert_eq!(summary, "One correctness issue.");
+                assert_eq!(findings.len(), 1);
+            }
             _ => panic!("expected final"),
         }
+    }
+
+    #[tokio::test]
+    async fn rejects_final_output_without_a_summary() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "output":[{"type":"message","content":[{"type":"output_text","text":json!({"findings":[]}).to_string()}]}]
+            })))
+            .mount(&server)
+            .await;
+
+        let error = DeepSeekResponsesProvider::new_with_base_for_test("k", server.uri())
+            .respond(&[])
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            ReviewError::InvalidModelOutput("summary missing".into())
+        );
     }
 
     #[tokio::test]

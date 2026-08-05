@@ -2,4 +2,4 @@
 import type { ReviewFindingDto } from "./ReviewFindingDto";
 import type { ReviewUsageDto } from "./ReviewUsageDto";
 
-export type ReviewRunResultDto = { run_id: string, head_sha: string, findings: Array<ReviewFindingDto>, usage: ReviewUsageDto, };
+export type ReviewRunResultDto = { run_id: string, head_sha: string, summary: string, reviewed_files: Array<string>, findings: Array<ReviewFindingDto>, usage: ReviewUsageDto, };

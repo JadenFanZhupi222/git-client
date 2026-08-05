@@ -97,6 +97,8 @@ pub struct ReviewUsage {
 pub struct ReviewRunResult {
     pub run_id: String,
     pub head_sha: String,
+    pub summary: String,
+    pub reviewed_files: Vec<String>,
     pub findings: Vec<ReviewFinding>,
     pub usage: ReviewUsage,
 }
