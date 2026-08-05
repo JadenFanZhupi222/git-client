@@ -115,6 +115,15 @@ pub trait CancelSignal: Send + Sync {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProgressUpdate {
+    ToolCall { name: String, count: u32 },
+}
+
+pub trait ProgressSink: Send + Sync {
+    fn report(&self, update: ProgressUpdate);
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraceEntry {
     pub timestamp: DateTime<Utc>,
@@ -137,6 +146,7 @@ pub struct ReviewOrchestrator<'a> {
     source: &'a dyn ReviewSource,
     trace: &'a dyn TraceSink,
     cancel: &'a dyn CancelSignal,
+    progress: Option<&'a dyn ProgressSink>,
 }
 
 #[derive(Default)]
@@ -157,6 +167,23 @@ impl<'a> ReviewOrchestrator<'a> {
             source,
             trace,
             cancel,
+            progress: None,
+        }
+    }
+
+    pub fn new_with_progress(
+        model: &'a dyn ModelProvider,
+        source: &'a dyn ReviewSource,
+        trace: &'a dyn TraceSink,
+        cancel: &'a dyn CancelSignal,
+        progress: &'a dyn ProgressSink,
+    ) -> Self {
+        Self {
+            model,
+            source,
+            trace,
+            cancel,
+            progress: Some(progress),
         }
     }
 
@@ -272,6 +299,12 @@ impl<'a> ReviewOrchestrator<'a> {
                         }
                         telemetry.usage.tool_calls += 1;
                         telemetry.tool_names.push(call.name.clone());
+                        if let Some(progress) = self.progress {
+                            progress.report(ProgressUpdate::ToolCall {
+                                name: call.name.clone(),
+                                count: telemetry.usage.tool_calls,
+                            });
+                        }
                         let call_id = call
                             .arguments
                             .get("_call_id")

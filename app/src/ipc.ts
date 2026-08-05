@@ -43,6 +43,31 @@ export type {
   WorktreeInfoDto,
 } from "./bindings";
 
+export type {
+  CredentialKindDto,
+  PublishedReviewDto,
+  ReviewFileDto,
+  ReviewFindingDto,
+  ReviewPreflightDto,
+  ReviewProgressEventDto,
+  ReviewRunInputDto,
+  ReviewRunResultDto,
+  ReviewTargetDto,
+  ReviewUsageDto,
+  SubmitReviewDto,
+} from "./bindings";
+
+import type {
+  CredentialKindDto,
+  PublishedReviewDto,
+  ReviewPreflightDto,
+  ReviewProgressEventDto,
+  ReviewRunInputDto,
+  ReviewRunResultDto,
+  ReviewTargetDto,
+  SubmitReviewDto,
+} from "./bindings";
+
 import type {
   CommitDto,
   StatusDto,
@@ -741,4 +766,40 @@ export function onRepoChanged(
   cb: (kind: RepoChangeKind) => void,
 ): Promise<() => void> {
   return listen<RepoChangeKind>("repo-changed", (e) => cb(e.payload));
+}
+
+export async function credentialStatus(kind: CredentialKindDto): Promise<boolean> {
+  return await invoke<boolean>("credential_status", { kind });
+}
+
+export async function saveCredential(kind: CredentialKindDto, secret: string): Promise<void> {
+  await invoke("save_credential", { kind, secret });
+}
+
+export async function clearCredential(kind: CredentialKindDto): Promise<void> {
+  await invoke("clear_credential", { kind });
+}
+
+export async function testCredential(kind: CredentialKindDto): Promise<void> {
+  await invoke("test_credential", { kind });
+}
+
+export async function getReviewPreflight(target: ReviewTargetDto): Promise<ReviewPreflightDto> {
+  return await invoke<ReviewPreflightDto>("get_review_preflight", { target });
+}
+
+export async function startPrReview(input: ReviewRunInputDto): Promise<ReviewRunResultDto> {
+  return await invoke<ReviewRunResultDto>("start_pr_review", { input });
+}
+
+export async function cancelPrReview(runId: string): Promise<void> {
+  await invoke("cancel_pr_review", { runId });
+}
+
+export async function submitPrReview(input: SubmitReviewDto): Promise<PublishedReviewDto> {
+  return await invoke<PublishedReviewDto>("submit_pr_review", { input });
+}
+
+export function onReviewProgress(cb: (progress: ReviewProgressEventDto) => void): Promise<() => void> {
+  return listen<ReviewProgressEventDto>("review-progress", (event) => cb(event.payload));
 }

@@ -6,4 +6,6 @@ edition = "2024"
 [dependencies]
 serde.workspace = true
 git-core = { path = "../git-core" }
+review-agent = { path = "../review-agent" }
 ts-rs.workspace = true
+serde_json.workspace = true

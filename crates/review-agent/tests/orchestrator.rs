@@ -164,6 +164,38 @@ impl TraceSink for RecordingTrace {
     }
 }
 
+#[derive(Default)]
+struct RecordingProgress(Mutex<Vec<ProgressUpdate>>);
+
+impl ProgressSink for RecordingProgress {
+    fn report(&self, update: ProgressUpdate) {
+        self.0.lock().unwrap().push(update);
+    }
+}
+
+#[tokio::test]
+async fn reports_real_tool_calls_with_running_counter() {
+    let model = FakeModel(Mutex::new(VecDeque::from([
+        ModelResponse::tool_calls(
+            vec![ToolCall::list_tree("tree", "src")],
+            ReviewUsage::default(),
+        ),
+        ModelResponse::final_findings(vec![], ReviewUsage::default()),
+    ])));
+    let progress = RecordingProgress::default();
+    ReviewOrchestrator::new_with_progress(&model, &source(), &NoTrace, &NeverCancel, &progress)
+        .run(input())
+        .await
+        .unwrap();
+    assert_eq!(
+        progress.0.lock().unwrap().as_slice(),
+        &[ProgressUpdate::ToolCall {
+            name: "list_repository_tree".into(),
+            count: 1
+        }]
+    );
+}
+
 fn target() -> ReviewTarget {
     ReviewTarget {
         owner: "o".into(),

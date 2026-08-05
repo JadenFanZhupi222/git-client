@@ -25,6 +25,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt"] }
 keyring = "4.1.2"
+reqwest.workspace = true
+review-agent = { path = "../../crates/review-agent" }
 
 # 接入我们的分层 crate:命令层 → app-service → git-engine
 app-service = { path = "../../crates/app-service" }

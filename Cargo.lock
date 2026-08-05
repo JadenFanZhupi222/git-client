@@ -73,6 +73,8 @@ dependencies = [
  "git-engine",
  "ipc-types",
  "keyring",
+ "reqwest 0.12.28",
+ "review-agent",
  "serde",
  "serde_json",
  "tauri",
@@ -2261,7 +2263,9 @@ name = "ipc-types"
 version = "0.1.0"
 dependencies = [
  "git-core",
+ "review-agent",
  "serde",
+ "serde_json",
  "ts-rs",
 ]
 
