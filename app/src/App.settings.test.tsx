@@ -1,12 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import {
-  APP_SETTINGS_ENTRY_POINTS,
-  settingsSectionForEntryPoint,
-} from "./lib/settings";
 import { ToastProvider } from "./components/Toast";
 import appSource from "./App.tsx?raw";
 
@@ -26,9 +22,35 @@ const ipc = vi.hoisted(() => ({
 }));
 
 vi.mock("./ipc", () => ipc);
+vi.mock("./views/ChangesView", () => ({ ChangesView: () => <div /> }));
+vi.mock("./views/HistoryView", () => ({ HistoryView: () => <div /> }));
+vi.mock("./components/Sidebar", () => ({ Sidebar: () => <div /> }));
+vi.mock("./components/BranchSwitcher", () => ({ BranchSwitcher: () => <div /> }));
+vi.mock("./components/SyncBadge", () => ({ SyncBadge: () => <div /> }));
+vi.mock("./components/StashMenu", () => ({ StashMenu: () => <div /> }));
+vi.mock("./components/GithubPrPanel", () => ({
+  GithubPrPanel: ({ onConfigureToken }: { onConfigureToken: () => void }) => (
+    <button onClick={onConfigureToken}>Configure token from GitHub PR panel</button>
+  ),
+}));
+vi.mock("./components/GithubCreatePrDialog", () => ({
+  GithubCreatePrDialog: ({ onConfigureToken }: { onConfigureToken: () => void }) => (
+    <button onClick={onConfigureToken}>Configure token from GitHub create dialog</button>
+  ),
+}));
+vi.mock("./components/GitlabMrPanel", () => ({
+  GitlabMrPanel: ({ onConfigureToken }: { onConfigureToken: () => void }) => (
+    <button onClick={onConfigureToken}>Configure token from GitLab MR panel</button>
+  ),
+}));
+vi.mock("./components/GitlabCreateMrDialog", () => ({
+  GitlabCreateMrDialog: ({ onConfigureToken }: { onConfigureToken: () => void }) => (
+    <button onClick={onConfigureToken}>Configure token from GitLab create dialog</button>
+  ),
+}));
 vi.mock("./lib/queries", () => ({
   useRepoWatch: vi.fn(),
-  useCurrentBranch: () => ({ data: null }),
+  useCurrentBranch: () => ({ data: "main" }),
   useAheadBehind: () => ({ data: null }),
   useRemotes: () => ({ data: [] }),
   useRemoteList: () => ({ data: [] }),
@@ -43,32 +65,73 @@ vi.mock("./lib/queries", () => ({
   qk: {},
 }));
 
-const EXPECTED_SECTIONS = {
-  githubCommand: "github",
-  githubPrPanel: "github",
-  githubCreatePrDialog: "github",
-  gitlabCommand: "gitlab",
-  gitlabMrPanel: "gitlab",
-  gitlabCreateMrDialog: "gitlab",
-} as const;
+type SettingsPath = {
+  command: string;
+  configureAction?: string;
+  selectedTab: "GitHub" | "GitLab";
+};
+
+const SETTINGS_PATHS: readonly SettingsPath[] = [
+  {
+    command: "Configure GitHub credential",
+    selectedTab: "GitHub",
+  },
+  {
+    command: "Configure GitLab credential",
+    selectedTab: "GitLab",
+  },
+  {
+    command: "查看当前分支 GitHub PR",
+    configureAction: "Configure token from GitHub PR panel",
+    selectedTab: "GitHub",
+  },
+  {
+    command: "创建 GitHub PR",
+    configureAction: "Configure token from GitHub create dialog",
+    selectedTab: "GitHub",
+  },
+  {
+    command: "查看当前分支 GitLab MR",
+    configureAction: "Configure token from GitLab MR panel",
+    selectedTab: "GitLab",
+  },
+  {
+    command: "创建 GitLab MR",
+    configureAction: "Configure token from GitLab create dialog",
+    selectedTab: "GitLab",
+  },
+];
 
 describe("App settings integration", () => {
   beforeEach(() => {
     localStorage.clear();
     vi.clearAllMocks();
+    Element.prototype.scrollIntoView = vi.fn();
     ipc.credentialStatus.mockResolvedValue(false);
   });
 
-  it("routes every legacy credential entry point through the declarative wiring", () => {
-    expect(
-      Object.fromEntries(
-        Object.entries(APP_SETTINGS_ENTRY_POINTS).map(([source, entryPoint]) => [
-          source,
-          settingsSectionForEntryPoint(entryPoint),
-        ]),
-      ),
-    ).toEqual(EXPECTED_SECTIONS);
-  });
+  it.each(SETTINGS_PATHS)(
+    "opens the $selectedTab section through $command",
+    async ({ command, configureAction, selectedTab }) => {
+      localStorage.setItem("repo.last", "C:\\test-repo");
+      const user = userEvent.setup();
+      renderApp();
+      await user.click(screen.getByTestId("resume-repo"));
+      await screen.findByTestId("repo-shell");
+
+      const palette = await openCommandPalette(user);
+      await user.type(within(palette).getByPlaceholderText(/Type a command/), command);
+      await user.click(within(palette).getByRole("button"));
+      if (configureAction) {
+        await user.click(await screen.findByRole("button", { name: configureAction }));
+      }
+
+      expect(await screen.findByRole("tab", { name: selectedTab })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    },
+  );
 
   it("does not make either legacy token dialog reachable from App", () => {
     expect(appSource).not.toMatch(/Git(?:Hub|Lab)TokenDialog|(?:github|gitlab)TokenOpen/i);
@@ -76,21 +139,30 @@ describe("App settings integration", () => {
 
   it("restores focus to the persistent More trigger after opening Settings from its menu", async () => {
     const user = userEvent.setup();
-    render(
-      <QueryClientProvider client={new QueryClient()}>
-        <ToastProvider>
-          <App />
-        </ToastProvider>
-      </QueryClientProvider>,
-    );
+    renderApp();
 
     const moreTrigger = screen.getByRole("button", { name: "More" });
     await user.click(moreTrigger);
     await user.click(screen.getByRole("button", { name: "Settings" }));
-    const dialog = await screen.findByRole("dialog", { name: "Settings" });
-    await waitFor(() => expect(dialog).not.toHaveAttribute("aria-busy", "true"));
-    await user.click(screen.getByRole("button", { name: "Close" }));
+    const close = await screen.findByRole("button", { name: "Close" });
+    await waitFor(() => expect(close).toBeEnabled());
+    await user.click(close);
 
     await waitFor(() => expect(moreTrigger).toHaveFocus());
   });
 });
+
+function renderApp() {
+  return render(
+    <QueryClientProvider client={new QueryClient()}>
+      <ToastProvider>
+        <App />
+      </ToastProvider>
+    </QueryClientProvider>,
+  );
+}
+
+async function openCommandPalette(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByTestId("command-palette"));
+  return screen.findByRole("dialog", { name: "Command palette" });
+}
