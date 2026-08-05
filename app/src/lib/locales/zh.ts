@@ -498,6 +498,10 @@ export const zh = {
   // Settings
   "settings.title": "设置",
   "settings.close": "关闭",
+  "settings.categories": "设置类别",
+  "settings.integrations.title": "集成",
+  "settings.integrations.description": "连接拉取请求和 AI 评审使用的服务。",
+  "settings.integrations.providers": "集成服务",
   "settings.providers": "凭据服务",
   "settings.status.loading": "正在检查…",
   "settings.status.configured": "已配置",

@@ -498,6 +498,10 @@ export const en: Record<MessageKey, string> = {
   // Settings
   "settings.title": "Settings",
   "settings.close": "Close",
+  "settings.categories": "Settings categories",
+  "settings.integrations.title": "Integrations",
+  "settings.integrations.description": "Connect services used by pull requests and AI review.",
+  "settings.integrations.providers": "Integration providers",
   "settings.providers": "Credential providers",
   "settings.status.loading": "Checking…",
   "settings.status.configured": "Configured",

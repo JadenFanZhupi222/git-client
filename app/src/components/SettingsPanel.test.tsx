@@ -35,6 +35,29 @@ describe("SettingsPanel", () => {
     ipc.clearCredential.mockResolvedValue(undefined);
   });
 
+  it("shows one Integrations settings category without provider names in category navigation", async () => {
+    renderPanel();
+
+    const categories = screen.getByRole("navigation", { name: "Settings categories" });
+    const integration = within(categories).getByText("Integrations");
+    expect(integration).toHaveAttribute("aria-current", "page");
+    expect(within(categories).queryByText("DeepSeek")).not.toBeInTheDocument();
+    expect(within(categories).queryByText("GitHub")).not.toBeInTheDocument();
+    expect(within(categories).queryByText("GitLab")).not.toBeInTheDocument();
+    expect(screen.getByRole("tablist", { name: "Integration providers" })).toBeInTheDocument();
+  });
+
+  it("selects the requested provider within the Integrations category", async () => {
+    renderPanel({ initialSection: "github" });
+
+    const providers = screen.getByRole("tablist", { name: "Integration providers" });
+    expect(within(providers).getByRole("tab", { name: "GitHub" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(document.getElementById("settings-panel-github")).not.toHaveAttribute("hidden");
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
     localStorage.clear();

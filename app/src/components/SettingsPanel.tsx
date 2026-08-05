@@ -12,7 +12,7 @@ import { CloseIcon, SpinnerIcon } from "./icons";
 import { useToast } from "./Toast";
 import { Button } from "./ui/Button";
 
-const SECTIONS: SettingsSection[] = ["deepseek", "github", "gitlab"];
+const PROVIDERS: SettingsSection[] = ["deepseek", "github", "gitlab"];
 
 type CredentialStatuses = Partial<Record<SettingsSection, boolean>>;
 type Operation = "save" | "test" | "clear";
@@ -36,8 +36,8 @@ export function SettingsPanel({
   const mountedRef = useRef(true);
   const statusGenerationRef = useRef(0);
   const operationGenerationRef = useRef(0);
-  const sectionRef = useRef<SettingsSection>(initialSection);
-  const [section, setSection] = useState<SettingsSection>(initialSection);
+  const providerRef = useRef<SettingsSection>(initialSection);
+  const [provider, setProvider] = useState<SettingsSection>(initialSection);
   const [statuses, setStatuses] = useState<CredentialStatuses>({});
   const [statusErrors, setStatusErrors] = useState<SettingsSection[]>([]);
   const [secret, setSecret] = useState("");
@@ -56,13 +56,13 @@ export function SettingsPanel({
 
   useEffect(() => {
     const generation = ++statusGenerationRef.current;
-    Promise.allSettled(SECTIONS.map((kind) => credentialStatus(kind)))
+    Promise.allSettled(PROVIDERS.map((kind) => credentialStatus(kind)))
       .then((results) => {
         if (!mountedRef.current || statusGenerationRef.current !== generation) return;
         const nextStatuses: CredentialStatuses = {};
         const nextErrors: SettingsSection[] = [];
         results.forEach((result, index) => {
-          const kind = SECTIONS[index];
+          const kind = PROVIDERS[index];
           if (result.status === "fulfilled") {
             nextStatuses[kind] = result.value;
           } else {
@@ -108,41 +108,41 @@ export function SettingsPanel({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [busy, onClose]);
 
-  function selectSection(next: SettingsSection) {
-    if (busy || next === section) return;
+  function selectProvider(next: SettingsSection) {
+    if (busy || next === provider) return;
     operationGenerationRef.current += 1;
-    sectionRef.current = next;
+    providerRef.current = next;
     setSecret("");
-    setSection(next);
+    setProvider(next);
   }
 
   async function runOperation(operation: Operation) {
     if (busy) return;
     if (operation === "save" && !secret.trim()) return;
     const operationGeneration = ++operationGenerationRef.current;
-    const operationSection = section;
+    const operationProvider = provider;
     const isCurrent = () =>
       mountedRef.current &&
       operationGenerationRef.current === operationGeneration &&
-      sectionRef.current === operationSection;
+      providerRef.current === operationProvider;
     setActiveOperation(operation);
     try {
       if (operation === "save") {
-        await saveCredential(operationSection, secret);
+        await saveCredential(operationProvider, secret);
         if (!isCurrent()) return;
         setSecret("");
-        setStatuses((current) => ({ ...current, [operationSection]: true }));
-        toast({ kind: "success", title: t(providerMessageKey(operationSection, "saved")) });
+        setStatuses((current) => ({ ...current, [operationProvider]: true }));
+        toast({ kind: "success", title: t(providerMessageKey(operationProvider, "saved")) });
       } else if (operation === "test") {
-        await testCredential(operationSection);
+        await testCredential(operationProvider);
         if (!isCurrent()) return;
-        toast({ kind: "success", title: t(providerMessageKey(operationSection, "valid")) });
+        toast({ kind: "success", title: t(providerMessageKey(operationProvider, "valid")) });
       } else {
-        await clearCredential(operationSection);
+        await clearCredential(operationProvider);
         if (!isCurrent()) return;
         setSecret("");
-        setStatuses((current) => ({ ...current, [operationSection]: false }));
-        toast({ kind: "success", title: t(providerMessageKey(operationSection, "cleared")) });
+        setStatuses((current) => ({ ...current, [operationProvider]: false }));
+        toast({ kind: "success", title: t(providerMessageKey(operationProvider, "cleared")) });
       }
     } catch (error) {
       if (!isCurrent()) return;
@@ -152,21 +152,21 @@ export function SettingsPanel({
     }
   }
 
-  const configured = statuses[section] === true;
-  const statusKnown = statuses[section] !== undefined;
-  const statusFailed = statusErrors.includes(section);
+  const configured = statuses[provider] === true;
+  const statusKnown = statuses[provider] !== undefined;
+  const statusFailed = statusErrors.includes(provider);
 
   function onTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
-    const currentIndex = SECTIONS.indexOf(section);
+    const currentIndex = PROVIDERS.indexOf(provider);
     let nextIndex: number | null = null;
-    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % SECTIONS.length;
-    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + SECTIONS.length) % SECTIONS.length;
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % PROVIDERS.length;
+    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + PROVIDERS.length) % PROVIDERS.length;
     if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = SECTIONS.length - 1;
+    if (event.key === "End") nextIndex = PROVIDERS.length - 1;
     if (nextIndex === null) return;
     event.preventDefault();
-    const next = SECTIONS[nextIndex];
-    selectSection(next);
+    const next = PROVIDERS[nextIndex];
+    selectProvider(next);
     document.getElementById(`settings-tab-${next}`)?.focus();
   }
 
@@ -204,51 +204,73 @@ export function SettingsPanel({
 
         <div className="grid min-h-0 flex-1 grid-cols-[150px_minmax(0,1fr)]">
           <nav
-            role="tablist"
-            aria-label={t("settings.providers")}
+            aria-label={t("settings.categories")}
             className="flex flex-col gap-1 border-r border-line bg-elevated p-2"
           >
-            {SECTIONS.map((kind) => (
-              <button
-                key={kind}
-                type="button"
-                role="tab"
-                id={`settings-tab-${kind}`}
-                aria-controls={`settings-panel-${kind}`}
-                aria-selected={section === kind}
-                tabIndex={section === kind ? 0 : -1}
-                disabled={busy}
-                onClick={() => selectSection(kind)}
-                onKeyDown={onTabKeyDown}
-                className={`rounded-md px-3 py-2 text-left text-xs font-medium transition-colors disabled:opacity-50 ${
-                  section === kind
-                    ? "bg-accent/15 text-accent"
-                    : "text-fg-muted hover:bg-overlay hover:text-fg"
-                }`}
-              >
-                {t(providerMessageKey(kind, "name"))}
-              </button>
-            ))}
+            <div
+              aria-current="page"
+              className="rounded-md bg-accent/15 px-3 py-2 text-xs font-medium text-accent"
+            >
+              {t("settings.integrations.title")}
+            </div>
           </nav>
 
-          {SECTIONS.map((kind) => (
-            <div
-              key={kind}
-              role="tabpanel"
-              id={`settings-panel-${kind}`}
-              aria-labelledby={`settings-tab-${kind}`}
-              hidden={section !== kind}
-              className="min-h-0 overflow-y-auto px-5 py-5"
-            >
-              {section === kind && (
+          <div className="flex min-h-0 flex-col">
+            <div className="border-b border-line px-5 py-4">
+              <h3 className="text-base font-semibold text-fg">
+                {t("settings.integrations.title")}
+              </h3>
+              <p className="mt-1 text-xs leading-relaxed text-fg-muted">
+                {t("settings.integrations.description")}
+              </p>
+              <div
+                role="tablist"
+                aria-label={t("settings.integrations.providers")}
+                className="mt-4 flex gap-1 border-b border-line"
+              >
+                {PROVIDERS.map((kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    role="tab"
+                    id={`settings-tab-${kind}`}
+                    aria-controls={`settings-panel-${kind}`}
+                    aria-selected={provider === kind}
+                    tabIndex={provider === kind ? 0 : -1}
+                    disabled={busy}
+                    onClick={() => selectProvider(kind)}
+                    onKeyDown={onTabKeyDown}
+                    className={`border-b-2 px-3 py-2 text-xs font-medium transition-colors disabled:opacity-50 ${
+                      provider === kind
+                        ? "border-accent text-accent"
+                        : "border-transparent text-fg-muted hover:text-fg"
+                    }`}
+                  >
+                    {t(providerMessageKey(kind, "name"))}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1">
+              {PROVIDERS.map((kind) => (
+                <div
+                  key={kind}
+                  role="tabpanel"
+                  id={`settings-panel-${kind}`}
+                  aria-labelledby={`settings-tab-${kind}`}
+                  hidden={provider !== kind}
+                  className="min-h-0 overflow-y-auto px-5 py-5"
+                >
+                  {provider === kind && (
                 <>
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <h3 className="text-base font-semibold text-fg">
-                        {t(providerMessageKey(section, "name"))}
+                        {t(providerMessageKey(provider, "name"))}
                       </h3>
                       <p className="mt-1 text-xs leading-relaxed text-fg-muted">
-                        {t(providerMessageKey(section, "description"))}
+                        {t(providerMessageKey(provider, "description"))}
                       </p>
                     </div>
                     <span
@@ -267,7 +289,7 @@ export function SettingsPanel({
                     </span>
                   </div>
 
-                  {section === "deepseek" && (
+                  {provider === "deepseek" && (
                     <div className="mt-4 grid gap-2 rounded-md border border-line bg-elevated p-3 text-xs">
                       <ServiceDetail
                         label={t("settings.deepseek.endpoint")}
@@ -285,7 +307,7 @@ export function SettingsPanel({
 
                   <label className="mt-5 flex flex-col gap-1.5">
                     <span className="text-[11px] font-medium uppercase tracking-wide text-fg-subtle">
-                      {t(providerMessageKey(section, "credentialLabel"))}
+                      {t(providerMessageKey(provider, "credentialLabel"))}
                     </span>
                     <input
                       ref={inputRef}
@@ -294,7 +316,7 @@ export function SettingsPanel({
                       value={secret}
                       disabled={busy}
                       onChange={(event) => setSecret(event.target.value)}
-                      placeholder={t(providerMessageKey(section, "placeholder"))}
+                      placeholder={t(providerMessageKey(provider, "placeholder"))}
                       className="field rounded bg-canvas px-2.5 py-2 font-mono text-xs text-fg placeholder:text-fg-subtle disabled:opacity-50"
                     />
                   </label>
@@ -329,9 +351,11 @@ export function SettingsPanel({
                     </Button>
                   </div>
                 </>
-              )}
+                  )}
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
       </section>
     </div>
