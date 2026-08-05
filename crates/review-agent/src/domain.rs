@@ -192,10 +192,10 @@ pub fn map_patch_lines(patch: &str) -> Result<HashSet<(String, u32)>, ReviewErro
             old = parse_hunk_start(ranges.next(), '-')?;
             new = parse_hunk_start(ranges.next(), '+')?;
             in_hunk = true;
-        } else if in_hunk && text.starts_with('-') && !text.starts_with("---") {
+        } else if in_hunk && text.starts_with('-') {
             result.insert(("LEFT".into(), old));
             old += 1;
-        } else if in_hunk && text.starts_with('+') && !text.starts_with("+++") {
+        } else if in_hunk && text.starts_with('+') {
             result.insert(("RIGHT".into(), new));
             new += 1;
         } else if in_hunk && !text.starts_with('\\') {

@@ -40,7 +40,7 @@ impl GithubReviewSource {
 
     pub async fn preflight(&self, target: &ReviewTarget) -> Result<ReviewPreflight, ReviewError> {
         let head_sha = self.head_sha(target).await?;
-        let files = self.pull_files(target).await?;
+        let files = self.pull_files_at_head(target, &head_sha).await?;
         let reviewable: Vec<_> = files.iter().filter(|f| f.reviewable).collect();
         let total_patch_bytes = reviewable.iter().map(|f| f.patch_bytes).sum();
         let requires_selection =
@@ -94,7 +94,12 @@ impl ReviewSource for GithubReviewSource {
             })
     }
 
-    async fn pull_files(&self, target: &ReviewTarget) -> Result<Vec<ReviewFile>, ReviewError> {
+    async fn pull_files_at_head(
+        &self,
+        target: &ReviewTarget,
+        expected_head_sha: &str,
+    ) -> Result<Vec<ReviewFile>, ReviewError> {
+        validate_sha(expected_head_sha)?;
         let mut result = Vec::new();
         for page in 1..=100u32 {
             let response = self
@@ -134,6 +139,9 @@ impl ReviewSource for GithubReviewSource {
             if entries.len() < 100 {
                 break;
             }
+        }
+        if self.head_sha(target).await? != expected_head_sha {
+            return Err(ReviewError::PrUpdated);
         }
         Ok(result)
     }
@@ -334,6 +342,11 @@ mod tests {
     async fn preflight_marks_missing_and_large_patches_unreviewable() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
+            .and(path("/repos/o/r/pulls/1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"head":{"sha":"abc"}})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
             .and(path("/repos/o/r/pulls/1/files"))
             .and(query_param("page", "1"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([
@@ -343,7 +356,10 @@ mod tests {
             ])))
             .mount(&server)
             .await;
-        let files = source(&server).pull_files(&target()).await.unwrap();
+        let files = source(&server)
+            .pull_files_at_head(&target(), "abc")
+            .await
+            .unwrap();
         assert_eq!(
             files.iter().map(|f| f.reviewable).collect::<Vec<_>>(),
             vec![false, false, true]
@@ -379,6 +395,35 @@ mod tests {
         };
         assert_eq!(
             source(&server).publish(&review).await.unwrap_err(),
+            ReviewError::PrUpdated
+        );
+    }
+
+    #[tokio::test]
+    async fn preflight_rechecks_after_fetch_and_rejects_race() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/pulls/1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"head":{"sha":"abc"}})))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/pulls/1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"head":{"sha":"def"}})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/o/r/pulls/1/files"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {"filename":"ok.rs","patch":"@@ -1 +1 @@\n-a\n+b"}
+            ])))
+            .mount(&server)
+            .await;
+
+        let github = source(&server);
+        assert_eq!(
+            github.preflight(&target()).await.unwrap_err(),
             ReviewError::PrUpdated
         );
     }

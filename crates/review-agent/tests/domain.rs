@@ -64,6 +64,18 @@ fn patch_mapping_tracks_github_sides() {
 }
 
 #[test]
+fn patch_mapping_treats_triple_marker_content_as_changed_lines() {
+    let patch = "@@ -1 +1 @@\n---old-looking-content\n+++new-looking-content\n";
+    let lines = map_patch_lines(patch).unwrap();
+    assert_eq!(
+        lines,
+        [("LEFT".to_string(), 1), ("RIGHT".to_string(), 1)]
+            .into_iter()
+            .collect()
+    );
+}
+
+#[test]
 fn review_file_counts_utf8_patch_bytes() {
     let file = ReviewFile::from_patch("src/你好.rs", "@@ -1 +1 @@\n-a\n+你\n").unwrap();
     assert_eq!(file.patch_bytes, file.patch.as_ref().unwrap().len());
