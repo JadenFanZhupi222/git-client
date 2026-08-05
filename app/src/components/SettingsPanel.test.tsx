@@ -58,6 +58,36 @@ describe("SettingsPanel", () => {
     expect(document.getElementById("settings-panel-github")).not.toHaveAttribute("hidden");
   });
 
+  it("uses one constrained vertical scroll owner for provider content", () => {
+    renderPanel();
+
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    const activePanel = screen.getByRole("tabpanel", { name: "DeepSeek" });
+    const scrollOwner = activePanel.parentElement;
+    expect(scrollOwner).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
+    expect(activePanel).not.toHaveClass("overflow-y-auto");
+    expect(dialog.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
+  });
+
+  it("stacks categories above full-width content and keeps provider tabs scrollable on narrow screens", () => {
+    renderPanel();
+
+    const categories = screen.getByRole("navigation", { name: "Settings categories" });
+    const layout = categories.parentElement;
+    const providers = screen.getByRole("tablist", { name: "Integration providers" });
+    expect(layout).toHaveClass(
+      "grid-cols-1",
+      "grid-rows-[auto_minmax(0,1fr)]",
+      "sm:grid-cols-[150px_minmax(0,1fr)]",
+      "sm:grid-rows-1",
+    );
+    expect(categories).toHaveClass("border-b", "sm:border-b-0", "sm:border-r");
+    expect(providers).toHaveClass("overflow-x-auto");
+    for (const tab of within(providers).getAllByRole("tab")) {
+      expect(tab).toHaveClass("shrink-0");
+    }
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
     localStorage.clear();

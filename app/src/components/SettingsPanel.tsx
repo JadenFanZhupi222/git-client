@@ -171,7 +171,7 @@ export function SettingsPanel({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
       <div
         data-testid="settings-backdrop"
         className="overlay-in absolute inset-0 bg-black/40"
@@ -202,10 +202,10 @@ export function SettingsPanel({
           </Button>
         </header>
 
-        <div className="grid min-h-0 flex-1 grid-cols-[150px_minmax(0,1fr)]">
+        <div className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] sm:grid-cols-[150px_minmax(0,1fr)] sm:grid-rows-1">
           <nav
             aria-label={t("settings.categories")}
-            className="flex flex-col gap-1 border-r border-line bg-elevated p-2"
+            className="flex flex-row gap-1 border-b border-line bg-elevated p-2 sm:flex-col sm:border-b-0 sm:border-r"
           >
             <div
               aria-current="page"
@@ -215,8 +215,8 @@ export function SettingsPanel({
             </div>
           </nav>
 
-          <div className="flex min-h-0 flex-col">
-            <div className="border-b border-line px-5 py-4">
+          <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+            <div className="border-b border-line px-3 py-3 sm:px-5 sm:py-4">
               <h3 className="text-base font-semibold text-fg">
                 {t("settings.integrations.title")}
               </h3>
@@ -226,7 +226,7 @@ export function SettingsPanel({
               <div
                 role="tablist"
                 aria-label={t("settings.integrations.providers")}
-                className="mt-4 flex gap-1 border-b border-line"
+                className="mt-4 flex gap-1 overflow-x-auto border-b border-line"
               >
                 {PROVIDERS.map((kind) => (
                   <button
@@ -240,7 +240,7 @@ export function SettingsPanel({
                     disabled={busy}
                     onClick={() => selectProvider(kind)}
                     onKeyDown={onTabKeyDown}
-                    className={`border-b-2 px-3 py-2 text-xs font-medium transition-colors disabled:opacity-50 ${
+                    className={`shrink-0 border-b-2 px-3 py-2 text-xs font-medium transition-colors disabled:opacity-50 ${
                       provider === kind
                         ? "border-accent text-accent"
                         : "border-transparent text-fg-muted hover:text-fg"
@@ -252,7 +252,7 @@ export function SettingsPanel({
               </div>
             </div>
 
-            <div className="min-h-0 flex-1">
+            <div className="min-h-0 flex-1 overflow-y-auto">
               {PROVIDERS.map((kind) => (
                 <div
                   key={kind}
@@ -260,7 +260,7 @@ export function SettingsPanel({
                   id={`settings-panel-${kind}`}
                   aria-labelledby={`settings-tab-${kind}`}
                   hidden={provider !== kind}
-                  className="min-h-0 overflow-y-auto px-5 py-5"
+                  className="min-h-0 px-3 py-4 sm:px-5 sm:py-5"
                 >
                   {provider === kind && (
                 <>
