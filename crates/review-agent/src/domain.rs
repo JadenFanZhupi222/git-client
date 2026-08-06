@@ -162,6 +162,12 @@ pub enum ReviewError {
     Cancelled,
     #[error("review publish failed: {0}")]
     ReviewPublishFailed(String),
+    #[error("issue changed since analysis started")]
+    IssueUpdated,
+    #[error("issue was not found")]
+    IssueNotFound,
+    #[error("issue triage exceeded its input or output budget")]
+    IssueTriageBudgetExceeded,
 }
 
 impl ReviewError {
@@ -177,6 +183,9 @@ impl ReviewError {
             Self::InvalidModelOutput(_) => "INVALID_MODEL_OUTPUT",
             Self::Cancelled => "CANCELLED",
             Self::ReviewPublishFailed(_) => "REVIEW_PUBLISH_FAILED",
+            Self::IssueUpdated => "ISSUE_UPDATED",
+            Self::IssueNotFound => "ISSUE_NOT_FOUND",
+            Self::IssueTriageBudgetExceeded => "ISSUE_TRIAGE_BUDGET_EXCEEDED",
         }
     }
 }

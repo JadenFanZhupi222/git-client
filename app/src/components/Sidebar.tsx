@@ -10,6 +10,7 @@ import {
   FolderIcon,
   ChevronDownIcon,
   CloudIcon,
+  IssueIcon,
 } from "./icons";
 import { useT } from "../lib/i18n";
 
@@ -39,6 +40,7 @@ export function Sidebar({
     { id: "compare", label: t("nav.compare"), icon: <FileDiffIcon width={16} height={16} /> },
     { id: "blame", label: t("nav.blame"), icon: <HistoryIcon width={16} height={16} /> },
     { id: "pullRequests", label: t("nav.pullRequests"), icon: <CloudIcon width={16} height={16} /> },
+    { id: "issues", label: t("nav.issues"), icon: <IssueIcon width={16} height={16} /> },
   ];
   if (hasSubmodules) items.push({ id: "submodules", label: t("nav.submodules"), icon: <SubmoduleIcon width={16} height={16} /> });
   if (hasWorktrees) items.push({ id: "worktrees", label: t("nav.worktrees"), icon: <WorktreeIcon width={16} height={16} /> });

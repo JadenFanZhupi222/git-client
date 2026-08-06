@@ -24,8 +24,9 @@ mod credentials;
 mod review_commands;
 use credentials::{clear_credential, credential_status, save_credential, test_credential};
 use review_commands::{
-    ReviewRunRegistry, cancel_pr_review, get_review_preflight, list_review_models, start_pr_review,
-    submit_pr_review,
+    ReviewRunRegistry, cancel_issue_triage, cancel_pr_review, get_github_issue_context,
+    get_review_preflight, list_github_issues, list_review_models, start_issue_triage,
+    start_pr_review, submit_pr_review,
 };
 
 /// 持有当前仓库的文件监听器。切仓库时替换 → 旧 watcher 被 drop → 自动停止监听。
@@ -1732,6 +1733,10 @@ pub fn run() {
         start_pr_review,
         cancel_pr_review,
         submit_pr_review,
+        list_github_issues,
+        get_github_issue_context,
+        start_issue_triage,
+        cancel_issue_triage,
         watch_repo,
         e2e_prepare_repo,
         e2e_write_file
@@ -1829,6 +1834,10 @@ pub fn run() {
         start_pr_review,
         cancel_pr_review,
         submit_pr_review,
+        list_github_issues,
+        get_github_issue_context,
+        start_issue_triage,
+        cancel_issue_triage,
         watch_repo
     ]);
 

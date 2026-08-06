@@ -106,8 +106,9 @@ describe("SettingsPanel", () => {
 
     expect(screen.getByText("Pull requests")).toBeInTheDocument();
     expect(screen.getByText("Commit statuses")).toBeInTheDocument();
+    expect(screen.getByText("Issues")).toBeInTheDocument();
     expect(screen.getByText("Read and write")).toBeInTheDocument();
-    expect(screen.getByText("Read-only")).toBeInTheDocument();
+    expect(screen.getAllByText("Read-only")).toHaveLength(2);
     expect(screen.getByText(/may not offer the Checks permission/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Create token on GitHub" }));
@@ -145,7 +146,7 @@ describe("SettingsPanel", () => {
     expect(screen.getByText(
       "Supports tokens beginning with github_pat_ or ghp_. Stored securely in the system credential store.",
     )).toBeInTheDocument();
-    expect(screen.getByText("Authenticates private repositories, pull requests, and review publishing.")).toBeInTheDocument();
+    expect(screen.getByText("Authenticates private repositories, pull requests, review publishing, and issue triage.")).toBeInTheDocument();
     const save = screen.getByRole("button", { name: "Save replacement" });
     const test = screen.getByRole("button", { name: "Test connection" });
     const remove = screen.getByRole("button", { name: "Remove credential" });
@@ -173,7 +174,7 @@ describe("SettingsPanel", () => {
     expect(screen.getByText("When AI Review runs, selected PR patches and code excerpts read during analysis are sent to DeepSeek.")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "GitHub" }));
-    expect(screen.getByText("Authenticates private repositories, pull requests, and review publishing.")).toBeInTheDocument();
+    expect(screen.getByText("Authenticates private repositories, pull requests, review publishing, and issue triage.")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Enter a new credential to replace the saved credential")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "GitLab" }));
@@ -259,7 +260,7 @@ describe("SettingsPanel", () => {
     expect(screen.getByLabelText("GitHub 个人访问令牌")).toHaveValue("");
     expect(screen.getByRole("tablist", { name: "集成服务" })).toBeInTheDocument();
     expect(screen.getByText("管理 AI 评审与代码托管服务的凭据。")).toBeInTheDocument();
-    expect(screen.getByText("用于私有仓库、拉取请求与评审发布的身份验证。")).toBeInTheDocument();
+    expect(screen.getByText("用于私有仓库、拉取请求、评审发布与议题分诊的身份验证。")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("输入新凭据以替换已保存的凭据")).toBeInTheDocument();
     expect(screen.getByText(
       "支持以 github_pat_ 或 ghp_ 开头的令牌。凭据将安全存储于系统凭据库中。",

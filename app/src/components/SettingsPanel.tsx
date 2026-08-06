@@ -381,6 +381,11 @@ export function SettingsPanel({
                           value={t("settings.github.readOnly")}
                           description={t("settings.github.statusesReason")}
                         />
+                        <PermissionDetail
+                          label={t("settings.github.issuesPermission")}
+                          value={t("settings.github.readOnly")}
+                          description={t("settings.github.issuesReason")}
+                        />
                       </dl>
                       <p className="mt-3 leading-relaxed text-fg-muted">
                         {t("settings.github.checksOptional")}

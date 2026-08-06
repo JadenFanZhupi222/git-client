@@ -134,6 +134,227 @@ pub struct ReviewProgressEventDto {
     pub tool_calls: Option<u32>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct IssueRepositoryTargetDto {
+    pub owner: String,
+    pub repo: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct IssueTargetDto {
+    pub owner: String,
+    pub repo: String,
+    #[ts(type = "number")]
+    pub issue_number: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct IssueLabelDto {
+    pub name: String,
+    pub color: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct IssueSummaryDto {
+    #[ts(type = "number")]
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    pub author: Option<String>,
+    pub updated_at: String,
+    pub comments: u32,
+    pub labels: Vec<IssueLabelDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct IssueCommentDto {
+    pub author: Option<String>,
+    pub body: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct IssueSnapshotDto {
+    pub updated_at: String,
+    pub comments: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct IssueContextDto {
+    pub issue: IssueSummaryDto,
+    pub body: String,
+    pub comments: Vec<IssueCommentDto>,
+    pub comments_truncated: bool,
+    pub available_labels: Vec<IssueLabelDto>,
+    pub similar_issues: Vec<IssueSummaryDto>,
+    pub snapshot: IssueSnapshotDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct IssueTriageInputDto {
+    pub run_id: String,
+    pub target: IssueTargetDto,
+    pub expected_updated_at: String,
+    pub expected_comments: u32,
+    pub model_id: String,
+    pub output_language: ReviewLanguageDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct IssueTriageProposalDto {
+    pub summary: String,
+    pub category: String,
+    pub priority: String,
+    pub confidence: f64,
+    pub suggested_labels: Vec<String>,
+    #[ts(type = "Array<number>")]
+    pub suspected_duplicate_numbers: Vec<u64>,
+    pub suggested_reply: String,
+    pub rationale: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct IssueTriageResultDto {
+    pub run_id: String,
+    pub snapshot: IssueSnapshotDto,
+    pub comments_analyzed: usize,
+    pub comments_truncated: bool,
+    pub proposal: IssueTriageProposalDto,
+    pub usage: ReviewUsageDto,
+}
+
+impl From<IssueRepositoryTargetDto> for review_agent::IssueRepositoryTarget {
+    fn from(value: IssueRepositoryTargetDto) -> Self {
+        Self {
+            owner: value.owner,
+            repo: value.repo,
+        }
+    }
+}
+
+impl From<IssueTargetDto> for review_agent::IssueTarget {
+    fn from(value: IssueTargetDto) -> Self {
+        Self {
+            owner: value.owner,
+            repo: value.repo,
+            issue_number: value.issue_number,
+        }
+    }
+}
+
+impl From<review_agent::IssueLabel> for IssueLabelDto {
+    fn from(value: review_agent::IssueLabel) -> Self {
+        Self {
+            name: value.name,
+            color: value.color,
+        }
+    }
+}
+
+impl From<review_agent::IssueSummary> for IssueSummaryDto {
+    fn from(value: review_agent::IssueSummary) -> Self {
+        Self {
+            number: value.number,
+            title: value.title,
+            url: value.url,
+            author: value.author,
+            updated_at: value.updated_at,
+            comments: value.comments,
+            labels: value.labels.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<review_agent::IssueComment> for IssueCommentDto {
+    fn from(value: review_agent::IssueComment) -> Self {
+        Self {
+            author: value.author,
+            body: value.body,
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+        }
+    }
+}
+
+impl From<review_agent::IssueSnapshot> for IssueSnapshotDto {
+    fn from(value: review_agent::IssueSnapshot) -> Self {
+        Self {
+            updated_at: value.updated_at,
+            comments: value.comments,
+        }
+    }
+}
+
+impl From<review_agent::IssueContext> for IssueContextDto {
+    fn from(value: review_agent::IssueContext) -> Self {
+        Self {
+            issue: value.issue.into(),
+            body: value.body,
+            comments: value.comments.into_iter().map(Into::into).collect(),
+            comments_truncated: value.comments_truncated,
+            available_labels: value.available_labels.into_iter().map(Into::into).collect(),
+            similar_issues: value.similar_issues.into_iter().map(Into::into).collect(),
+            snapshot: value.snapshot.into(),
+        }
+    }
+}
+
+impl From<IssueTriageInputDto> for review_agent::IssueTriageInput {
+    fn from(value: IssueTriageInputDto) -> Self {
+        Self {
+            run_id: value.run_id,
+            target: value.target.into(),
+            expected_updated_at: value.expected_updated_at,
+            expected_comments: value.expected_comments,
+            output_language: match value.output_language {
+                ReviewLanguageDto::SimplifiedChinese => {
+                    review_agent::ReviewLanguage::SimplifiedChinese
+                }
+                ReviewLanguageDto::English => review_agent::ReviewLanguage::English,
+            },
+        }
+    }
+}
+
+impl From<review_agent::IssueTriageProposal> for IssueTriageProposalDto {
+    fn from(value: review_agent::IssueTriageProposal) -> Self {
+        Self {
+            summary: value.summary,
+            category: value.category,
+            priority: value.priority,
+            confidence: value.confidence,
+            suggested_labels: value.suggested_labels,
+            suspected_duplicate_numbers: value.suspected_duplicate_numbers,
+            suggested_reply: value.suggested_reply,
+            rationale: value.rationale,
+        }
+    }
+}
+
+impl From<review_agent::IssueTriageResult> for IssueTriageResultDto {
+    fn from(value: review_agent::IssueTriageResult) -> Self {
+        Self {
+            run_id: value.run_id,
+            snapshot: value.snapshot.into(),
+            comments_analyzed: value.comments_analyzed,
+            comments_truncated: value.comments_truncated,
+            proposal: value.proposal.into(),
+            usage: value.usage.into(),
+        }
+    }
+}
+
 impl From<review_agent::ReviewTarget> for ReviewTargetDto {
     fn from(v: review_agent::ReviewTarget) -> Self {
         Self {

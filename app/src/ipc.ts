@@ -41,6 +41,16 @@ export type {
   UndoStateDto,
   UndoStepDto,
   WorktreeInfoDto,
+  IssueCommentDto,
+  IssueContextDto,
+  IssueLabelDto,
+  IssueRepositoryTargetDto,
+  IssueSnapshotDto,
+  IssueSummaryDto,
+  IssueTargetDto,
+  IssueTriageInputDto,
+  IssueTriageProposalDto,
+  IssueTriageResultDto,
 } from "./bindings";
 
 export type {
@@ -69,6 +79,12 @@ import type {
   ReviewRunResultDto,
   ReviewTargetDto,
   SubmitReviewDto,
+  IssueContextDto,
+  IssueRepositoryTargetDto,
+  IssueSummaryDto,
+  IssueTargetDto,
+  IssueTriageInputDto,
+  IssueTriageResultDto,
 } from "./bindings";
 
 import type {
@@ -809,4 +825,26 @@ export async function submitPrReview(input: SubmitReviewDto): Promise<PublishedR
 
 export function onReviewProgress(cb: (progress: ReviewProgressEventDto) => void): Promise<() => void> {
   return listen<ReviewProgressEventDto>("review-progress", (event) => cb(event.payload));
+}
+
+export async function listGithubIssues(
+  target: IssueRepositoryTargetDto,
+): Promise<IssueSummaryDto[]> {
+  return await invoke<IssueSummaryDto[]>("list_github_issues", { target });
+}
+
+export async function getGithubIssueContext(
+  target: IssueTargetDto,
+): Promise<IssueContextDto> {
+  return await invoke<IssueContextDto>("get_github_issue_context", { target });
+}
+
+export async function startIssueTriage(
+  input: IssueTriageInputDto,
+): Promise<IssueTriageResultDto> {
+  return await invoke<IssueTriageResultDto>("start_issue_triage", { input });
+}
+
+export async function cancelIssueTriage(runId: string): Promise<void> {
+  await invoke("cancel_issue_triage", { runId });
 }

@@ -164,6 +164,13 @@ export const AlertIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+export const IssueIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <circle cx="8" cy="8" r="6" />
+    <path d="M8 4.75v4.5M8 11.75h.01" />
+  </svg>
+);
+
 export const CloseIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
     <path d="M4 4l8 8M12 4l-8 8" />

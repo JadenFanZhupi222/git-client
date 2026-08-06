@@ -1,13 +1,15 @@
 use crate::credentials::read_credential;
 use async_trait::async_trait;
 use ipc_types::{
-    CredentialKindDto, IpcError, PublishedReviewDto, ReviewModelOptionDto, ReviewPreflightDto,
-    ReviewProgressEventDto, ReviewRunInputDto, ReviewRunResultDto, ReviewTargetDto,
-    SubmitReviewDto,
+    CredentialKindDto, IpcError, IssueContextDto, IssueRepositoryTargetDto, IssueSummaryDto,
+    IssueTargetDto, IssueTriageInputDto, IssueTriageResultDto, PublishedReviewDto,
+    ReviewModelOptionDto, ReviewPreflightDto, ReviewProgressEventDto, ReviewRunInputDto,
+    ReviewRunResultDto, ReviewTargetDto, SubmitReviewDto,
 };
 use review_agent::{
-    CancelSignal, DeepSeekProvider, GithubReviewSource, ProgressSink, ProgressUpdate,
-    ReviewOrchestrator, ReviewSource, SanitizedTraceStore,
+    CancelSignal, DeepSeekIssueTriageModel, DeepSeekProvider, GithubIssueSource,
+    GithubReviewSource, IssueSource, IssueTriageModel, IssueTriageOrchestrator, ProgressSink,
+    ProgressUpdate, ReviewOrchestrator, ReviewSource, SanitizedTraceStore,
 };
 use std::collections::{HashMap, VecDeque};
 use std::sync::{
@@ -187,6 +189,128 @@ impl ProgressSink for ServiceToolProgress<'_> {
             tool_name: Some(name),
             tool_calls: Some(count),
         });
+    }
+}
+
+trait IssueBackendFactory: Send + Sync {
+    fn issue_source(
+        &self,
+        token: String,
+    ) -> Result<Box<dyn IssueSource>, review_agent::ReviewError>;
+    fn issue_model(
+        &self,
+        model_id: &str,
+        key: String,
+    ) -> Result<Box<dyn IssueTriageModel>, review_agent::ReviewError>;
+}
+
+struct IssueCommandService<'a> {
+    credentials: &'a dyn CredentialReader,
+    factory: &'a dyn IssueBackendFactory,
+    progress: &'a dyn ProgressEmitter,
+    registry: &'a ReviewRunRegistry,
+}
+
+impl<'a> IssueCommandService<'a> {
+    fn new(
+        credentials: &'a dyn CredentialReader,
+        factory: &'a dyn IssueBackendFactory,
+        progress: &'a dyn ProgressEmitter,
+        registry: &'a ReviewRunRegistry,
+    ) -> Self {
+        Self {
+            credentials,
+            factory,
+            progress,
+            registry,
+        }
+    }
+
+    fn progress(&self, run_id: &str, stage: &str) {
+        self.progress.emit(ReviewProgressEventDto {
+            run_id: run_id.into(),
+            stage: stage.into(),
+            tool_name: None,
+            tool_calls: None,
+        });
+    }
+
+    async fn source(&self) -> Result<Box<dyn IssueSource>, IpcError> {
+        let token = self
+            .credentials
+            .read(CredentialKindDto::Github)
+            .await
+            .map_err(|error| map_review_credential_error(CredentialKindDto::Github, error))?;
+        self.factory.issue_source(token).map_err(review_error)
+    }
+
+    async fn list(
+        &self,
+        target: IssueRepositoryTargetDto,
+    ) -> Result<Vec<IssueSummaryDto>, IpcError> {
+        Ok(self
+            .source()
+            .await?
+            .list_open_issues(&target.into())
+            .await
+            .map_err(review_error)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    async fn context(&self, target: IssueTargetDto) -> Result<IssueContextDto, IpcError> {
+        Ok(self
+            .source()
+            .await?
+            .issue_context(&target.into())
+            .await
+            .map_err(review_error)?
+            .into())
+    }
+
+    async fn start(&self, input: IssueTriageInputDto) -> Result<IssueTriageResultDto, IpcError> {
+        let run_id = input.run_id.clone();
+        let cancel = self.registry.register(&run_id)?;
+        if cancel.is_cancelled() {
+            self.registry.finish(&run_id);
+            self.progress(&run_id, "cancelled");
+            return Err(review_error(review_agent::ReviewError::Cancelled));
+        }
+        self.progress(&run_id, "loading_issue");
+        let result: Result<IssueTriageResultDto, IpcError> = async {
+            let source = self.source().await?;
+            let credential_kind = review_model_credential(&input.model_id)?;
+            let key = self
+                .credentials
+                .read(credential_kind)
+                .await
+                .map_err(|error| map_review_credential_error(credential_kind, error))?;
+            let model = self
+                .factory
+                .issue_model(&input.model_id, key)
+                .map_err(review_error)?;
+            self.progress(&run_id, "analyzing_issue");
+            Ok(
+                IssueTriageOrchestrator::new(model.as_ref(), source.as_ref(), &cancel)
+                    .run(input.into())
+                    .await
+                    .map_err(review_error)?
+                    .into(),
+            )
+        }
+        .await;
+        self.registry.finish(&run_id);
+        match &result {
+            Ok(_) => self.progress(&run_id, "completed"),
+            Err(error) if error.code == "CANCELLED" => self.progress(&run_id, "cancelled"),
+            Err(_) => self.progress(&run_id, "failed"),
+        }
+        result
+    }
+
+    fn cancel(&self, run_id: &str) {
+        self.registry.cancel(run_id);
     }
 }
 
@@ -385,6 +509,25 @@ impl ReviewBackendFactory for ProductionBackendFactory {
     }
 }
 
+impl IssueBackendFactory for ProductionBackendFactory {
+    fn issue_source(
+        &self,
+        token: String,
+    ) -> Result<Box<dyn IssueSource>, review_agent::ReviewError> {
+        Ok(Box::new(GithubIssueSource::new(token)?))
+    }
+
+    fn issue_model(
+        &self,
+        model_id: &str,
+        key: String,
+    ) -> Result<Box<dyn IssueTriageModel>, review_agent::ReviewError> {
+        Ok(Box::new(DeepSeekIssueTriageModel::new_with_model(
+            key, model_id,
+        )?))
+    }
+}
+
 struct AppProgressEmitter(tauri::AppHandle);
 impl ProgressEmitter for AppProgressEmitter {
     fn emit(&self, event: ReviewProgressEventDto) {
@@ -477,6 +620,61 @@ pub(crate) async fn submit_pr_review(
     )
     .submit(input)
     .await
+}
+
+#[tauri::command]
+pub(crate) async fn list_github_issues(
+    target: IssueRepositoryTargetDto,
+) -> Result<Vec<IssueSummaryDto>, IpcError> {
+    IssueCommandService::new(
+        &KeyringCredentialReader,
+        &ProductionBackendFactory,
+        &NoopProgressEmitter,
+        &ReviewRunRegistry::default(),
+    )
+    .list(target)
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn get_github_issue_context(
+    target: IssueTargetDto,
+) -> Result<IssueContextDto, IpcError> {
+    IssueCommandService::new(
+        &KeyringCredentialReader,
+        &ProductionBackendFactory,
+        &NoopProgressEmitter,
+        &ReviewRunRegistry::default(),
+    )
+    .context(target)
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn start_issue_triage(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ReviewRunRegistry>,
+    input: IssueTriageInputDto,
+) -> Result<IssueTriageResultDto, IpcError> {
+    IssueCommandService::new(
+        &KeyringCredentialReader,
+        &ProductionBackendFactory,
+        &AppProgressEmitter(app),
+        &state,
+    )
+    .start(input)
+    .await
+}
+
+#[tauri::command]
+pub(crate) fn cancel_issue_triage(state: tauri::State<'_, ReviewRunRegistry>, run_id: String) {
+    IssueCommandService::new(
+        &KeyringCredentialReader,
+        &ProductionBackendFactory,
+        &NoopProgressEmitter,
+        &state,
+    )
+    .cancel(&run_id);
 }
 
 #[cfg(test)]
@@ -1063,9 +1261,163 @@ mod tests {
         );
     }
 
+    #[derive(Clone)]
+    struct FakeIssueSource {
+        context: review_agent::IssueContext,
+    }
+
+    #[async_trait]
+    impl IssueSource for FakeIssueSource {
+        async fn list_open_issues(
+            &self,
+            _: &review_agent::IssueRepositoryTarget,
+        ) -> Result<Vec<review_agent::IssueSummary>, review_agent::ReviewError> {
+            Ok(vec![self.context.issue.clone()])
+        }
+
+        async fn issue_context(
+            &self,
+            _: &review_agent::IssueTarget,
+        ) -> Result<review_agent::IssueContext, review_agent::ReviewError> {
+            Ok(self.context.clone())
+        }
+    }
+
+    struct FakeIssueModel;
+
+    #[async_trait]
+    impl IssueTriageModel for FakeIssueModel {
+        async fn analyze(
+            &self,
+            _: &str,
+            _: &str,
+        ) -> Result<review_agent::IssueTriageModelResponse, review_agent::ReviewError> {
+            Ok(review_agent::IssueTriageModelResponse {
+                proposal: review_agent::IssueTriageProposal {
+                    summary: "Reproducible crash".into(),
+                    category: "bug".into(),
+                    priority: "high".into(),
+                    confidence: 0.9,
+                    suggested_labels: vec!["bug".into()],
+                    suspected_duplicate_numbers: vec![3],
+                    suggested_reply: "Please share the app version.".into(),
+                    rationale: vec!["Steps are present.".into()],
+                },
+                usage: review_agent::ReviewUsage {
+                    input_tokens: 20,
+                    output_tokens: 10,
+                    tool_calls: 0,
+                },
+            })
+        }
+    }
+
+    struct FakeIssueFactory {
+        source: FakeIssueSource,
+    }
+
+    impl IssueBackendFactory for FakeIssueFactory {
+        fn issue_source(
+            &self,
+            _: String,
+        ) -> Result<Box<dyn IssueSource>, review_agent::ReviewError> {
+            Ok(Box::new(self.source.clone()))
+        }
+
+        fn issue_model(
+            &self,
+            _: &str,
+            _: String,
+        ) -> Result<Box<dyn IssueTriageModel>, review_agent::ReviewError> {
+            Ok(Box::new(FakeIssueModel))
+        }
+    }
+
+    fn fake_issue_factory() -> FakeIssueFactory {
+        let issue = review_agent::IssueSummary {
+            number: 7,
+            title: "App crashes".into(),
+            url: "https://example.invalid/issues/7".into(),
+            author: Some("lin".into()),
+            updated_at: "2026-08-07T08:00:00Z".into(),
+            comments: 1,
+            labels: vec![review_agent::IssueLabel {
+                name: "bug".into(),
+                color: "d73a4a".into(),
+            }],
+        };
+        FakeIssueFactory {
+            source: FakeIssueSource {
+                context: review_agent::IssueContext {
+                    issue: issue.clone(),
+                    body: "Steps to reproduce".into(),
+                    comments: vec![],
+                    comments_truncated: false,
+                    available_labels: issue.labels.clone(),
+                    similar_issues: vec![review_agent::IssueSummary {
+                        number: 3,
+                        title: "Similar crash".into(),
+                        ..issue.clone()
+                    }],
+                    snapshot: review_agent::IssueSnapshot {
+                        updated_at: issue.updated_at.clone(),
+                        comments: issue.comments,
+                    },
+                },
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn issue_service_lists_loads_and_triages_with_ordered_progress() {
+        let factory = fake_issue_factory();
+        let emitter = RecordingEmitter::default();
+        let registry = ReviewRunRegistry::default();
+        let service = IssueCommandService::new(&FakeCredentials, &factory, &emitter, &registry);
+        let repository = IssueRepositoryTargetDto {
+            owner: "acme".into(),
+            repo: "rocket".into(),
+        };
+        assert_eq!(service.list(repository).await.unwrap()[0].number, 7);
+
+        let target = IssueTargetDto {
+            owner: "acme".into(),
+            repo: "rocket".into(),
+            issue_number: 7,
+        };
+        let context = service.context(target.clone()).await.unwrap();
+        assert_eq!(context.body, "Steps to reproduce");
+        let result = service
+            .start(IssueTriageInputDto {
+                run_id: "issue-success".into(),
+                target,
+                expected_updated_at: context.snapshot.updated_at,
+                expected_comments: context.snapshot.comments,
+                model_id: "deepseek-v4-flash".into(),
+                output_language: ipc_types::ReviewLanguageDto::English,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.proposal.category, "bug");
+        assert_eq!(result.proposal.suspected_duplicate_numbers, [3]);
+        assert_eq!(
+            emitter
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|event| event.stage.as_str())
+                .collect::<Vec<_>>(),
+            ["loading_issue", "analyzing_issue", "completed"]
+        );
+        assert!(registry.register("issue-success").is_ok());
+    }
+
     #[test]
     fn command_service_is_constructed_from_injected_dependencies() {
         fn assert_service_type(_: &ReviewCommandService<'_>) {}
+        fn assert_issue_service_type(_: &IssueCommandService<'_>) {}
         let _ = assert_service_type;
+        let _ = assert_issue_service_type;
     }
 }
