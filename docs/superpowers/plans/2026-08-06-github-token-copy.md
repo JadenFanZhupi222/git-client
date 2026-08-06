@@ -1,16 +1,16 @@
-# GitHub Token Input Copy Implementation Plan
+# Token Input Copy Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the ambiguous GitHub token-prefix placeholder with action-oriented localized copy and move prefix guidance into helper text.
+**Goal:** Replace GitHub and GitLab token-prefix placeholders with action-oriented localized copy and move prefix guidance into helper text.
 
-**Architecture:** Keep the existing SettingsPanel rendering and localization keys. Change only GitHub locale values and lock them with component-level English and Chinese assertions.
+**Architecture:** Keep the existing SettingsPanel layout and credential behavior. Add provider-specific helper keys, change GitHub and GitLab locale values, and lock them with component-level English and Chinese assertions.
 
 **Tech Stack:** React 19, TypeScript locale dictionaries, Vitest, Testing Library.
 
 ---
 
-### Task 1: Clarify GitHub token copy
+### Task 1: Clarify GitHub and GitLab token copy
 
 **Files:**
 - Modify: `app/src/components/SettingsPanel.test.tsx`
@@ -37,13 +37,17 @@ expect(screen.getByText(
 )).toBeInTheDocument();
 ```
 
+Repeat the provider checks for GitLab and assert `Paste GitLab personal access token` and
+`Supports tokens beginning with glpat-. Stored securely in the system credential store.`,
+plus their approved Chinese translations.
+
 - [ ] **Step 2: Verify the new test fails for the old prefix-only placeholder**
 
 Run: `pnpm.cmd -C app exec vitest run src/components/SettingsPanel.test.tsx -t "explains GitHub token prefixes"`
 
-Expected: FAIL because the current placeholder is `github_pat_... or ghp_...` and the helper contains only storage information.
+Expected: FAIL because GitLab still uses `glpat-...` and the generic helper contains only storage information.
 
-- [ ] **Step 3: Update only GitHub locale values**
+- [ ] **Step 3: Update provider-specific locale values**
 
 In `app/src/lib/locales/en.ts`:
 
@@ -58,6 +62,9 @@ In `app/src/lib/locales/zh.ts`:
 "settings.github.placeholder": "粘贴 GitHub Personal Access Token",
 "settings.github.credentialHelper": "支持以 github_pat_ 或 ghp_ 开头的令牌。凭据将安全存储于系统凭据库中。",
 ```
+
+Add matching `settings.gitlab.credentialHelper` values and replace the GitLab placeholders
+with `Paste GitLab personal access token` / `粘贴 GitLab Personal Access Token`.
 
 Extend `ProviderMessageSuffix`, `providerMessageKey`, and the SettingsPanel helper lookup to use provider-specific `credentialHelper` keys. Add unchanged DeepSeek and GitLab helper values to both dictionaries so their UI copy remains identical.
 
@@ -79,5 +86,5 @@ Expected: TypeScript, Vite, and bundle-size checks PASS.
 
 ```bash
 git add app/src/components/SettingsPanel.test.tsx app/src/components/SettingsPanel.tsx app/src/lib/locales/en.ts app/src/lib/locales/zh.ts
-git commit -m "fix: clarify GitHub token input copy"
+git commit -m "fix: clarify token input copy"
 ```
