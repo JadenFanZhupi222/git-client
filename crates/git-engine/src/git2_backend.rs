@@ -2172,6 +2172,16 @@ mod tests {
         g.branch(name, &head, false).unwrap();
     }
 
+    fn index_blob_oid(repo_path: &Path, name: &str) -> git2::Oid {
+        git2::Repository::open(repo_path)
+            .unwrap()
+            .index()
+            .unwrap()
+            .get_path(Path::new(name), 0)
+            .unwrap()
+            .id
+    }
+
     #[test]
     fn branches_lists_local_with_single_head() {
         let (_tmp, repo) = init_repo();
@@ -2818,6 +2828,45 @@ mod tests {
             matches!(err, GitError::CheckoutConflict),
             "脏工作区切分支应报 CheckoutConflict,实际: {err:?}"
         );
+    }
+
+    #[test]
+    fn checkout_branch_used_by_other_worktree_preserves_current_state() {
+        let (_tmp, repo) = init_repo();
+        let b = Git2Backend;
+        stage(&repo, "a.txt", "main-version\n");
+        commit_index(&repo, "main", 1000);
+        let main = b.current_branch(&repo).unwrap().unwrap();
+
+        make_branch(&repo, "dev");
+        b.checkout_branch(&repo, "dev").unwrap();
+        stage(&repo, "a.txt", "dev-version\n");
+        commit_index(&repo, "dev", 2000);
+        b.checkout_branch(&repo, &main).unwrap();
+
+        let linked_root = tempfile::tempdir().unwrap();
+        let linked_path = linked_root.path().join("dev-worktree");
+        let git_repo = git2::Repository::open(&repo).unwrap();
+        let dev_ref = git_repo.find_reference("refs/heads/dev").unwrap();
+        let mut options = git2::WorktreeAddOptions::new();
+        options.reference(Some(&dev_ref));
+        let _linked = git_repo
+            .worktree("dev-worktree", &linked_path, Some(&options))
+            .unwrap();
+
+        let before_branch = b.current_branch(&repo).unwrap();
+        let before_file = std::fs::read_to_string(repo.join("a.txt")).unwrap();
+        let before_index = index_blob_oid(&repo, "a.txt");
+
+        let err = b.checkout_branch(&repo, "dev").unwrap_err();
+
+        assert!(matches!(err, GitError::Backend(_)));
+        assert_eq!(b.current_branch(&repo).unwrap(), before_branch);
+        assert_eq!(
+            std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+            before_file
+        );
+        assert_eq!(index_blob_oid(&repo, "a.txt"), before_index);
     }
 
     #[test]
