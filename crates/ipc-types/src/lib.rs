@@ -12,6 +12,487 @@ use git_core::model::{
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub enum CredentialKindDto {
+    Deepseek,
+    Github,
+    Gitlab,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ReviewTargetDto {
+    pub owner: String,
+    pub repo: String,
+    #[ts(type = "number")]
+    pub pull_number: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ReviewFileDto {
+    pub path: String,
+    pub patch_bytes: usize,
+    pub reviewable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ReviewPreflightDto {
+    pub head_sha: String,
+    pub files: Vec<ReviewFileDto>,
+    pub total_patch_bytes: usize,
+    pub requires_selection: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub enum ReviewLanguageDto {
+    SimplifiedChinese,
+    English,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ReviewModelOptionDto {
+    pub id: String,
+    pub label: String,
+    pub provider: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ReviewRunInputDto {
+    pub run_id: String,
+    pub target: ReviewTargetDto,
+    pub expected_head_sha: String,
+    pub selected_files: Vec<String>,
+    pub model_id: String,
+    pub output_language: ReviewLanguageDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ReviewFindingDto {
+    pub id: String,
+    pub severity: String,
+    pub path: String,
+    pub side: String,
+    pub line: u32,
+    pub title: String,
+    pub failure_scenario: String,
+    pub explanation: String,
+    pub draft_comment: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ReviewUsageDto {
+    #[ts(type = "number")]
+    pub input_tokens: u64,
+    #[ts(type = "number")]
+    pub output_tokens: u64,
+    pub tool_calls: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ReviewRunResultDto {
+    pub run_id: String,
+    pub head_sha: String,
+    pub summary: String,
+    pub reviewed_files: Vec<String>,
+    pub findings: Vec<ReviewFindingDto>,
+    pub usage: ReviewUsageDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct SubmitReviewDto {
+    pub target: ReviewTargetDto,
+    pub head_sha: String,
+    pub findings: Vec<ReviewFindingDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct PublishedReviewDto {
+    #[ts(type = "number")]
+    pub review_id: u64,
+    pub html_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ReviewProgressEventDto {
+    pub run_id: String,
+    pub stage: String,
+    pub tool_name: Option<String>,
+    pub tool_calls: Option<u32>,
+}
+
+impl From<review_agent::ReviewTarget> for ReviewTargetDto {
+    fn from(v: review_agent::ReviewTarget) -> Self {
+        Self {
+            owner: v.owner,
+            repo: v.repo,
+            pull_number: v.pull_number,
+        }
+    }
+}
+impl From<ReviewTargetDto> for review_agent::ReviewTarget {
+    fn from(v: ReviewTargetDto) -> Self {
+        Self {
+            owner: v.owner,
+            repo: v.repo,
+            pull_number: v.pull_number,
+        }
+    }
+}
+impl From<review_agent::ReviewFile> for ReviewFileDto {
+    fn from(v: review_agent::ReviewFile) -> Self {
+        Self {
+            path: v.path,
+            patch_bytes: v.patch_bytes,
+            reviewable: v.reviewable,
+        }
+    }
+}
+impl From<review_agent::ReviewPreflight> for ReviewPreflightDto {
+    fn from(v: review_agent::ReviewPreflight) -> Self {
+        Self {
+            head_sha: v.head_sha,
+            files: v.files.into_iter().map(Into::into).collect(),
+            total_patch_bytes: v.total_patch_bytes,
+            requires_selection: v.requires_selection,
+        }
+    }
+}
+impl From<ReviewRunInputDto> for review_agent::ReviewRunInput {
+    fn from(v: ReviewRunInputDto) -> Self {
+        Self {
+            run_id: v.run_id,
+            target: v.target.into(),
+            expected_head_sha: v.expected_head_sha,
+            selected_files: v.selected_files,
+            output_language: match v.output_language {
+                ReviewLanguageDto::SimplifiedChinese => {
+                    review_agent::ReviewLanguage::SimplifiedChinese
+                }
+                ReviewLanguageDto::English => review_agent::ReviewLanguage::English,
+            },
+        }
+    }
+}
+impl From<review_agent::ReviewFinding> for ReviewFindingDto {
+    fn from(v: review_agent::ReviewFinding) -> Self {
+        Self {
+            id: v.id,
+            severity: format!("{:?}", v.severity).to_lowercase(),
+            path: v.path,
+            side: format!("{:?}", v.side),
+            line: v.line,
+            title: v.title,
+            failure_scenario: v.failure_scenario,
+            explanation: v.explanation,
+            draft_comment: v.draft_comment,
+        }
+    }
+}
+impl TryFrom<ReviewFindingDto> for review_agent::ReviewFinding {
+    type Error = String;
+    fn try_from(v: ReviewFindingDto) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: v.id,
+            severity: match v.severity.as_str() {
+                "high" => review_agent::Severity::High,
+                "medium" => review_agent::Severity::Medium,
+                "low" => review_agent::Severity::Low,
+                _ => return Err("invalid severity".into()),
+            },
+            path: v.path,
+            side: match v.side.as_str() {
+                "LEFT" => review_agent::ReviewSide::LEFT,
+                "RIGHT" => review_agent::ReviewSide::RIGHT,
+                _ => return Err("invalid review side".into()),
+            },
+            line: v.line,
+            title: v.title,
+            failure_scenario: v.failure_scenario,
+            explanation: v.explanation,
+            draft_comment: v.draft_comment,
+        })
+    }
+}
+impl From<review_agent::ReviewUsage> for ReviewUsageDto {
+    fn from(v: review_agent::ReviewUsage) -> Self {
+        Self {
+            input_tokens: v.input_tokens,
+            output_tokens: v.output_tokens,
+            tool_calls: v.tool_calls,
+        }
+    }
+}
+impl From<review_agent::ReviewRunResult> for ReviewRunResultDto {
+    fn from(v: review_agent::ReviewRunResult) -> Self {
+        Self {
+            run_id: v.run_id,
+            head_sha: v.head_sha,
+            summary: v.summary,
+            reviewed_files: v.reviewed_files,
+            findings: v.findings.into_iter().map(Into::into).collect(),
+            usage: v.usage.into(),
+        }
+    }
+}
+impl TryFrom<SubmitReviewDto> for review_agent::SubmitReview {
+    type Error = String;
+    fn try_from(v: SubmitReviewDto) -> Result<Self, Self::Error> {
+        Ok(Self {
+            target: v.target.into(),
+            head_sha: v.head_sha,
+            findings: v
+                .findings
+                .into_iter()
+                .map(TryInto::try_into)
+                .collect::<Result<_, _>>()?,
+        })
+    }
+}
+impl From<review_agent::PublishedReview> for PublishedReviewDto {
+    fn from(v: review_agent::PublishedReview) -> Self {
+        Self {
+            review_id: v.review_id,
+            html_url: v.html_url,
+        }
+    }
+}
+
+#[cfg(test)]
+mod review_dto_contract_tests {
+    use super::*;
+
+    fn assert_public_shape_has_no_sensitive_fields(value: &serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, child) in map {
+                    assert!(
+                        ![
+                            "secret",
+                            "token",
+                            "key",
+                            "patch",
+                            "prompt",
+                            "content",
+                            "reasoning"
+                        ]
+                        .contains(&key.as_str()),
+                        "sensitive field {key}"
+                    );
+                    assert_public_shape_has_no_sensitive_fields(child);
+                }
+            }
+            serde_json::Value::Array(values) => values
+                .iter()
+                .for_each(assert_public_shape_has_no_sensitive_fields),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn review_file_dto_omits_raw_patch_and_secrets() {
+        let source =
+            review_agent::ReviewFile::from_patch("src/lib.rs", "@@ -1 +1 @@\n-a\n+b").unwrap();
+        let json = serde_json::to_string(&ReviewFileDto::from(source)).unwrap();
+        assert_eq!(
+            json,
+            r#"{"path":"src/lib.rs","patch_bytes":17,"reviewable":true}"#
+        );
+        assert!(!json.contains("\"patch\":"));
+        assert!(!json.contains("secret"));
+    }
+
+    #[test]
+    fn credential_kind_is_a_stable_lowercase_string() {
+        assert_eq!(
+            serde_json::to_string(&CredentialKindDto::Deepseek).unwrap(),
+            "\"deepseek\""
+        );
+        assert_eq!(
+            serde_json::to_string(&CredentialKindDto::Github).unwrap(),
+            "\"github\""
+        );
+        assert_eq!(
+            serde_json::to_string(&CredentialKindDto::Gitlab).unwrap(),
+            "\"gitlab\""
+        );
+    }
+
+    #[test]
+    fn review_run_input_contains_no_credentials_or_content() {
+        let input = ReviewRunInputDto {
+            run_id: "run-1".into(),
+            target: ReviewTargetDto {
+                owner: "o".into(),
+                repo: "r".into(),
+                pull_number: 7,
+            },
+            expected_head_sha: "abc".into(),
+            selected_files: vec!["src/lib.rs".into()],
+            model_id: "deepseek-v4-flash".into(),
+            output_language: ReviewLanguageDto::English,
+        };
+        let json = serde_json::to_string(&input).unwrap();
+        for forbidden in ["token", "key", "prompt", "content", "patch"] {
+            assert!(!json.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn every_review_dto_has_the_expected_public_shape_and_converts() {
+        let target = review_agent::ReviewTarget {
+            owner: "owner".into(),
+            repo: "repo".into(),
+            pull_number: 42,
+        };
+        let target_dto = ReviewTargetDto::from(target.clone());
+        assert_eq!(
+            serde_json::to_value(&target_dto).unwrap(),
+            serde_json::json!({"owner":"owner","repo":"repo","pull_number":42})
+        );
+        assert_eq!(review_agent::ReviewTarget::from(target_dto.clone()), target);
+
+        let file =
+            review_agent::ReviewFile::from_patch("src/lib.rs", "@@ -1 +1 @@\n-a\n+b").unwrap();
+        let file_dto = ReviewFileDto::from(file.clone());
+        assert_eq!(
+            serde_json::to_value(&file_dto).unwrap(),
+            serde_json::json!({"path":"src/lib.rs","patch_bytes":17,"reviewable":true})
+        );
+        let preflight_dto = ReviewPreflightDto::from(review_agent::ReviewPreflight {
+            head_sha: "abc".into(),
+            files: vec![file],
+            total_patch_bytes: 17,
+            requires_selection: false,
+        });
+        assert_eq!(
+            serde_json::to_value(&preflight_dto).unwrap(),
+            serde_json::json!({"head_sha":"abc","files":[{"path":"src/lib.rs","patch_bytes":17,"reviewable":true}],"total_patch_bytes":17,"requires_selection":false})
+        );
+
+        let run_input = ReviewRunInputDto {
+            run_id: "run".into(),
+            target: target_dto.clone(),
+            expected_head_sha: "abc".into(),
+            selected_files: vec!["src/lib.rs".into()],
+            model_id: "deepseek-v4-flash".into(),
+            output_language: ReviewLanguageDto::English,
+        };
+        let domain_input = review_agent::ReviewRunInput::from(run_input.clone());
+        assert_eq!(domain_input.run_id, "run");
+        assert_eq!(
+            domain_input.output_language,
+            review_agent::ReviewLanguage::English
+        );
+        assert_eq!(run_input.model_id, "deepseek-v4-flash");
+        assert_eq!(
+            serde_json::to_value(&run_input).unwrap()["selected_files"],
+            serde_json::json!(["src/lib.rs"])
+        );
+
+        let finding = review_agent::ReviewFinding {
+            id: "finding".into(),
+            severity: review_agent::Severity::High,
+            path: "src/lib.rs".into(),
+            side: review_agent::ReviewSide::RIGHT,
+            line: 2,
+            title: "Title".into(),
+            failure_scenario: "Scenario".into(),
+            explanation: "Explanation".into(),
+            draft_comment: "Draft".into(),
+        };
+        let finding_dto = ReviewFindingDto::from(finding.clone());
+        assert_eq!(
+            serde_json::to_value(&finding_dto).unwrap(),
+            serde_json::json!({"id":"finding","severity":"high","path":"src/lib.rs","side":"RIGHT","line":2,"title":"Title","failure_scenario":"Scenario","explanation":"Explanation","draft_comment":"Draft"})
+        );
+        assert_eq!(
+            review_agent::ReviewFinding::try_from(finding_dto.clone()).unwrap(),
+            finding
+        );
+
+        let usage = review_agent::ReviewUsage {
+            input_tokens: 10,
+            output_tokens: 4,
+            tool_calls: 1,
+        };
+        let usage_dto = ReviewUsageDto::from(usage.clone());
+        assert_eq!(
+            serde_json::to_value(&usage_dto).unwrap(),
+            serde_json::json!({"input_tokens":10,"output_tokens":4,"tool_calls":1})
+        );
+        let result_dto = ReviewRunResultDto::from(review_agent::ReviewRunResult {
+            run_id: "run".into(),
+            head_sha: "abc".into(),
+            summary: "One issue.".into(),
+            reviewed_files: vec!["src/lib.rs".into()],
+            findings: vec![finding.clone()],
+            usage,
+        });
+        assert_eq!(
+            serde_json::to_value(&result_dto).unwrap(),
+            serde_json::json!({
+                "run_id":"run",
+                "head_sha":"abc",
+                "summary":"One issue.",
+                "reviewed_files":["src/lib.rs"],
+                "findings":[{"id":"finding","severity":"high","path":"src/lib.rs","side":"RIGHT","line":2,"title":"Title","failure_scenario":"Scenario","explanation":"Explanation","draft_comment":"Draft"}],
+                "usage":{"input_tokens":10,"output_tokens":4,"tool_calls":1}
+            })
+        );
+
+        let submit_dto = SubmitReviewDto {
+            target: target_dto,
+            head_sha: "abc".into(),
+            findings: vec![finding_dto],
+        };
+        let submit = review_agent::SubmitReview::try_from(submit_dto.clone()).unwrap();
+        assert_eq!(submit.findings, vec![finding]);
+        let published_dto = PublishedReviewDto::from(review_agent::PublishedReview {
+            review_id: 7,
+            html_url: Some("https://example.invalid/7".into()),
+        });
+        assert_eq!(
+            serde_json::to_value(&published_dto).unwrap(),
+            serde_json::json!({"review_id":7,"html_url":"https://example.invalid/7"})
+        );
+        let progress = ReviewProgressEventDto {
+            run_id: "run".into(),
+            stage: "tool_call".into(),
+            tool_name: Some("read_file".into()),
+            tool_calls: Some(1),
+        };
+        assert_eq!(
+            serde_json::to_value(&progress).unwrap(),
+            serde_json::json!({"run_id":"run","stage":"tool_call","tool_name":"read_file","tool_calls":1})
+        );
+
+        for value in [
+            serde_json::to_value(preflight_dto).unwrap(),
+            serde_json::to_value(run_input).unwrap(),
+            serde_json::to_value(result_dto).unwrap(),
+            serde_json::to_value(submit_dto).unwrap(),
+            serde_json::to_value(published_dto).unwrap(),
+            serde_json::to_value(progress).unwrap(),
+        ] {
+            assert_public_shape_has_no_sensitive_fields(&value);
+        }
+    }
+}
+
 /// 传给前端的提交 DTO。这里特意和领域模型 Commit 分开:
 /// 领域模型可以很丰富,DTO 只暴露前端真正需要的字段。
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

@@ -1,4 +1,4 @@
-export type Tab = "changes" | "history" | "compare" | "blame" | "submodules" | "worktrees" | "sparse";
+export type Tab = "changes" | "history" | "compare" | "blame" | "pullRequests" | "submodules" | "worktrees" | "sparse";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "changes", label: "更改" },

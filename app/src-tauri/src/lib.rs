@@ -20,6 +20,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::Emitter;
 
+mod credentials;
+mod review_commands;
+use credentials::{clear_credential, credential_status, save_credential, test_credential};
+use review_commands::{
+    ReviewRunRegistry, cancel_pr_review, get_review_preflight, list_review_models, start_pr_review,
+    submit_pr_review,
+};
+
 /// 持有当前仓库的文件监听器。切仓库时替换 → 旧 watcher 被 drop → 自动停止监听。
 #[derive(Default)]
 struct WatcherState(Mutex<Option<RepoWatcher>>);
@@ -1624,7 +1632,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init()) // 选目录对话框用
         .manage(registry)
         .manage(WatcherState::default())
-        .manage(SearchGen::default());
+        .manage(SearchGen::default())
+        .manage(ReviewRunRegistry::default());
 
     #[cfg(feature = "e2e")]
     let builder = builder
@@ -1714,6 +1723,15 @@ pub fn run() {
         has_gitlab_token,
         get_gitlab_token,
         clear_gitlab_token,
+        credential_status,
+        save_credential,
+        clear_credential,
+        test_credential,
+        list_review_models,
+        get_review_preflight,
+        start_pr_review,
+        cancel_pr_review,
+        submit_pr_review,
         watch_repo,
         e2e_prepare_repo,
         e2e_write_file
@@ -1802,6 +1820,15 @@ pub fn run() {
         has_gitlab_token,
         get_gitlab_token,
         clear_gitlab_token,
+        credential_status,
+        save_credential,
+        clear_credential,
+        test_credential,
+        list_review_models,
+        get_review_preflight,
+        start_pr_review,
+        cancel_pr_review,
+        submit_pr_review,
         watch_repo
     ]);
 

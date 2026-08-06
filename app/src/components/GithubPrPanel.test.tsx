@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setLang } from "../lib/i18n";
@@ -7,6 +7,10 @@ import { ToastProvider } from "./Toast";
 
 const { openUrl } = vi.hoisted(() => ({
   openUrl: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+}));
+const reviewWorkspace = vi.hoisted(() => ({
+  props: null as null | Record<string, unknown>,
+  parentHiddenWhenFocused: null as boolean | null,
 }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
@@ -17,6 +21,23 @@ vi.mock("../ipc", () => ({
   hasGithubToken: vi.fn().mockResolvedValue(true),
   getGithubToken: vi.fn().mockResolvedValue("ghp_secret"),
 }));
+vi.mock("./PrReviewWorkspace", async () => {
+  const { useLayoutEffect, useRef } = await import("react");
+  return {
+    PrReviewWorkspace: (props: Record<string, unknown>) => {
+      const dialogRef = useRef<HTMLDivElement>(null);
+      useLayoutEffect(() => {
+        const previous = document.activeElement as HTMLElement | null;
+        dialogRef.current?.focus();
+        reviewWorkspace.parentHiddenWhenFocused = previous?.closest('[role="dialog"]')?.getAttribute("aria-hidden") === "true";
+        (props.onFocusReady as (() => void) | undefined)?.();
+        return () => previous?.focus();
+      }, []);
+      reviewWorkspace.props = props;
+      return <div ref={dialogRef} role="dialog" aria-label="AI Review workspace" tabIndex={-1}><button onClick={() => (props.onClose as () => void)()}>Close AI workspace</button></div>;
+    },
+  };
+});
 
 const remotes = [
   {
@@ -27,10 +48,44 @@ const remotes = [
 
 describe("GithubPrPanel", () => {
   afterEach(() => {
+    reviewWorkspace.props = null;
+    reviewWorkspace.parentHiddenWhenFocused = null;
     vi.unstubAllGlobals();
     vi.clearAllMocks();
     localStorage.clear();
     setLang("en");
+  });
+
+  it("opens AI Review for the exact remote PR and forwards credential routing", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ number: 17, title: "Review me", html_url: "https://github.com/team/project/pull/17", user: { login: "dev" }, head: { ref: "feature", sha: "abc" }, base: { ref: "main" } }])))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ number: 17, title: "Review me", html_url: "https://github.com/team/project/pull/17", mergeable: true, mergeable_state: "clean", comments: 0, review_comments: 0, commits: 1, changed_files: 1, additions: 1, deletions: 0, user: { login: "dev" }, head: { ref: "feature", sha: "abc" }, base: { ref: "main" } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify([])))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ state: "success", total_count: 0, statuses: [] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ total_count: 0, check_runs: [] })))
+      .mockResolvedValueOnce(new Response(JSON.stringify([])))
+      .mockResolvedValueOnce(new Response(JSON.stringify([])));
+    vi.stubGlobal("fetch", fetchMock);
+    const onConfigureCredential = vi.fn();
+    const user = userEvent.setup();
+    render(<ToastProvider><GithubPrPanel remotes={remotes} branch="feature" preferredRemote="origin" onClose={vi.fn()} onConfigureToken={vi.fn()} onConfigureCredential={onConfigureCredential} /></ToastProvider>);
+    await user.click(await screen.findByRole("button", { name: "Details" }));
+    expect(screen.getByRole("dialog", { name: "GitHub pull requests" })).toBeInTheDocument();
+    const trigger = await screen.findByRole("button", { name: "AI Review" });
+    await user.click(trigger);
+    const workspace = await screen.findByRole("dialog", { name: "AI Review workspace" });
+    expect(workspace).toHaveFocus();
+    expect(reviewWorkspace.parentHiddenWhenFocused).toBe(false);
+    expect(screen.queryByRole("dialog", { name: "GitHub pull requests" })).not.toBeInTheDocument();
+    expect(document.querySelector('[role="dialog"][aria-label="GitHub pull requests"]')).toHaveAttribute("inert");
+    expect(reviewWorkspace.props?.target).toEqual({ owner: "team", repo: "project", pull_number: 17 });
+    act(() => {
+      (reviewWorkspace.props?.onConfigureCredential as (kind: string) => void)("deepseek");
+    });
+    expect(onConfigureCredential).toHaveBeenCalledWith("deepseek");
+    expect(screen.queryByRole("dialog", { name: "AI Review workspace" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "GitHub pull requests" })).toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 
   it("renders panel shell copy in Chinese", async () => {

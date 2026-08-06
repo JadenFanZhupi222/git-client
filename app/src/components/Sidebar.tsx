@@ -9,6 +9,7 @@ import {
   WorktreeIcon,
   FolderIcon,
   ChevronDownIcon,
+  CloudIcon,
 } from "./icons";
 import { useT } from "../lib/i18n";
 
@@ -37,6 +38,7 @@ export function Sidebar({
     { id: "history", label: t("nav.history"), icon: <HistoryIcon width={16} height={16} /> },
     { id: "compare", label: t("nav.compare"), icon: <FileDiffIcon width={16} height={16} /> },
     { id: "blame", label: t("nav.blame"), icon: <HistoryIcon width={16} height={16} /> },
+    { id: "pullRequests", label: t("nav.pullRequests"), icon: <CloudIcon width={16} height={16} /> },
   ];
   if (hasSubmodules) items.push({ id: "submodules", label: t("nav.submodules"), icon: <SubmoduleIcon width={16} height={16} /> });
   if (hasWorktrees) items.push({ id: "worktrees", label: t("nav.worktrees"), icon: <WorktreeIcon width={16} height={16} /> });

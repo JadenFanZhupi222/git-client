@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/review-agent",
     "crates/git-core",
     "crates/git-engine",
     "crates/app-service",
@@ -20,3 +21,9 @@ lru = "0.12"
 similar = "2"
 base64 = "0.22"
 ts-rs = "10"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "sync", "time"] }
+fs2 = "0.4"
+tempfile = "3"

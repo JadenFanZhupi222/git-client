@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal, flushSync } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getGithubToken, hasGithubToken, type IpcError } from "../ipc";
 import {
@@ -18,6 +19,7 @@ import {
 import { CloseIcon, SpinnerIcon } from "./icons";
 import { useToast } from "./Toast";
 import { useT } from "../lib/i18n";
+import { PrReviewWorkspace } from "./PrReviewWorkspace";
 
 export function GithubPrPanel({
   remotes,
@@ -25,12 +27,14 @@ export function GithubPrPanel({
   preferredRemote,
   onClose,
   onConfigureToken,
+  onConfigureCredential,
 }: {
   remotes: RemoteLike[];
   branch: string | null;
   preferredRemote: string | null;
   onClose: () => void;
   onConfigureToken: () => void;
+  onConfigureCredential?: (kind: "deepseek" | "github") => void;
 }) {
   const toast = useToast();
   const t = useT();
@@ -43,6 +47,8 @@ export function GithubPrPanel({
   const [mergingPull, setMergingPull] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reviewTarget, setReviewTarget] = useState<{ owner: string; repo: string; pull_number: number } | null>(null);
+  const [reviewOwnsFocus, setReviewOwnsFocus] = useState(false);
 
   const remote = useMemo(
     () => findGithubRemote(remotes, preferredRemote),
@@ -51,11 +57,11 @@ export function GithubPrPanel({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !reviewTarget) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, reviewTarget]);
 
   useEffect(() => {
     let alive = true;
@@ -205,6 +211,8 @@ export function GithubPrPanel({
         role="dialog"
         aria-modal="true"
         aria-label={t("githubPr.dialog")}
+        aria-hidden={reviewOwnsFocus ? true : undefined}
+        inert={reviewOwnsFocus ? true : undefined}
         className="panel-in popover flex max-h-[78vh] w-[560px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
         onClick={(e) => e.stopPropagation()}
       >
@@ -286,6 +294,11 @@ export function GithubPrPanel({
                       onCreateComment={createPullComment}
                       mergingPull={mergingPull === pr.number}
                       onMerge={mergePull}
+                      onAiReview={() => {
+                        if (!remote) return;
+                        setReviewOwnsFocus(false);
+                        setReviewTarget({ owner: remote.owner, repo: remote.repo, pull_number: pr.number });
+                      }}
                     />
                   )}
                 </li>
@@ -318,16 +331,33 @@ export function GithubPrPanel({
           </button>
         </div>
       </div>
+      {reviewTarget && createPortal(
+        <PrReviewWorkspace
+          target={reviewTarget}
+          onClose={() => {
+            flushSync(() => setReviewOwnsFocus(false));
+            setReviewTarget(null);
+          }}
+          onConfigureCredential={(kind) => {
+            flushSync(() => setReviewOwnsFocus(false));
+            setReviewTarget(null);
+            (onConfigureCredential ?? ((next) => { if (next === "github") onConfigureToken(); }))(kind);
+          }}
+          onFocusReady={() => setReviewOwnsFocus(true)}
+        />,
+        document.body,
+      )}
     </div>
   );
 }
 
-function PullRequestDetailsView({
+export function PullRequestDetailsView({
   detail,
   creatingComment,
   onCreateComment,
   mergingPull,
   onMerge,
+  onAiReview,
 }: {
   detail: GithubPullRequestDetails;
   creatingComment: boolean;
@@ -340,6 +370,7 @@ function PullRequestDetailsView({
     detail: GithubPullRequestDetails,
     method: GithubPullMergeMethod,
   ) => void;
+  onAiReview: () => void;
 }) {
   const t = useT();
   const [commentBody, setCommentBody] = useState("");
@@ -486,6 +517,13 @@ function PullRequestDetailsView({
         </div>
       )}
       <div className="grid gap-1.5 border-t border-line pt-2">
+        <div className="flex justify-end">
+          <button onClick={onAiReview} className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent">
+            {t("githubPrDetail.aiReview")}
+          </button>
+        </div>
+      </div>
+      <div className="grid gap-1.5 border-t border-line pt-2">
         <div className="flex flex-wrap items-center gap-2">
           <label
             className="sr-only"
@@ -603,7 +641,7 @@ function reviewThreadLocation(
   return line ? `${thread.path}:${line}` : thread.path;
 }
 
-function findGithubRemote(
+export function findGithubRemote(
   remotes: RemoteLike[],
   preferredRemote: string | null,
 ): HostingRemote | null {

@@ -143,6 +143,13 @@ export const MoreIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+export const SettingsIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <circle cx="8" cy="8" r="2.25" />
+    <path d="M6.8 1.8h2.4l.45 1.7a5 5 0 0 1 1.1.65l1.7-.5 1.2 2.05-1.25 1.2a5 5 0 0 1 0 1.3l1.25 1.2-1.2 2.05-1.7-.5a5 5 0 0 1-1.1.65l-.45 1.7H6.8l-.45-1.7a5 5 0 0 1-1.1-.65l-1.7.5-1.2-2.05L3.6 8.2a5 5 0 0 1 0-1.3L2.35 5.7l1.2-2.05 1.7.5a5 5 0 0 1 1.1-.65l.45-1.7Z" />
+  </svg>
+);
+
 // 玻璃/透明度:水滴轮廓,表示液态玻璃材质开关。
 export const DropletIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>

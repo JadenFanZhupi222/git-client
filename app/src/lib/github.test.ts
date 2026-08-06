@@ -32,14 +32,16 @@ describe("buildGithubPullsApiUrl", () => {
     );
   });
 
-  it("returns null for non-GitHub remotes or missing branches", () => {
+  it("returns null for non-GitHub remotes and lists all open PRs without a branch", () => {
     expect(
       buildGithubPullsApiUrl(
         { ...githubRemote, provider: "gitlab", webBaseUrl: "" },
         "feature/api",
       ),
     ).toBeNull();
-    expect(buildGithubPullsApiUrl(githubRemote, null)).toBeNull();
+    expect(buildGithubPullsApiUrl(githubRemote, null)).toBe(
+      "https://api.github.com/repos/acme/project/pulls?state=open&per_page=50",
+    );
   });
 });
 
@@ -282,6 +284,19 @@ describe("createGithubPullRequest", () => {
 });
 
 describe("fetchGithubPullRequests", () => {
+  it("loads all open pull requests when no branch filter is supplied", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    await fetchGithubPullRequests(githubRemote, null, null, fetchMock);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.github.com/repos/acme/project/pulls?state=open&per_page=50",
+      { headers: { Accept: "application/vnd.github+json" } },
+    );
+  });
+
   it("adds GitHub headers and bearer token when loading pull requests", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
@@ -575,6 +590,40 @@ describe("fetchGithubPullRequestDetails", () => {
         },
       ],
     });
+  });
+
+  it("keeps PR details available when fine-grained PAT cannot read check runs", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/pulls/7")) {
+        return new Response(JSON.stringify({
+          number: 7,
+          title: "Review without checks",
+          html_url: "https://github.com/acme/project/pull/7",
+          user: { login: "octo" },
+          head: { ref: "feature/api", sha: "abc123" },
+          base: { ref: "main" },
+        }));
+      }
+      if (url.includes("/check-runs")) {
+        return new Response(JSON.stringify({ message: "Resource not accessible" }), { status: 403 });
+      }
+      if (url.endsWith("/status")) {
+        return new Response(JSON.stringify({ state: "pending", total_count: 0, statuses: [] }));
+      }
+      return new Response(JSON.stringify([]));
+    });
+
+    const detail = await fetchGithubPullRequestDetails(
+      githubRemote,
+      7,
+      "github_pat_secret",
+      fetchMock,
+    );
+
+    expect(detail.title).toBe("Review without checks");
+    expect(detail.checkRuns).toEqual([]);
+    expect(detail.combinedStatus?.state).toBe("pending");
   });
 });
 

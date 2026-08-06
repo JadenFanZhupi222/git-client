@@ -177,13 +177,11 @@ export function buildGithubPullsApiUrl(
   remote: HostingRemote,
   branch: string | null,
 ): string | null {
-  if (remote.provider !== "github" || !branch) return null;
+  if (remote.provider !== "github") return null;
 
-  const params = new URLSearchParams({
-    state: "open",
-    head: `${remote.owner}:${branch}`,
-    per_page: "20",
-  });
+  const params = new URLSearchParams({ state: "open" });
+  if (branch) params.set("head", `${remote.owner}:${branch}`);
+  params.set("per_page", branch ? "20" : "50");
   return `https://api.github.com/repos/${encodeURIComponent(remote.owner)}/${encodeURIComponent(remote.repo)}/pulls?${params.toString()}`;
 }
 
@@ -406,12 +404,13 @@ export async function fetchGithubPullRequestDetails(
       buildGithubCheckRunsApiUrl(remote, headSha),
       { headers: githubHeaders(token) },
     );
-    if (!checkRunsResponse.ok) {
+    if (checkRunsResponse.ok) {
+      checkRuns = toCheckRunSummaries(
+        (await checkRunsResponse.json()) as GithubCheckRunsResponse,
+      );
+    } else if (checkRunsResponse.status !== 403 && checkRunsResponse.status !== 404) {
       throw new Error(githubApiErrorMessage(checkRunsResponse.status));
     }
-    checkRuns = toCheckRunSummaries(
-      (await checkRunsResponse.json()) as GithubCheckRunsResponse,
-    );
   }
 
   const commentsResponse = await fetcher(
