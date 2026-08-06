@@ -177,13 +177,11 @@ export function buildGithubPullsApiUrl(
   remote: HostingRemote,
   branch: string | null,
 ): string | null {
-  if (remote.provider !== "github" || !branch) return null;
+  if (remote.provider !== "github") return null;
 
-  const params = new URLSearchParams({
-    state: "open",
-    head: `${remote.owner}:${branch}`,
-    per_page: "20",
-  });
+  const params = new URLSearchParams({ state: "open" });
+  if (branch) params.set("head", `${remote.owner}:${branch}`);
+  params.set("per_page", branch ? "20" : "50");
   return `https://api.github.com/repos/${encodeURIComponent(remote.owner)}/${encodeURIComponent(remote.repo)}/pulls?${params.toString()}`;
 }
 

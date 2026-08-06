@@ -347,7 +347,7 @@ export function GithubPrPanel({
   );
 }
 
-function PullRequestDetailsView({
+export function PullRequestDetailsView({
   detail,
   creatingComment,
   onCreateComment,
@@ -637,7 +637,7 @@ function reviewThreadLocation(
   return line ? `${thread.path}:${line}` : thread.path;
 }
 
-function findGithubRemote(
+export function findGithubRemote(
   remotes: RemoteLike[],
   preferredRemote: string | null,
 ): HostingRemote | null {

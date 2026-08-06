@@ -32,14 +32,16 @@ describe("buildGithubPullsApiUrl", () => {
     );
   });
 
-  it("returns null for non-GitHub remotes or missing branches", () => {
+  it("returns null for non-GitHub remotes and lists all open PRs without a branch", () => {
     expect(
       buildGithubPullsApiUrl(
         { ...githubRemote, provider: "gitlab", webBaseUrl: "" },
         "feature/api",
       ),
     ).toBeNull();
-    expect(buildGithubPullsApiUrl(githubRemote, null)).toBeNull();
+    expect(buildGithubPullsApiUrl(githubRemote, null)).toBe(
+      "https://api.github.com/repos/acme/project/pulls?state=open&per_page=50",
+    );
   });
 });
 
@@ -282,6 +284,19 @@ describe("createGithubPullRequest", () => {
 });
 
 describe("fetchGithubPullRequests", () => {
+  it("loads all open pull requests when no branch filter is supplied", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+
+    await fetchGithubPullRequests(githubRemote, null, null, fetchMock);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.github.com/repos/acme/project/pulls?state=open&per_page=50",
+      { headers: { Accept: "application/vnd.github+json" } },
+    );
+  });
+
   it("adds GitHub headers and bearer token when loading pull requests", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

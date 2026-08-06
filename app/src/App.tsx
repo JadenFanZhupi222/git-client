@@ -37,7 +37,7 @@ const RemoteManager = lazy(() => import("./components/RemoteManager").then((m) =
 const GithubCreatePrDialog = lazy(() => import("./components/GithubCreatePrDialog").then((m) => ({ default: m.GithubCreatePrDialog })));
 const GitlabCreateMrDialog = lazy(() => import("./components/GitlabCreateMrDialog").then((m) => ({ default: m.GitlabCreateMrDialog })));
 const SettingsPanel = lazy(() => import("./components/SettingsPanel").then((m) => ({ default: m.SettingsPanel })));
-const GithubPrPanel = lazy(() => import("./components/GithubPrPanel").then((m) => ({ default: m.GithubPrPanel })));
+const PullRequestsView = lazy(() => import("./components/PullRequestsView").then((m) => ({ default: m.PullRequestsView })));
 const GitlabMrPanel = lazy(() => import("./components/GitlabMrPanel").then((m) => ({ default: m.GitlabMrPanel })));
 const CloneDialog = lazy(() => import("./components/CloneDialog").then((m) => ({ default: m.CloneDialog })));
 const OpLogPanel = lazy(() => import("./components/OpLogPanel").then((m) => ({ default: m.OpLogPanel })));
@@ -72,7 +72,6 @@ export default function App() {
   const [moreMenu, setMoreMenu] = useState(false);
   const [remoteMgrOpen, setRemoteMgrOpen] = useState(false);
   const [githubCreatePrOpen, setGithubCreatePrOpen] = useState(false);
-  const [githubPrOpen, setGithubPrOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   const [gitlabCreateMrOpen, setGitlabCreateMrOpen] = useState(false);
   const [gitlabMrOpen, setGitlabMrOpen] = useState(false);
@@ -330,6 +329,7 @@ export default function App() {
     { id: "history", label: t("nav.history") },
     { id: "compare", label: t("nav.compare") },
     { id: "blame", label: t("nav.blame") },
+    { id: "pullRequests", label: t("nav.pullRequests") },
   ];
   if (hasSubmodules) views.push({ id: "submodules", label: t("nav.submodules") });
   if (hasWorktrees) views.push({ id: "worktrees", label: t("nav.worktrees") });
@@ -339,6 +339,7 @@ export default function App() {
     history: <HistoryIcon width={15} height={15} />,
     compare: <FileDiffIcon width={15} height={15} />,
     blame: <BlameIcon width={15} height={15} />,
+    pullRequests: <CloudIcon width={15} height={15} />,
     submodules: <SubmoduleIcon width={15} height={15} />,
     worktrees: <WorktreeIcon width={15} height={15} />,
     sparse: <FolderIcon width={15} height={15} />,
@@ -463,7 +464,7 @@ export default function App() {
   commands.push(
     { id: "remote:create-pr", icon: <PlusIcon width={15} height={15} />, title: "打开 PR/MR 页面", subtitle: "基于当前分支创建 Pull Request / Merge Request", group: "协作", keywords: "pull request merge request pr mr github gitlab bitbucket 协作 评审 合并请求", disabled: !repo || !branch || busy, run: openCreateChangeRequest },
     { id: "remote:find-pr", icon: <SearchIcon width={15} height={15} />, title: "查找当前分支 PR", subtitle: "在 GitHub 打开当前分支的 open PR 搜索", group: "协作", keywords: "find pull request existing pr github current branch 查找 已有 当前分支", disabled: !repo || !branch || busy, run: openExistingChangeRequests },
-    { id: "github:list-prs", icon: <CloudIcon width={15} height={15} />, title: "查看当前分支 GitHub PR", subtitle: "在客户端内查看 PR、review 和状态检查", group: "协作", keywords: "github pull request pr review status checks api 查看 评审", disabled: !repo || !branch || busy, run: () => setGithubPrOpen(true) },
+    { id: "github:list-prs", icon: <CloudIcon width={15} height={15} />, title: "查看 GitHub Pull Requests", subtitle: "打开仓库 PR 工作区、review 和状态检查", group: "协作", keywords: "github pull request pr review status checks api 查看 评审", disabled: !repo || busy, run: () => setTab("pullRequests") },
     { id: "github:create-pr", icon: <PlusIcon width={15} height={15} />, title: "创建 GitHub PR", subtitle: "在客户端内通过 GitHub API 创建 Pull Request", group: "协作", keywords: "github api create pull request pr new draft token 创建 新建", disabled: !repo || !branch || busy, run: () => setGithubCreatePrOpen(true) },
     { id: "github:token", icon: <SettingsIcon width={15} height={15} />, title: t("cmd.settings.github"), subtitle: t("cmd.settings.github.sub"), group: t("group.panel"), keywords: "github token pat auth credential", run: () => openSettingsFor(APP_SETTINGS_ENTRY_POINTS.githubCommand) },
     { id: "gitlab:list-mrs", icon: <CloudIcon width={15} height={15} />, title: "查看当前分支 GitLab MR", subtitle: "在客户端内查看 open Merge Request", group: "协作", keywords: "gitlab merge request mr api 查看 合并请求", disabled: !repo || !branch || busy, run: () => setGitlabMrOpen(true) },
@@ -747,7 +748,7 @@ export default function App() {
               message={t("common.lazyLoadFailed")}
               retryLabel={t("common.reload")}
             >
-              {tab === "changes" ? <ChangesView repo={repo} /> : tab === "history" ? <HistoryView repo={repo} /> : tab === "compare" ? <CompareView repo={repo} /> : tab === "submodules" ? <SubmodulesView repo={repo} /> : tab === "worktrees" ? <WorktreesView repo={repo} /> : tab === "sparse" ? <SparseCheckoutView repo={repo} /> : <BlameView repo={repo} />}
+              {tab === "changes" ? <ChangesView repo={repo} /> : tab === "history" ? <HistoryView repo={repo} /> : tab === "compare" ? <CompareView repo={repo} /> : tab === "pullRequests" ? <PullRequestsView remotes={remoteInfos} branch={branch} preferredRemote={selectedRemote} onCreatePullRequest={() => setGithubCreatePrOpen(true)} onConfigureToken={() => openSettingsFor(APP_SETTINGS_ENTRY_POINTS.githubPrPanel)} onConfigureCredential={setSettingsSection} /> : tab === "submodules" ? <SubmodulesView repo={repo} /> : tab === "worktrees" ? <WorktreesView repo={repo} /> : tab === "sparse" ? <SparseCheckoutView repo={repo} /> : <BlameView repo={repo} />}
             </LazyBoundary>
           </div>
         </div>
@@ -830,7 +831,10 @@ export default function App() {
           branches={branches}
           refs={refs}
           onClose={() => setGithubCreatePrOpen(false)}
-          onCreated={() => setGithubPrOpen(true)}
+          onCreated={() => {
+            setGithubCreatePrOpen(false);
+            setTab("pullRequests");
+          }}
           onConfigureToken={() => {
             setGithubCreatePrOpen(false);
             openSettingsFor(APP_SETTINGS_ENTRY_POINTS.githubCreatePrDialog);
@@ -850,23 +854,6 @@ export default function App() {
           onConfigureToken={() => {
             setGitlabCreateMrOpen(false);
             openSettingsFor(APP_SETTINGS_ENTRY_POINTS.gitlabCreateMrDialog);
-          }}
-        />
-      )}
-
-      {githubPrOpen && (
-        <GithubPrPanel
-          remotes={remoteInfos}
-          branch={branch}
-          preferredRemote={selectedRemote}
-          onClose={() => setGithubPrOpen(false)}
-          onConfigureToken={() => {
-            setGithubPrOpen(false);
-            openSettingsFor(APP_SETTINGS_ENTRY_POINTS.githubPrPanel);
-          }}
-          onConfigureCredential={(kind) => {
-            setGithubPrOpen(false);
-            setSettingsSection(kind);
           }}
         />
       )}
