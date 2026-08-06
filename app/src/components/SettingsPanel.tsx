@@ -185,7 +185,7 @@ export function SettingsPanel({
         tabIndex={-1}
         aria-modal="true"
         aria-labelledby="settings-title"
-        className="panel-in popover relative flex max-h-[82vh] w-[780px] max-w-[94vw] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
+        className="panel-in popover relative flex h-[min(680px,calc(100vh-48px))] w-[min(960px,calc(100vw-48px))] max-h-none max-w-none flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
       >
         <header className="flex items-center gap-2 border-b border-line px-4 py-3">
           <h2 id="settings-title" className="text-sm font-semibold text-fg">
@@ -333,47 +333,51 @@ export function SettingsPanel({
                     {t("settings.credentialHelper")}
                   </p>
 
-                  <div className="mt-5 flex flex-col items-stretch gap-2 border-t border-line pt-4 min-[441px]:flex-row min-[441px]:items-center">
-                    {configured && (
-                      <>
-                        <Button
-                          type="button"
-                          variant="danger"
-                          onClick={() => void runOperation("clear")}
-                          disabled={busy}
-                          className="w-full min-[441px]:w-auto"
-                        >
-                          {activeOperation === "clear" && <SpinnerIcon width={13} height={13} />}
-                          {t("settings.action.removeCredential")}
-                        </Button>
-                        <Button
-                          type="button"
-                          onClick={() => void runOperation("test")}
-                          disabled={busy}
-                          className="w-full min-[441px]:ml-auto min-[441px]:w-auto"
-                        >
-                          {activeOperation === "test" && <SpinnerIcon width={13} height={13} />}
-                          {t("settings.action.testConnection")}
-                        </Button>
-                      </>
-                    )}
-                    <Button
-                      type="button"
-                      variant="primary"
-                      onClick={() => void runOperation("save")}
-                      disabled={busy || !secret.trim()}
-                      className={configured
-                        ? "w-full min-[441px]:w-auto"
-                        : "ml-auto w-full min-[441px]:w-auto"}
-                    >
-                      {activeOperation === "save" && <SpinnerIcon width={13} height={13} />}
-                      {t(configured ? "settings.action.saveReplacement" : "settings.action.saveCredential")}
-                    </Button>
-                  </div>
                 </>
                   )}
                 </div>
               ))}
+            </div>
+
+            <div
+              data-testid="settings-action-bar"
+              className="flex shrink-0 flex-col items-stretch gap-2 border-t border-line bg-canvas px-3 py-4 min-[441px]:flex-row min-[441px]:items-center sm:px-5"
+            >
+              {configured && (
+                <Button
+                  type="button"
+                  variant="danger"
+                  onClick={() => void runOperation("clear")}
+                  disabled={busy}
+                  className="w-full min-[441px]:w-auto"
+                >
+                  {activeOperation === "clear" && <SpinnerIcon width={13} height={13} />}
+                  {t("settings.action.removeCredential")}
+                </Button>
+              )}
+              <div className="flex flex-col gap-2 min-[441px]:ml-auto min-[441px]:flex-row">
+                {configured && (
+                  <Button
+                    type="button"
+                    onClick={() => void runOperation("test")}
+                    disabled={busy}
+                    className="w-full min-[441px]:w-auto"
+                  >
+                    {activeOperation === "test" && <SpinnerIcon width={13} height={13} />}
+                    {t("settings.action.testConnection")}
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="primary"
+                  onClick={() => void runOperation("save")}
+                  disabled={busy || !secret.trim()}
+                  className="w-full min-[441px]:w-auto"
+                >
+                  {activeOperation === "save" && <SpinnerIcon width={13} height={13} />}
+                  {t(configured ? "settings.action.saveReplacement" : "settings.action.saveCredential")}
+                </Button>
+              </div>
             </div>
           </div>
         </div>

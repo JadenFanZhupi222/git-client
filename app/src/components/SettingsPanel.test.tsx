@@ -65,8 +65,10 @@ describe("SettingsPanel", () => {
     await screen.findByText("Not configured");
 
     const save = screen.getByRole("button", { name: "Save credential" });
+    const actionBar = screen.getByTestId("settings-action-bar");
     expect(save).toBeDisabled();
-    expect(save).toHaveClass("ml-auto");
+    expect(actionBar).toBeInTheDocument();
+    expect(actionBar).toHaveClass("shrink-0", "border-t", "bg-canvas");
     expect(screen.queryByRole("button", { name: "Remove credential" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Test connection" })).not.toBeInTheDocument();
 
@@ -88,11 +90,11 @@ describe("SettingsPanel", () => {
     const save = screen.getByRole("button", { name: "Save replacement" });
     const test = screen.getByRole("button", { name: "Test connection" });
     const remove = screen.getByRole("button", { name: "Remove credential" });
-    const actions = save.parentElement!;
+    const actions = screen.getByTestId("settings-action-bar");
     expect(within(actions).getAllByRole("button")).toEqual([remove, test, save]);
     expect(actions).toHaveClass("flex-col", "min-[441px]:flex-row");
     expect(remove).not.toHaveClass("min-[441px]:order-1");
-    expect(test).toHaveClass("min-[441px]:ml-auto");
+    expect(test.parentElement).toHaveClass("min-[441px]:ml-auto", "min-[441px]:flex-row");
     expect(save).not.toHaveClass("min-[441px]:order-3");
     expect(save).toBeDisabled();
 
@@ -221,9 +223,11 @@ describe("SettingsPanel", () => {
     const dialog = screen.getByRole("dialog", { name: "Settings" });
     const activePanel = screen.getByRole("tabpanel", { name: "DeepSeek" });
     const scrollOwner = activePanel.parentElement;
+    const actionBar = screen.getByTestId("settings-action-bar");
     expect(scrollOwner).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
     expect(activePanel).not.toHaveClass("overflow-y-auto");
     expect(dialog.querySelectorAll(".overflow-y-auto")).toHaveLength(1);
+    expect(actionBar.closest(".overflow-y-auto")).toBeNull();
   });
 
   it("stacks categories above full-width content and keeps provider tabs scrollable on narrow screens", () => {
@@ -232,7 +236,10 @@ describe("SettingsPanel", () => {
     const categories = screen.getByRole("navigation", { name: "Settings categories" });
     const layout = categories.parentElement;
     const providers = screen.getByRole("tablist", { name: "Integration" });
-    expect(screen.getByRole("dialog", { name: "Settings" })).toHaveClass("w-[780px]", "max-w-[94vw]");
+    expect(screen.getByRole("dialog", { name: "Settings" })).toHaveClass(
+      "h-[min(680px,calc(100vh-48px))]",
+      "w-[min(960px,calc(100vw-48px))]",
+    );
     expect(layout).toHaveClass(
       "grid-cols-1",
       "grid-rows-[auto_minmax(0,1fr)]",
