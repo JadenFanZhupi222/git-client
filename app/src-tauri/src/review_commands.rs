@@ -1,11 +1,12 @@
 use crate::credentials::read_credential;
 use async_trait::async_trait;
 use ipc_types::{
-    CredentialKindDto, IpcError, PublishedReviewDto, ReviewPreflightDto, ReviewProgressEventDto,
-    ReviewRunInputDto, ReviewRunResultDto, ReviewTargetDto, SubmitReviewDto,
+    CredentialKindDto, IpcError, PublishedReviewDto, ReviewModelOptionDto, ReviewPreflightDto,
+    ReviewProgressEventDto, ReviewRunInputDto, ReviewRunResultDto, ReviewTargetDto,
+    SubmitReviewDto,
 };
 use review_agent::{
-    CancelSignal, DeepSeekResponsesProvider, GithubReviewSource, ProgressSink, ProgressUpdate,
+    CancelSignal, DeepSeekProvider, GithubReviewSource, ProgressSink, ProgressUpdate,
     ReviewOrchestrator, ReviewSource, SanitizedTraceStore,
 };
 use std::collections::{HashMap, VecDeque};
@@ -25,6 +26,7 @@ trait ReviewBackendFactory: Send + Sync {
     fn source(&self, token: String) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError>;
     fn model(
         &self,
+        model_id: &str,
         key: String,
     ) -> Result<Box<dyn review_agent::ModelProvider>, review_agent::ReviewError>;
 }
@@ -111,12 +113,16 @@ impl<'a> ReviewCommandService<'a> {
         self.progress(&run_id, "loading_pr");
         let result: Result<ReviewRunResultDto, IpcError> = async {
             let source = self.source().await?;
+            let credential_kind = review_model_credential(&input.model_id)?;
             let key = self
                 .credentials
-                .read(CredentialKindDto::Deepseek)
+                .read(credential_kind)
                 .await
-                .map_err(|e| map_review_credential_error(CredentialKindDto::Deepseek, e))?;
-            let model = self.factory.model(key).map_err(review_error)?;
+                .map_err(|e| map_review_credential_error(credential_kind, e))?;
+            let model = self
+                .factory
+                .model(&input.model_id, key)
+                .map_err(review_error)?;
             self.progress(&run_id, "analyzing");
             let tool_progress = ServiceToolProgress {
                 emitter: self.progress,
@@ -327,6 +333,34 @@ fn map_review_credential_error(kind: CredentialKindDto, mut error: IpcError) -> 
     error
 }
 
+fn review_model_options() -> Vec<ReviewModelOptionDto> {
+    vec![
+        ReviewModelOptionDto {
+            id: review_agent::DEEPSEEK_V4_FLASH_MODEL.into(),
+            label: "DeepSeek V4 Flash".into(),
+            provider: "DeepSeek".into(),
+        },
+        ReviewModelOptionDto {
+            id: review_agent::DEEPSEEK_V4_PRO_MODEL.into(),
+            label: "DeepSeek V4 Pro".into(),
+            provider: "DeepSeek".into(),
+        },
+    ]
+}
+
+fn review_model_credential(model_id: &str) -> Result<CredentialKindDto, IpcError> {
+    match model_id {
+        review_agent::DEEPSEEK_V4_FLASH_MODEL | review_agent::DEEPSEEK_V4_PRO_MODEL => {
+            Ok(CredentialKindDto::Deepseek)
+        }
+        _ => Err(IpcError {
+            code: "INVALID_REVIEW_MODEL".into(),
+            message: "The selected review model is not supported".into(),
+            recoverable: false,
+        }),
+    }
+}
+
 struct KeyringCredentialReader;
 #[async_trait]
 impl CredentialReader for KeyringCredentialReader {
@@ -344,9 +378,10 @@ impl ReviewBackendFactory for ProductionBackendFactory {
     }
     fn model(
         &self,
+        model_id: &str,
         key: String,
     ) -> Result<Box<dyn review_agent::ModelProvider>, review_agent::ReviewError> {
-        Ok(Box::new(DeepSeekResponsesProvider::new(key)?))
+        Ok(Box::new(DeepSeekProvider::new_with_model(key, model_id)?))
     }
 }
 
@@ -367,6 +402,11 @@ impl review_agent::TraceSink for NoopTraceSink {
     async fn record(&self, _: review_agent::TraceEntry) -> Result<(), review_agent::ReviewError> {
         Ok(())
     }
+}
+
+#[tauri::command]
+pub(crate) fn list_review_models() -> Vec<ReviewModelOptionDto> {
+    review_model_options()
 }
 
 #[tauri::command]
@@ -578,6 +618,7 @@ mod tests {
         }
         fn model(
             &self,
+            _: &str,
             _: String,
         ) -> Result<Box<dyn review_agent::ModelProvider>, review_agent::ReviewError> {
             Ok(Box::new(SelfCancellingModel {
@@ -604,6 +645,7 @@ mod tests {
         }
         fn model(
             &self,
+            _: &str,
             _: String,
         ) -> Result<Box<dyn review_agent::ModelProvider>, review_agent::ReviewError> {
             self.model_calls.fetch_add(1, AtomicOrdering::SeqCst);
@@ -616,6 +658,7 @@ mod tests {
         }
         fn model(
             &self,
+            _: &str,
             _: String,
         ) -> Result<Box<dyn review_agent::ModelProvider>, review_agent::ReviewError> {
             Ok(Box::new(FakeModel(self.responses.clone())))
@@ -648,12 +691,29 @@ mod tests {
             pull_number: 1,
         }
     }
+
+    #[test]
+    fn review_model_catalog_is_allowlisted_and_provider_qualified() {
+        let models = list_review_models();
+        assert_eq!(models.len(), 2);
+        assert_eq!(models[0].id, "deepseek-v4-flash");
+        assert_eq!(models[0].provider, "DeepSeek");
+        assert_eq!(models[1].id, "deepseek-v4-pro");
+        assert_eq!(
+            review_model_credential(&models[0].id).unwrap(),
+            CredentialKindDto::Deepseek
+        );
+        let error = review_model_credential("user-controlled-model").unwrap_err();
+        assert_eq!(error.code, "INVALID_REVIEW_MODEL");
+    }
     fn run_input(run_id: &str) -> ReviewRunInputDto {
         ReviewRunInputDto {
             run_id: run_id.into(),
             target: target_dto(),
             expected_head_sha: "abc".into(),
             selected_files: vec!["src/lib.rs".into()],
+            model_id: "deepseek-v4-flash".into(),
+            output_language: ipc_types::ReviewLanguageDto::English,
         }
     }
     fn submit_input() -> SubmitReviewDto {

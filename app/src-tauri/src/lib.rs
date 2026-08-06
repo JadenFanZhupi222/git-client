@@ -24,7 +24,8 @@ mod credentials;
 mod review_commands;
 use credentials::{clear_credential, credential_status, save_credential, test_credential};
 use review_commands::{
-    ReviewRunRegistry, cancel_pr_review, get_review_preflight, start_pr_review, submit_pr_review,
+    ReviewRunRegistry, cancel_pr_review, get_review_preflight, list_review_models, start_pr_review,
+    submit_pr_review,
 };
 
 /// 持有当前仓库的文件监听器。切仓库时替换 → 旧 watcher 被 drop → 自动停止监听。
@@ -1726,6 +1727,7 @@ pub fn run() {
         save_credential,
         clear_credential,
         test_credential,
+        list_review_models,
         get_review_preflight,
         start_pr_review,
         cancel_pr_review,
@@ -1822,6 +1824,7 @@ pub fn run() {
         save_credential,
         clear_credential,
         test_credential,
+        list_review_models,
         get_review_preflight,
         start_pr_review,
         cancel_pr_review,

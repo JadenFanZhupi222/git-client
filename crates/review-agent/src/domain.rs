@@ -5,8 +5,11 @@ use thiserror::Error;
 
 pub const MAX_AUTO_FILES: usize = 30;
 pub const MAX_PATCH_BYTES: usize = 200_000;
-pub const MAX_MODEL_ROUNDS: usize = 8;
-pub const MAX_TOOL_CALLS: usize = 20;
+// Tool calls are an exploration safety ceiling, not a completion signal. The
+// provider disables tools at this point and reserves the remaining rounds for
+// producing a final review from the evidence already collected.
+pub const MAX_MODEL_ROUNDS: usize = 10;
+pub const MAX_TOOL_CALLS: usize = 8;
 pub const MAX_READ_LINES: u32 = 400;
 pub const MAX_TOOL_OUTPUT_BYTES: usize = 300_000;
 
@@ -51,12 +54,33 @@ pub struct ReviewPreflight {
     pub requires_selection: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewLanguage {
+    SimplifiedChinese,
+    English,
+}
+
+impl ReviewLanguage {
+    pub(crate) fn prompt_instruction(self) -> &'static str {
+        match self {
+            Self::SimplifiedChinese => {
+                "Write the summary, titles, failure scenarios, explanations, and draft comments in Simplified Chinese. Preserve code identifiers and repository paths exactly."
+            }
+            Self::English => {
+                "Write the summary, titles, failure scenarios, explanations, and draft comments in English. Preserve code identifiers and repository paths exactly."
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewRunInput {
     pub run_id: String,
     pub target: ReviewTarget,
     pub expected_head_sha: String,
     pub selected_files: Vec<String>,
+    pub output_language: ReviewLanguage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

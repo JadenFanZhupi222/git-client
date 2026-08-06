@@ -591,6 +591,40 @@ describe("fetchGithubPullRequestDetails", () => {
       ],
     });
   });
+
+  it("keeps PR details available when fine-grained PAT cannot read check runs", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/pulls/7")) {
+        return new Response(JSON.stringify({
+          number: 7,
+          title: "Review without checks",
+          html_url: "https://github.com/acme/project/pull/7",
+          user: { login: "octo" },
+          head: { ref: "feature/api", sha: "abc123" },
+          base: { ref: "main" },
+        }));
+      }
+      if (url.includes("/check-runs")) {
+        return new Response(JSON.stringify({ message: "Resource not accessible" }), { status: 403 });
+      }
+      if (url.endsWith("/status")) {
+        return new Response(JSON.stringify({ state: "pending", total_count: 0, statuses: [] }));
+      }
+      return new Response(JSON.stringify([]));
+    });
+
+    const detail = await fetchGithubPullRequestDetails(
+      githubRemote,
+      7,
+      "github_pat_secret",
+      fetchMock,
+    );
+
+    expect(detail.title).toBe("Review without checks");
+    expect(detail.checkRuns).toEqual([]);
+    expect(detail.combinedStatus?.state).toBe("pending");
+  });
 });
 
 describe("githubApiErrorMessage", () => {

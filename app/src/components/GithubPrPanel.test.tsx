@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setLang } from "../lib/i18n";
@@ -79,9 +79,11 @@ describe("GithubPrPanel", () => {
     expect(screen.queryByRole("dialog", { name: "GitHub pull requests" })).not.toBeInTheDocument();
     expect(document.querySelector('[role="dialog"][aria-label="GitHub pull requests"]')).toHaveAttribute("inert");
     expect(reviewWorkspace.props?.target).toEqual({ owner: "team", repo: "project", pull_number: 17 });
-    (reviewWorkspace.props?.onConfigureCredential as (kind: string) => void)("deepseek");
+    act(() => {
+      (reviewWorkspace.props?.onConfigureCredential as (kind: string) => void)("deepseek");
+    });
     expect(onConfigureCredential).toHaveBeenCalledWith("deepseek");
-    await user.click(screen.getByRole("button", { name: "Close AI workspace" }));
+    expect(screen.queryByRole("dialog", { name: "AI Review workspace" })).not.toBeInTheDocument();
     expect(await screen.findByRole("dialog", { name: "GitHub pull requests" })).toBeInTheDocument();
     expect(trigger).toHaveFocus();
   });

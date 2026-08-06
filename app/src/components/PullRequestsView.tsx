@@ -337,7 +337,10 @@ export function PullRequestsView({
         <PrReviewWorkspace
           target={reviewTarget}
           onClose={() => setReviewTarget(null)}
-          onConfigureCredential={(kind) => (onConfigureCredential ?? ((next) => next === "github" && onConfigureToken()))(kind)}
+          onConfigureCredential={(kind) => {
+            setReviewTarget(null);
+            (onConfigureCredential ?? ((next) => next === "github" && onConfigureToken()))(kind);
+          }}
         />,
         document.body,
       )}

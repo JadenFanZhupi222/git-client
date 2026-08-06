@@ -1,0 +1,113 @@
+import type {
+  ReviewFindingDto,
+  ReviewLanguageDto,
+  ReviewRunResultDto,
+  ReviewTargetDto,
+} from "../bindings";
+
+const CACHE_PREFIX = "pr-review-result-v1";
+
+export type CachedFindingDraft = {
+  finding: ReviewFindingDto;
+  selected: boolean;
+  comment: string;
+};
+
+export type CachedReview = {
+  version: 1;
+  headSha: string;
+  modelId: string;
+  outputLanguage: ReviewLanguageDto;
+  result: ReviewRunResultDto;
+  drafts: CachedFindingDraft[];
+};
+
+export function loadCachedReview(
+  target: ReviewTargetDto,
+  expectedHeadSha: string,
+): CachedReview | null {
+  const key = cacheKey(target);
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const value: unknown = JSON.parse(raw);
+    if (!isCachedReview(value) || value.headSha !== expectedHeadSha || value.result.head_sha !== expectedHeadSha) {
+      localStorage.removeItem(key);
+      return null;
+    }
+    return value;
+  } catch {
+    localStorage.removeItem(key);
+    return null;
+  }
+}
+
+export function saveCachedReview(target: ReviewTargetDto, value: CachedReview): void {
+  try {
+    localStorage.setItem(cacheKey(target), JSON.stringify(value));
+  } catch {
+    // Review remains usable in memory if storage is unavailable or full.
+  }
+}
+
+export function clearCachedReview(target: ReviewTargetDto): void {
+  try {
+    localStorage.removeItem(cacheKey(target));
+  } catch {
+    // Storage cleanup is best-effort.
+  }
+}
+
+function cacheKey(target: ReviewTargetDto): string {
+  return `${CACHE_PREFIX}:${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}#${target.pull_number}`;
+}
+
+function isCachedReview(value: unknown): value is CachedReview {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<CachedReview>;
+  return candidate.version === 1
+    && typeof candidate.headSha === "string"
+    && typeof candidate.modelId === "string"
+    && (candidate.outputLanguage === "simplified_chinese" || candidate.outputLanguage === "english")
+    && isReviewResult(candidate.result)
+    && Array.isArray(candidate.drafts)
+    && candidate.drafts.every(isFindingDraft);
+}
+
+function isReviewResult(value: unknown): value is ReviewRunResultDto {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<ReviewRunResultDto>;
+  return typeof candidate.run_id === "string"
+    && typeof candidate.head_sha === "string"
+    && typeof candidate.summary === "string"
+    && Array.isArray(candidate.reviewed_files)
+    && candidate.reviewed_files.every((path) => typeof path === "string")
+    && Array.isArray(candidate.findings)
+    && candidate.findings.every(isFinding)
+    && Boolean(candidate.usage)
+    && typeof candidate.usage?.input_tokens === "number"
+    && typeof candidate.usage?.output_tokens === "number"
+    && typeof candidate.usage?.tool_calls === "number";
+}
+
+function isFindingDraft(value: unknown): value is CachedFindingDraft {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<CachedFindingDraft>;
+  return typeof candidate.selected === "boolean"
+    && typeof candidate.comment === "string"
+    && isFinding(candidate.finding);
+}
+
+function isFinding(value: unknown): value is ReviewFindingDto {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<ReviewFindingDto>;
+  return typeof candidate.id === "string"
+    && typeof candidate.severity === "string"
+    && typeof candidate.path === "string"
+    && typeof candidate.side === "string"
+    && typeof candidate.line === "number"
+    && typeof candidate.title === "string"
+    && typeof candidate.failure_scenario === "string"
+    && typeof candidate.explanation === "string"
+    && typeof candidate.draft_comment === "string";
+}

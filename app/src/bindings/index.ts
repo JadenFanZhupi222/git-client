@@ -38,6 +38,8 @@ export type { CredentialKindDto } from "./CredentialKindDto";
 export type { PublishedReviewDto } from "./PublishedReviewDto";
 export type { ReviewFileDto } from "./ReviewFileDto";
 export type { ReviewFindingDto } from "./ReviewFindingDto";
+export type { ReviewLanguageDto } from "./ReviewLanguageDto";
+export type { ReviewModelOptionDto } from "./ReviewModelOptionDto";
 export type { ReviewPreflightDto } from "./ReviewPreflightDto";
 export type { ReviewProgressEventDto } from "./ReviewProgressEventDto";
 export type { ReviewRunInputDto } from "./ReviewRunInputDto";

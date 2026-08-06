@@ -85,7 +85,7 @@ fn lock_path(path: &Path) -> PathBuf {
 }
 
 fn sanitize(mut entry: TraceEntry) -> TraceEntry {
-    if entry.model != "deepseek-v4-flash" {
+    if !is_safe_model_id(&entry.model) {
         entry.model = "unknown".into();
     }
     entry.tool_names = entry
@@ -106,7 +106,50 @@ fn sanitize(mut entry: TraceEntry) -> TraceEntry {
     {
         entry.error_code = None;
     }
+    if !entry
+        .error_detail
+        .as_deref()
+        .is_some_and(is_stable_error_detail)
+    {
+        entry.error_detail = None;
+    }
     entry
+}
+
+fn is_safe_model_id(model: &str) -> bool {
+    !model.is_empty()
+        && model.len() <= 80
+        && model
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b'/'))
+}
+
+fn is_stable_error_detail(detail: &str) -> bool {
+    matches!(
+        detail,
+        "response_not_json"
+            | "response_output_missing"
+            | "structured_output_invalid"
+            | "summary_missing"
+            | "findings_missing"
+            | "findings_schema_mismatch"
+            | "no_final_output"
+            | "function_name_missing"
+            | "function_call_id_missing"
+            | "duplicate_function_call_id"
+            | "function_arguments_missing"
+            | "function_arguments_invalid"
+            | "output_text_missing"
+            | "empty_tool_calls"
+            | "unknown_tool"
+            | "tool_arguments_not_object"
+            | "tool_arguments_malformed"
+            | "tree_prefix_invalid"
+            | "read_path_missing"
+            | "read_start_invalid"
+            | "read_end_invalid"
+            | "other_validation_failure"
+    )
 }
 
 fn is_stable_error_code(code: &str) -> bool {
@@ -149,6 +192,7 @@ mod tests {
                     tool_names: vec!["read_file CODE_MARKER".into()],
                     status: "ok SECRET_KEY".into(),
                     error_code: Some("INVALID_MODEL_OUTPUT CODE_MARKER".into()),
+                    error_detail: Some("unsafe detail".into()),
                 })
                 .await
                 .unwrap();
@@ -157,9 +201,19 @@ mod tests {
         let entries: Vec<TraceEntry> = serde_json::from_str(&serialized).unwrap();
         assert_eq!(entries.len(), 100);
         assert_eq!(entries[0].duration_ms, 5);
+        assert_eq!(entries[0].error_code, None);
+        assert_eq!(entries[0].error_detail, None);
         assert!(!serialized.contains("SECRET_KEY"));
         assert!(!serialized.contains("CODE_MARKER"));
         assert!(!serialized.contains("prompt"));
+    }
+
+    #[test]
+    fn accepts_provider_neutral_model_ids_without_allowing_free_form_text() {
+        assert!(is_safe_model_id("deepseek-v4-flash"));
+        assert!(is_safe_model_id("openai/gpt-5.6-terra"));
+        assert!(!is_safe_model_id("model SECRET_KEY"));
+        assert!(!is_safe_model_id(""));
     }
 
     #[tokio::test]
@@ -242,6 +296,7 @@ mod tests {
             tool_names: vec!["read_file".into()],
             status: "completed".into(),
             error_code: None,
+            error_detail: None,
         }
     }
 }

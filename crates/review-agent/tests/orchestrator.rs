@@ -10,10 +10,18 @@ struct FakeModel(Mutex<VecDeque<ModelResponse>>);
 
 #[async_trait]
 impl ModelProvider for FakeModel {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            provider: "fixture".into(),
+            model: "fixture-review-v1".into(),
+            capabilities: ProviderCapabilities::default(),
+        }
+    }
+
     async fn respond(&self, transcript: &[TranscriptItem]) -> Result<ModelResponse, ReviewError> {
         assert!(transcript
             .first()
-            .is_some_and(|m| matches!(m, TranscriptItem::System(s) if s.contains("untrusted"))));
+            .is_some_and(|m| matches!(m, TranscriptItem::System(s) if s.contains("untrusted") && s.contains("in English"))));
         self.0
             .lock()
             .unwrap()
@@ -71,7 +79,7 @@ impl ReviewSource for FakeSource {
         self.tool_io.fetch_add(1, Ordering::SeqCst);
         assert_eq!(sha, "abc");
         assert_eq!(path, "src/lib.rs");
-        assert_eq!((start, end), (1, 2));
+        assert!(start > 0 && end >= start);
         if self.read_output_bytes == 0 {
             Ok("one\ntwo".into())
         } else {
@@ -209,6 +217,7 @@ fn input() -> ReviewRunInput {
         target: target(),
         expected_head_sha: "abc".into(),
         selected_files: vec!["src/lib.rs".into()],
+        output_language: ReviewLanguage::English,
     }
 }
 fn source() -> FakeSource {
@@ -393,27 +402,37 @@ async fn cancellation_interrupts_in_flight_source_request() {
 }
 
 #[tokio::test]
-async fn rejects_unknown_tool_and_oversized_read() {
-    for call in [
-        ToolCall {
-            name: "shell".into(),
-            arguments: serde_json::json!({"_call_id":"unknown"}),
-        },
-        ToolCall::read_file("oversized", "src/lib.rs", 1, 402),
-    ] {
-        let model = FakeModel(Mutex::new(VecDeque::from([ModelResponse::tool_calls(
-            vec![call],
+async fn returns_tool_error_to_model_for_unknown_tool_then_finishes_review() {
+    let model = FakeModel(Mutex::new(VecDeque::from([
+        ModelResponse::tool_calls(
+            vec![ToolCall {
+                name: "shell".into(),
+                arguments: serde_json::json!({"_call_id":"unknown"}),
+            }],
             ReviewUsage::default(),
-        )])));
-        let err = ReviewOrchestrator::new(&model, &source(), &NoTrace, &NeverCancel)
-            .run(input())
-            .await
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            ReviewError::InvalidModelOutput(_) | ReviewError::ReviewBudgetExceeded
-        ));
-    }
+        ),
+        ModelResponse::final_findings(vec![], ReviewUsage::default()),
+    ])));
+    let source = source();
+    let result = ReviewOrchestrator::new(&model, &source, &NoTrace, &NeverCancel)
+        .run(input())
+        .await
+        .unwrap();
+    assert!(result.findings.is_empty());
+    assert_eq!(source.tool_io.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn rejects_oversized_read() {
+    let model = FakeModel(Mutex::new(VecDeque::from([ModelResponse::tool_calls(
+        vec![ToolCall::read_file("oversized", "src/lib.rs", 1, 402)],
+        ReviewUsage::default(),
+    )])));
+    let err = ReviewOrchestrator::new(&model, &source(), &NoTrace, &NeverCancel)
+        .run(input())
+        .await
+        .unwrap_err();
+    assert_eq!(err, ReviewError::ReviewBudgetExceeded);
 }
 
 #[tokio::test]
@@ -599,8 +618,8 @@ async fn rejects_changed_head_and_selection_budget() {
 }
 
 #[tokio::test]
-async fn stops_after_eight_model_rounds_without_ninth_model_or_source_call() {
-    let responses = (0..9)
+async fn repeated_identical_calls_use_one_source_read_until_round_ceiling() {
+    let responses = (0..MAX_TOOL_CALLS + 2)
         .map(|round| {
             ModelResponse::tool_calls(
                 vec![ToolCall::list_tree(format!("round-{round}"), "src")],
@@ -615,31 +634,31 @@ async fn stops_after_eight_model_rounds_without_ninth_model_or_source_call() {
         .await
         .unwrap_err();
     assert_eq!(error, ReviewError::ReviewBudgetExceeded);
-    assert_eq!(source.tool_io.load(Ordering::SeqCst), 8);
-    assert_eq!(model.0.lock().unwrap().len(), 1);
+    assert_eq!(source.tool_io.load(Ordering::SeqCst), 1);
+    assert_eq!(model.0.lock().unwrap().len(), 0);
 }
 
 #[tokio::test]
-async fn stops_before_executing_twenty_first_tool_call() {
-    let first_twenty = (0..20)
-        .map(|call| ToolCall::list_tree(format!("call-{call}"), "src"))
+async fn stops_before_executing_a_call_beyond_the_tool_ceiling() {
+    let calls_at_ceiling = (0..MAX_TOOL_CALLS)
+        .map(|call| ToolCall::list_tree(format!("call-{call}"), format!("src/{call}")))
         .collect();
     let model = FakeModel(Mutex::new(VecDeque::from([
-        ModelResponse::tool_calls(first_twenty, ReviewUsage::default()),
+        ModelResponse::tool_calls(calls_at_ceiling, ReviewUsage::default()),
         ModelResponse::tool_calls(
-            vec![ToolCall::list_tree("call-20", "src")],
+            vec![ToolCall::list_tree("call-over-ceiling", "src/over-ceiling")],
             ReviewUsage::default(),
         ),
         ModelResponse::final_findings(vec![], ReviewUsage::default()),
     ])));
     let source = source();
-    let error = ReviewOrchestrator::new(&model, &source, &NoTrace, &NeverCancel)
+    let result = ReviewOrchestrator::new(&model, &source, &NoTrace, &NeverCancel)
         .run(input())
         .await
-        .unwrap_err();
-    assert_eq!(error, ReviewError::ReviewBudgetExceeded);
-    assert_eq!(source.tool_io.load(Ordering::SeqCst), 20);
-    assert_eq!(model.0.lock().unwrap().len(), 1);
+        .unwrap();
+    assert!(result.findings.is_empty());
+    assert_eq!(source.tool_io.load(Ordering::SeqCst), MAX_TOOL_CALLS);
+    assert_eq!(model.0.lock().unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -648,12 +667,12 @@ async fn stops_when_cumulative_tool_output_exceeds_three_hundred_kilobytes() {
         ModelResponse::tool_calls(
             vec![
                 ToolCall::read_file("read-1", "src/lib.rs", 1, 2),
-                ToolCall::read_file("read-2", "src/lib.rs", 1, 2),
+                ToolCall::read_file("read-2", "src/lib.rs", 2, 3),
             ],
             ReviewUsage::default(),
         ),
         ModelResponse::tool_calls(
-            vec![ToolCall::read_file("read-3", "src/lib.rs", 1, 2)],
+            vec![ToolCall::read_file("read-3", "src/lib.rs", 3, 4)],
             ReviewUsage::default(),
         ),
         ModelResponse::final_findings(vec![], ReviewUsage::default()),
@@ -742,23 +761,24 @@ async fn trace_records_cancelled_and_error_exits_once_with_stable_codes() {
     }
 
     let error_trace = RecordingTrace::default();
-    let bad_model = FakeModel(Mutex::new(VecDeque::from([ModelResponse::tool_calls(
-        vec![ToolCall {
-            name: "shell".into(),
-            arguments: serde_json::json!({"_call_id":"trace-error"}),
-        }],
-        ReviewUsage::default(),
-    )])));
-    let error = ReviewOrchestrator::new(&bad_model, &source(), &error_trace, &NeverCancel)
+    let bad_model = FakeModel(Mutex::new(VecDeque::from([
+        ModelResponse::tool_calls(
+            vec![ToolCall {
+                name: "shell".into(),
+                arguments: serde_json::json!({"_call_id":"trace-error"}),
+            }],
+            ReviewUsage::default(),
+        ),
+        ModelResponse::final_findings(vec![], ReviewUsage::default()),
+    ])));
+    let result = ReviewOrchestrator::new(&bad_model, &source(), &error_trace, &NeverCancel)
         .run(input())
         .await
-        .unwrap_err();
-    assert!(matches!(error, ReviewError::InvalidModelOutput(_)));
+        .unwrap();
+    assert!(result.findings.is_empty());
     let error_entries = error_trace.0.lock().unwrap();
     assert_eq!(error_entries.len(), 1);
-    assert_eq!(error_entries[0].status, "error");
-    assert_eq!(
-        error_entries[0].error_code.as_deref(),
-        Some("INVALID_MODEL_OUTPUT")
-    );
+    assert_eq!(error_entries[0].status, "completed");
+    assert_eq!(error_entries[0].model, "fixture-review-v1");
+    assert_eq!(error_entries[0].error_code, None);
 }

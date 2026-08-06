@@ -1,6 +1,7 @@
 use crate::{
-    ModelOutput, ModelProvider, ModelResponse, ReviewError, ReviewFinding, ReviewUsage, ToolCall,
-    TranscriptItem,
+    ModelOutput, ModelProvider, ModelResponse, ProviderCapabilities, ProviderDescriptor,
+    ReviewError, ReviewOutputCodec, ReviewUsage, StructuredOutputSupport, ToolCall, TranscriptItem,
+    MAX_TOOL_CALLS,
 };
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode};
@@ -9,26 +10,45 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
-const DEEPSEEK_MODEL: &str = "deepseek-v4-flash";
+pub const DEEPSEEK_V4_FLASH_MODEL: &str = "deepseek-v4-flash";
+pub const DEEPSEEK_V4_PRO_MODEL: &str = "deepseek-v4-pro";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
-pub struct DeepSeekResponsesProvider {
+pub struct DeepSeekProvider {
     client: Client,
     api_key: String,
     base_url: String,
+    model: String,
 }
 
-impl DeepSeekResponsesProvider {
+impl DeepSeekProvider {
     pub fn new(api_key: impl Into<String>) -> Result<Self, ReviewError> {
+        Self::new_with_model(api_key, DEEPSEEK_V4_FLASH_MODEL)
+    }
+
+    pub fn new_with_model(
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Result<Self, ReviewError> {
         let api_key = api_key.into();
         if api_key.trim().is_empty() {
             return Err(ReviewError::AiKeyMissing);
+        }
+        let model = model.into();
+        if !matches!(
+            model.as_str(),
+            DEEPSEEK_V4_FLASH_MODEL | DEEPSEEK_V4_PRO_MODEL
+        ) {
+            return Err(ReviewError::InvalidModelOutput(
+                "unsupported DeepSeek model".into(),
+            ));
         }
         Ok(Self {
             client: build_client(CONNECT_TIMEOUT, REQUEST_TIMEOUT)?,
             api_key,
             base_url: DEEPSEEK_BASE_URL.into(),
+            model,
         })
     }
 
@@ -39,16 +59,32 @@ impl DeepSeekResponsesProvider {
                 .expect("test HTTP client should build"),
             api_key: api_key.into(),
             base_url,
+            model: DEEPSEEK_V4_FLASH_MODEL.into(),
         }
     }
 
     fn request_body(&self, transcript: &[TranscriptItem]) -> Result<Value, ReviewError> {
-        let mut input = Vec::new();
+        let mut messages = Vec::new();
+        let used_tool_calls = transcript
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item,
+                    TranscriptItem::ToolResult {
+                        counts_toward_budget: true,
+                        ..
+                    }
+                )
+            })
+            .count();
         for item in transcript {
             match item {
-                TranscriptItem::System(text) => input.push(json!({"role":"system","content":text})),
-                TranscriptItem::User(text) => input.push(json!({"role":"user","content":text})),
+                TranscriptItem::System(text) => {
+                    messages.push(json!({"role":"system","content":text}))
+                }
+                TranscriptItem::User(text) => messages.push(json!({"role":"user","content":text})),
                 TranscriptItem::AssistantToolCalls(calls) => {
+                    let mut tool_calls = Vec::new();
                     for call in calls {
                         let mut arguments = call.arguments.clone();
                         let call_id = arguments
@@ -59,8 +95,10 @@ impl DeepSeekResponsesProvider {
                             .ok_or_else(|| {
                                 ReviewError::InvalidModelOutput("function call id missing".into())
                             })?;
-                        input.push(json!({"type":"function_call","call_id":call_id,"name":call.name,"arguments":arguments.to_string()}));
+                        tool_calls.push(json!({"id":call_id,"type":"function","function":{"name":call.name,"arguments":arguments.to_string()}}));
                     }
+                    messages
+                        .push(json!({"role":"assistant","content":null,"tool_calls":tool_calls}));
                 }
                 TranscriptItem::ToolResult {
                     call_id, content, ..
@@ -70,23 +108,38 @@ impl DeepSeekResponsesProvider {
                             "function call id missing".into(),
                         ));
                     }
-                    input.push(
-                        json!({"type":"function_call_output","call_id":call_id,"output":content}),
-                    );
+                    messages.push(json!({"role":"tool","tool_call_id":call_id,"content":content}));
                 }
             }
         }
-        Ok(json!({
-            "model": DEEPSEEK_MODEL,
+        let mut body = json!({
+            "model": self.model,
             "stream": false,
-            "store": false,
-            "input": input,
+            "thinking": {"type":"disabled"},
+            "max_tokens": 8192,
+            "messages": messages,
+            "response_format": {"type":"json_object"},
             "tools": [
-                {"type":"function","name":"list_repository_tree","description":"List repository paths at the fixed PR head SHA","parameters":{"type":"object","properties":{"prefix":{"type":"string"}},"additionalProperties":false}},
-                {"type":"function","name":"read_file","description":"Read at most 400 UTF-8 lines at the fixed PR head SHA","parameters":{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer"},"end_line":{"type":"integer"}},"required":["path","start_line","end_line"],"additionalProperties":false}}
-            ],
-            "text": {"format":{"type":"json_schema","name":"review_findings","strict":true,"schema":finding_schema()}}
-        }))
+                {"type":"function","function":{"name":"list_repository_tree","description":"List repository paths at the fixed PR head SHA","parameters":{"type":"object","properties":{"prefix":{"type":"string"}},"additionalProperties":false}}},
+                {"type":"function","function":{"name":"read_file","description":"Read at most 400 UTF-8 lines at the fixed PR head SHA","parameters":{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer"},"end_line":{"type":"integer"}},"required":["path","start_line","end_line"],"additionalProperties":false}}}
+            ]
+        });
+        if used_tool_calls >= MAX_TOOL_CALLS {
+            let object = body
+                .as_object_mut()
+                .expect("chat completion request body is an object");
+            object.remove("tools");
+            object.insert("tool_choice".into(), Value::String("none".into()));
+            object
+                .get_mut("messages")
+                .and_then(Value::as_array_mut)
+                .expect("messages is an array")
+                .push(json!({
+                    "role": "system",
+                    "content": "The tool budget is exhausted. Do not call any more tools. Return the final review JSON now using only the evidence already available."
+                }));
+        }
+        Ok(body)
     }
 }
 
@@ -102,30 +155,48 @@ fn build_client(
 }
 
 #[async_trait]
-impl ModelProvider for DeepSeekResponsesProvider {
+impl ModelProvider for DeepSeekProvider {
+    fn descriptor(&self) -> ProviderDescriptor {
+        ProviderDescriptor {
+            provider: "deepseek".into(),
+            model: self.model.clone(),
+            capabilities: ProviderCapabilities {
+                structured_output: StructuredOutputSupport::JsonObject,
+                can_disable_tools: true,
+                parallel_tool_calls: false,
+                requires_reasoning_replay: false,
+            },
+        }
+    }
+
     async fn respond(&self, transcript: &[TranscriptItem]) -> Result<ModelResponse, ReviewError> {
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        let request_body = self.request_body(transcript)?;
         let response = self
             .client
-            .post(format!("{}/responses", self.base_url.trim_end_matches('/')))
+            .post(&url)
             .bearer_auth(&self.api_key)
-            .json(&self.request_body(transcript)?)
+            .json(&request_body)
             .send()
             .await
             .map_err(|_| ReviewError::NetworkError("request failed".into()))?;
         match response.status() {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-                return Err(ReviewError::AuthFailed)
+                return Err(ReviewError::AuthFailed);
             }
             StatusCode::TOO_MANY_REQUESTS => return Err(ReviewError::RateLimited),
             status if !status.is_success() => {
-                return Err(ReviewError::NetworkError("service request failed".into()))
+                return Err(ReviewError::NetworkError("service request failed".into()));
             }
             _ => {}
         }
-        let body: Value = response
-            .json()
+        let bytes = response
+            .bytes()
             .await
-            .map_err(|_| ReviewError::InvalidModelOutput("response was not valid JSON".into()))?;
+            .map_err(|_| ReviewError::NetworkError("response body could not be read".into()))?;
+        let body = serde_json::from_slice::<Value>(&bytes).map_err(|_| {
+            ReviewError::NetworkError("service returned an invalid response".into())
+        })?;
         parse_response(body)
     }
 }
@@ -133,92 +204,70 @@ impl ModelProvider for DeepSeekResponsesProvider {
 fn parse_response(body: Value) -> Result<ModelResponse, ReviewError> {
     let usage = ReviewUsage {
         input_tokens: body
-            .pointer("/usage/input_tokens")
+            .pointer("/usage/prompt_tokens")
             .and_then(Value::as_u64)
             .unwrap_or(0),
         output_tokens: body
-            .pointer("/usage/output_tokens")
+            .pointer("/usage/completion_tokens")
             .and_then(Value::as_u64)
             .unwrap_or(0),
         tool_calls: 0,
     };
-    let output = body
-        .get("output")
-        .and_then(Value::as_array)
+    let choice = body
+        .pointer("/choices/0")
+        .and_then(Value::as_object)
+        .ok_or_else(|| ReviewError::InvalidModelOutput("missing response output".into()))?;
+    match choice.get("finish_reason").and_then(Value::as_str) {
+        Some("length") => return Err(ReviewError::ReviewBudgetExceeded),
+        Some("content_filter" | "insufficient_system_resource") => {
+            return Err(ReviewError::NetworkError("model response failed".into()));
+        }
+        _ => {}
+    }
+    let message = choice
+        .get("message")
+        .and_then(Value::as_object)
         .ok_or_else(|| ReviewError::InvalidModelOutput("missing response output".into()))?;
     let mut calls = Vec::new();
     let mut call_ids = HashSet::new();
-    let mut final_result = None;
-    for item in output {
-        match item.get("type").and_then(Value::as_str) {
-            Some("function_call") => {
-                let name = item.get("name").and_then(Value::as_str).ok_or_else(|| {
-                    ReviewError::InvalidModelOutput("function name missing".into())
+    if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
+        for item in tool_calls {
+            let function = item
+                .get("function")
+                .and_then(Value::as_object)
+                .ok_or_else(|| ReviewError::InvalidModelOutput("function name missing".into()))?;
+            let name = function
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ReviewError::InvalidModelOutput("function name missing".into()))?;
+            let call_id = item
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|call_id| !call_id.is_empty())
+                .ok_or_else(|| {
+                    ReviewError::InvalidModelOutput("function call id missing".into())
                 })?;
-                let call_id = item
-                    .get("call_id")
-                    .and_then(Value::as_str)
-                    .filter(|call_id| !call_id.is_empty())
-                    .ok_or_else(|| {
-                        ReviewError::InvalidModelOutput("function call id missing".into())
-                    })?;
-                if !call_ids.insert(call_id) {
-                    return Err(ReviewError::InvalidModelOutput(
-                        "duplicate function call id".into(),
-                    ));
-                }
-                let encoded = item
-                    .get("arguments")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        ReviewError::InvalidModelOutput("function arguments missing".into())
-                    })?;
-                let mut arguments: Value = serde_json::from_str(encoded).map_err(|_| {
-                    ReviewError::InvalidModelOutput("invalid function arguments".into())
+            if !call_ids.insert(call_id) {
+                return Err(ReviewError::InvalidModelOutput(
+                    "duplicate function call id".into(),
+                ));
+            }
+            let encoded = function
+                .get("arguments")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    ReviewError::InvalidModelOutput("function arguments missing".into())
                 })?;
-                if let Some(object) = arguments.as_object_mut() {
-                    object.insert("_call_id".into(), Value::String(call_id.into()));
-                }
-                calls.push(ToolCall {
-                    name: name.into(),
-                    arguments,
-                });
+            let mut arguments: Value = serde_json::from_str(encoded).map_err(|_| {
+                ReviewError::InvalidModelOutput("invalid function arguments".into())
+            })?;
+            if let Some(object) = arguments.as_object_mut() {
+                object.insert("_call_id".into(), Value::String(call_id.into()));
             }
-            Some("message") => {
-                if let Some(content) = item.get("content").and_then(Value::as_array) {
-                    for part in content {
-                        if part.get("type").and_then(Value::as_str) == Some("output_text") {
-                            let text =
-                                part.get("text").and_then(Value::as_str).ok_or_else(|| {
-                                    ReviewError::InvalidModelOutput("output text missing".into())
-                                })?;
-                            let parsed: Value = serde_json::from_str(text).map_err(|_| {
-                                ReviewError::InvalidModelOutput(
-                                    "structured output was invalid".into(),
-                                )
-                            })?;
-                            let summary = parsed
-                                .get("summary")
-                                .and_then(Value::as_str)
-                                .filter(|summary| !summary.trim().is_empty())
-                                .ok_or_else(|| {
-                                    ReviewError::InvalidModelOutput("summary missing".into())
-                                })?
-                                .to_string();
-                            let findings = serde_json::from_value::<Vec<ReviewFinding>>(
-                                parsed.get("findings").cloned().ok_or_else(|| {
-                                    ReviewError::InvalidModelOutput("findings missing".into())
-                                })?,
-                            )
-                            .map_err(|_| {
-                                ReviewError::InvalidModelOutput("findings schema mismatch".into())
-                            })?;
-                            final_result = Some((summary, findings));
-                        }
-                    }
-                }
-            }
-            _ => {}
+            calls.push(ToolCall {
+                name: name.into(),
+                arguments,
+            });
         }
     }
     if !calls.is_empty() {
@@ -226,9 +275,17 @@ fn parse_response(body: Value) -> Result<ModelResponse, ReviewError> {
             output: ModelOutput::ToolCalls { calls },
             usage,
         })
-    } else if let Some((summary, findings)) = final_result {
+    } else if let Some(output_text) = message
+        .get("content")
+        .and_then(Value::as_str)
+        .filter(|content| !content.trim().is_empty())
+    {
+        let decoded = ReviewOutputCodec::decode(output_text)?;
         Ok(ModelResponse {
-            output: ModelOutput::Final { summary, findings },
+            output: ModelOutput::Final {
+                summary: decoded.summary,
+                findings: decoded.findings,
+            },
             usage,
         })
     } else {
@@ -236,12 +293,6 @@ fn parse_response(body: Value) -> Result<ModelResponse, ReviewError> {
             "no tool calls or final output".into(),
         ))
     }
-}
-
-fn finding_schema() -> Value {
-    json!({"type":"object","properties":{"summary":{"type":"string","minLength":1},"findings":{"type":"array","items":{"type":"object","properties":{
-        "id":{"type":"string"},"severity":{"type":"string","enum":["high","medium","low"]},"path":{"type":"string"},"side":{"type":"string","enum":["LEFT","RIGHT"]},"line":{"type":"integer"},"title":{"type":"string"},"failure_scenario":{"type":"string"},"explanation":{"type":"string"},"draft_comment":{"type":"string"}},
-        "required":["id","severity","path","side","line","title","failure_scenario","explanation","draft_comment"],"additionalProperties":false}}},"required":["summary","findings"],"additionalProperties":false})
 }
 
 #[cfg(test)]
@@ -252,17 +303,44 @@ mod tests {
     use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    #[test]
+    fn declares_deepseek_specific_capabilities_without_leaking_them_upward() {
+        let provider = DeepSeekProvider::new_with_base_for_test("k", "http://localhost".into());
+        let descriptor = provider.descriptor();
+        assert_eq!(descriptor.provider, "deepseek");
+        assert_eq!(descriptor.model, "deepseek-v4-flash");
+        assert_eq!(
+            descriptor.capabilities.structured_output,
+            StructuredOutputSupport::JsonObject
+        );
+        assert!(descriptor.capabilities.can_disable_tools);
+        assert!(!descriptor.capabilities.requires_reasoning_replay);
+    }
+
+    #[test]
+    fn selects_only_supported_deepseek_models() {
+        let provider = DeepSeekProvider::new_with_model("k", DEEPSEEK_V4_PRO_MODEL).unwrap();
+        assert_eq!(provider.descriptor().model, DEEPSEEK_V4_PRO_MODEL);
+        assert!(DeepSeekProvider::new_with_model("k", "retired-or-arbitrary-model").is_err());
+    }
+
     #[tokio::test]
     async fn parses_function_call_and_sends_fixed_model_contract() {
         let server = MockServer::start().await;
-        Mock::given(method("POST")).and(path("/responses"))
+        Mock::given(method("POST")).and(path("/chat/completions"))
             .and(header("authorization", "Bearer test-key"))
-            .and(body_partial_json(json!({"model":"deepseek-v4-flash","stream":false,"store":false})))
+            .and(body_partial_json(json!({
+                "model":"deepseek-v4-flash",
+                "stream":false,
+                "thinking":{"type":"disabled"},
+                "max_tokens":8192,
+                "response_format":{"type":"json_object"}
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "output":[{"type":"reasoning","summary":[]},{"type":"function_call","call_id":"c1","name":"read_file","arguments":"{\"path\":\"src/lib.rs\",\"start_line\":1,\"end_line\":2}"}],
-                "usage":{"input_tokens":5,"output_tokens":3}
+                "choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"src/lib.rs\",\"start_line\":1,\"end_line\":2}"}}]}}],
+                "usage":{"prompt_tokens":5,"completion_tokens":3}
             }))).mount(&server).await;
-        let provider = DeepSeekResponsesProvider::new_with_base_for_test("test-key", server.uri());
+        let provider = DeepSeekProvider::new_with_base_for_test("test-key", server.uri());
         let response = provider
             .respond(&[TranscriptItem::System("safe".into())])
             .await
@@ -273,15 +351,88 @@ mod tests {
         }
     }
 
+    #[test]
+    fn maps_tool_history_to_chat_completion_messages() {
+        let provider = DeepSeekProvider::new_with_base_for_test("k", "http://localhost".into());
+        let body = provider
+            .request_body(&[
+                TranscriptItem::AssistantToolCalls(vec![ToolCall::read_file(
+                    "call-1",
+                    "src/lib.rs",
+                    1,
+                    2,
+                )]),
+                TranscriptItem::ToolResult {
+                    name: "read_file".into(),
+                    call_id: "call-1".into(),
+                    content: "fn main() {}".into(),
+                    counts_toward_budget: true,
+                },
+            ])
+            .unwrap();
+        assert_eq!(body.pointer("/messages/0/role"), Some(&json!("assistant")));
+        assert_eq!(
+            body.pointer("/messages/0/tool_calls/0/id"),
+            Some(&json!("call-1"))
+        );
+        assert_eq!(body.pointer("/messages/1/role"), Some(&json!("tool")));
+        assert_eq!(
+            body.pointer("/messages/1/tool_call_id"),
+            Some(&json!("call-1"))
+        );
+    }
+
+    #[test]
+    fn disables_tools_and_requests_final_output_after_tool_budget_is_used() {
+        let provider = DeepSeekProvider::new_with_base_for_test("k", "http://localhost".into());
+        let calls = (0..MAX_TOOL_CALLS)
+            .map(|index| ToolCall::list_tree(format!("call-{index}"), "src"))
+            .collect::<Vec<_>>();
+        let mut transcript = vec![TranscriptItem::AssistantToolCalls(calls)];
+        transcript.extend((0..MAX_TOOL_CALLS).map(|index| TranscriptItem::ToolResult {
+            name: "list_repository_tree".into(),
+            call_id: format!("call-{index}"),
+            content: "[]".into(),
+            counts_toward_budget: true,
+        }));
+        let body = provider.request_body(&transcript).unwrap();
+
+        assert!(body.get("tools").is_none());
+        assert_eq!(body.get("tool_choice"), Some(&json!("none")));
+        assert_eq!(
+            body.pointer(&format!("/messages/{}/content", MAX_TOOL_CALLS + 1)),
+            Some(&json!("The tool budget is exhausted. Do not call any more tools. Return the final review JSON now using only the evidence already available."))
+        );
+    }
+
+    #[test]
+    fn cached_tool_results_do_not_consume_the_unique_read_budget() {
+        let provider = DeepSeekProvider::new_with_base_for_test("k", "http://localhost".into());
+        let calls = (0..MAX_TOOL_CALLS)
+            .map(|index| ToolCall::list_tree(format!("call-{index}"), "src"))
+            .collect::<Vec<_>>();
+        let mut transcript = vec![TranscriptItem::AssistantToolCalls(calls)];
+        transcript.extend((0..MAX_TOOL_CALLS).map(|index| TranscriptItem::ToolResult {
+            name: "list_repository_tree".into(),
+            call_id: format!("call-{index}"),
+            content: "[]".into(),
+            counts_toward_budget: index == 0,
+        }));
+
+        let body = provider.request_body(&transcript).unwrap();
+        assert!(body.get("tools").is_some());
+        assert!(body.get("tool_choice").is_none());
+    }
+
     #[tokio::test]
     async fn parses_final_structured_findings_and_ignores_reasoning() {
         let server = MockServer::start().await;
         let finding = json!({"id":"f","severity":"high","path":"src/lib.rs","side":"RIGHT","line":1,"title":"t","failure_scenario":"s","explanation":"e","draft_comment":"d"});
-        Mock::given(method("POST")).and(path("/responses")).respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "output":[{"type":"reasoning","encrypted_content":"SECRET_REASONING"},{"type":"message","content":[{"type":"output_text","text":json!({"summary":"One correctness issue.","findings":[finding]}).to_string()}]}],
-            "usage":{"input_tokens":1,"output_tokens":2}
+        Mock::given(method("POST")).and(path("/chat/completions")).respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices":[{"finish_reason":"stop","message":{"role":"assistant","content":json!({"summary":"One correctness issue.","findings":[finding]}).to_string()}}],
+            "usage":{"prompt_tokens":1,"completion_tokens":2}
         }))).mount(&server).await;
-        let response = DeepSeekResponsesProvider::new_with_base_for_test("k", server.uri())
+        let response = DeepSeekProvider::new_with_base_for_test("k", server.uri())
             .respond(&[])
             .await
             .unwrap();
@@ -294,18 +445,92 @@ mod tests {
         }
     }
 
+    #[test]
+    fn parses_chat_completion_json_content() {
+        let body = json!({
+            "choices":[{"finish_reason":"stop","message":{"content":"{\"summary\":\"Complete\",\"findings\":[]}"}}]
+        });
+        let response = parse_response(body).unwrap();
+        assert!(matches!(
+            response.output,
+            ModelOutput::Final { ref summary, ref findings }
+                if summary == "Complete" && findings.is_empty()
+        ));
+    }
+
+    #[test]
+    fn keeps_review_when_one_finding_has_an_invalid_schema() {
+        let valid = json!({"id":"f","severity":"high","path":"src/lib.rs","side":"RIGHT","line":1,"title":"t","failure_scenario":"s","explanation":"e","draft_comment":"d"});
+        let body = json!({
+            "choices":[{"finish_reason":"stop","message":{"content":json!({
+                "summary":"Found one valid issue.",
+                "findings":[{"title":"incomplete"}, valid]
+            }).to_string()}}]
+        });
+
+        let response = parse_response(body).unwrap();
+        assert!(matches!(
+            response.output,
+            ModelOutput::Final { ref summary, ref findings }
+                if summary == "Found one valid issue." && findings.len() == 1
+        ));
+    }
+
+    #[test]
+    fn treats_null_findings_as_an_empty_review() {
+        let body = json!({
+            "choices":[{"finish_reason":"stop","message":{"content":"{\"summary\":\"No issue found.\",\"findings\":null}"}}]
+        });
+
+        let response = parse_response(body).unwrap();
+        assert!(matches!(
+            response.output,
+            ModelOutput::Final { ref findings, .. } if findings.is_empty()
+        ));
+    }
+
+    #[test]
+    fn preserves_nonempty_plain_text_as_an_unstructured_review() {
+        let body = json!({
+            "choices":[{"finish_reason":"stop","message":{"content":"I reviewed the selected patch. No actionable correctness issue was found."}}],
+            "usage":{"prompt_tokens":10,"completion_tokens":12}
+        });
+
+        let response = parse_response(body).unwrap();
+        assert!(matches!(
+            response.output,
+            ModelOutput::Final { ref summary, ref findings }
+                if summary.contains("No actionable") && findings.is_empty()
+        ));
+    }
+
+    #[test]
+    fn maps_chat_completion_terminal_reasons() {
+        assert!(matches!(
+            parse_response(
+                json!({"choices":[{"finish_reason":"insufficient_system_resource","message":{}}]})
+            ),
+            Err(ReviewError::NetworkError(_))
+        ));
+        assert_eq!(
+            parse_response(json!({"choices":[{"finish_reason":"length","message":{}}]}))
+                .unwrap_err(),
+            ReviewError::ReviewBudgetExceeded
+        );
+    }
+
     #[tokio::test]
     async fn rejects_final_output_without_a_summary() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/responses"))
+            .and(path("/chat/completions"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "output":[{"type":"message","content":[{"type":"output_text","text":json!({"findings":[]}).to_string()}]}]
+                "choices":[{"finish_reason":"stop","message":{"content":json!({"findings":[]}).to_string()}}]
             })))
             .mount(&server)
             .await;
 
-        let error = DeepSeekResponsesProvider::new_with_base_for_test("k", server.uri())
+        let error = DeepSeekProvider::new_with_base_for_test("k", server.uri())
             .respond(&[])
             .await
             .unwrap_err();
@@ -328,7 +553,7 @@ mod tests {
                 .respond_with(ResponseTemplate::new(status))
                 .mount(&server)
                 .await;
-            let err = DeepSeekResponsesProvider::new_with_base_for_test("k", server.uri())
+            let err = DeepSeekProvider::new_with_base_for_test("k", server.uri())
                 .respond(&[])
                 .await
                 .unwrap_err();
@@ -340,12 +565,13 @@ mod tests {
             .mount(&server)
             .await;
         assert!(matches!(
-            DeepSeekResponsesProvider::new_with_base_for_test("k", server.uri())
+            DeepSeekProvider::new_with_base_for_test("k", server.uri())
                 .respond(&[])
                 .await
                 .unwrap_err(),
-            ReviewError::InvalidModelOutput(_)
+            ReviewError::NetworkError(_)
         ));
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -360,7 +586,7 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let error = DeepSeekResponsesProvider::new_with_base_for_test("k", server.uri())
+        let error = DeepSeekProvider::new_with_base_for_test("k", server.uri())
             .respond(&[])
             .await
             .unwrap_err();

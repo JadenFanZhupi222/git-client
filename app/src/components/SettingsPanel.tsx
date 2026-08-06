@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { CredentialKindDto, IpcError } from "../bindings";
 import {
   clearCredential,
@@ -345,6 +346,54 @@ export function SettingsPanel({
                     )}
                   </p>
 
+                  {provider === "github" && (
+                    <section
+                      aria-labelledby="settings-github-permissions-title"
+                      className="mt-4 rounded-md bg-overlay px-3 py-3 text-xs"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <h4 id="settings-github-permissions-title" className="font-semibold text-fg">
+                            {t("settings.github.permissionsTitle")}
+                          </h4>
+                          <p className="mt-1 leading-relaxed text-fg-muted">
+                            {t("settings.github.permissionsIntro")}
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={busy}
+                          onClick={() => void openUrl("https://github.com/settings/personal-access-tokens/new")}
+                          className="shrink-0"
+                        >
+                          {t("settings.github.createToken")}
+                        </Button>
+                      </div>
+                      <dl className="mt-3 grid gap-2">
+                        <PermissionDetail
+                          label={t("settings.github.pullRequestsPermission")}
+                          value={t("settings.github.readWrite")}
+                          description={t("settings.github.pullRequestsReason")}
+                        />
+                        <PermissionDetail
+                          label={t("settings.github.statusesPermission")}
+                          value={t("settings.github.readOnly")}
+                          description={t("settings.github.statusesReason")}
+                        />
+                      </dl>
+                      <p className="mt-3 leading-relaxed text-fg-muted">
+                        {t("settings.github.checksOptional")}
+                      </p>
+                      <p className="mt-3 leading-relaxed text-fg-muted">
+                        {t("settings.github.classicTokenNote")}
+                      </p>
+                      <p className="mt-2 font-medium leading-relaxed text-fg">
+                        {t("settings.github.accountPermissionNote")}
+                      </p>
+                    </section>
+                  )}
+
                 </>
                   )}
                 </div>
@@ -394,6 +443,24 @@ export function SettingsPanel({
           </div>
         </div>
       </section>
+    </div>
+  );
+}
+
+function PermissionDetail({
+  label,
+  value,
+  description,
+}: {
+  label: string;
+  value: string;
+  description: string;
+}) {
+  return (
+    <div className="grid gap-0.5 min-[520px]:grid-cols-[9rem_7rem_1fr] min-[520px]:items-baseline min-[520px]:gap-2">
+      <dt className="font-medium text-fg">{label}</dt>
+      <dd className="font-mono text-[11px] text-accent">{value}</dd>
+      <dd className="leading-relaxed text-fg-muted">{description}</dd>
     </div>
   );
 }

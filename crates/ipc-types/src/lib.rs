@@ -47,6 +47,22 @@ pub struct ReviewPreflightDto {
     pub requires_selection: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub enum ReviewLanguageDto {
+    SimplifiedChinese,
+    English,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ReviewModelOptionDto {
+    pub id: String,
+    pub label: String,
+    pub provider: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct ReviewRunInputDto {
@@ -54,6 +70,8 @@ pub struct ReviewRunInputDto {
     pub target: ReviewTargetDto,
     pub expected_head_sha: String,
     pub selected_files: Vec<String>,
+    pub model_id: String,
+    pub output_language: ReviewLanguageDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -160,6 +178,12 @@ impl From<ReviewRunInputDto> for review_agent::ReviewRunInput {
             target: v.target.into(),
             expected_head_sha: v.expected_head_sha,
             selected_files: v.selected_files,
+            output_language: match v.output_language {
+                ReviewLanguageDto::SimplifiedChinese => {
+                    review_agent::ReviewLanguage::SimplifiedChinese
+                }
+                ReviewLanguageDto::English => review_agent::ReviewLanguage::English,
+            },
         }
     }
 }
@@ -318,6 +342,8 @@ mod review_dto_contract_tests {
             },
             expected_head_sha: "abc".into(),
             selected_files: vec!["src/lib.rs".into()],
+            model_id: "deepseek-v4-flash".into(),
+            output_language: ReviewLanguageDto::English,
         };
         let json = serde_json::to_string(&input).unwrap();
         for forbidden in ["token", "key", "prompt", "content", "patch"] {
@@ -362,9 +388,16 @@ mod review_dto_contract_tests {
             target: target_dto.clone(),
             expected_head_sha: "abc".into(),
             selected_files: vec!["src/lib.rs".into()],
+            model_id: "deepseek-v4-flash".into(),
+            output_language: ReviewLanguageDto::English,
         };
         let domain_input = review_agent::ReviewRunInput::from(run_input.clone());
         assert_eq!(domain_input.run_id, "run");
+        assert_eq!(
+            domain_input.output_language,
+            review_agent::ReviewLanguage::English
+        );
+        assert_eq!(run_input.model_id, "deepseek-v4-flash");
         assert_eq!(
             serde_json::to_value(&run_input).unwrap()["selected_files"],
             serde_json::json!(["src/lib.rs"])

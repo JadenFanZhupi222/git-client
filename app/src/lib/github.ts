@@ -404,12 +404,13 @@ export async function fetchGithubPullRequestDetails(
       buildGithubCheckRunsApiUrl(remote, headSha),
       { headers: githubHeaders(token) },
     );
-    if (!checkRunsResponse.ok) {
+    if (checkRunsResponse.ok) {
+      checkRuns = toCheckRunSummaries(
+        (await checkRunsResponse.json()) as GithubCheckRunsResponse,
+      );
+    } else if (checkRunsResponse.status !== 403 && checkRunsResponse.status !== 404) {
       throw new Error(githubApiErrorMessage(checkRunsResponse.status));
     }
-    checkRuns = toCheckRunSummaries(
-      (await checkRunsResponse.json()) as GithubCheckRunsResponse,
-    );
   }
 
   const commentsResponse = await fetcher(

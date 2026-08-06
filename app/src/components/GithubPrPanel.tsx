@@ -338,7 +338,11 @@ export function GithubPrPanel({
             flushSync(() => setReviewOwnsFocus(false));
             setReviewTarget(null);
           }}
-          onConfigureCredential={(kind) => (onConfigureCredential ?? ((next) => { if (next === "github") onConfigureToken(); }))(kind)}
+          onConfigureCredential={(kind) => {
+            flushSync(() => setReviewOwnsFocus(false));
+            setReviewTarget(null);
+            (onConfigureCredential ?? ((next) => { if (next === "github") onConfigureToken(); }))(kind);
+          }}
           onFocusReady={() => setReviewOwnsFocus(true)}
         />,
         document.body,

@@ -48,6 +48,8 @@ export type {
   PublishedReviewDto,
   ReviewFileDto,
   ReviewFindingDto,
+  ReviewLanguageDto,
+  ReviewModelOptionDto,
   ReviewPreflightDto,
   ReviewProgressEventDto,
   ReviewRunInputDto,
@@ -60,6 +62,7 @@ export type {
 import type {
   CredentialKindDto,
   PublishedReviewDto,
+  ReviewModelOptionDto,
   ReviewPreflightDto,
   ReviewProgressEventDto,
   ReviewRunInputDto,
@@ -786,6 +789,10 @@ export async function testCredential(kind: CredentialKindDto): Promise<void> {
 
 export async function getReviewPreflight(target: ReviewTargetDto): Promise<ReviewPreflightDto> {
   return await invoke<ReviewPreflightDto>("get_review_preflight", { target });
+}
+
+export async function listReviewModels(): Promise<ReviewModelOptionDto[]> {
+  return await invoke<ReviewModelOptionDto[]>("list_review_models");
 }
 
 export async function startPrReview(input: ReviewRunInputDto): Promise<ReviewRunResultDto> {

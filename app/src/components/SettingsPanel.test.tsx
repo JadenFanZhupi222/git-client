@@ -11,8 +11,10 @@ const ipc = vi.hoisted(() => ({
   testCredential: vi.fn(),
   clearCredential: vi.fn(),
 }));
+const opener = vi.hoisted(() => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
 
 vi.mock("../ipc", () => ipc);
+vi.mock("@tauri-apps/plugin-opener", () => opener);
 
 function renderPanel(
   props: Partial<React.ComponentProps<typeof SettingsPanel>> = {},
@@ -95,6 +97,23 @@ describe("SettingsPanel", () => {
     expect(screen.getByText(
       "支持以 glpat- 开头的令牌。凭据将安全存储于系统凭据库中。",
     )).toBeInTheDocument();
+  });
+
+  it("shows GitHub minimum permissions and opens the fine-grained token page", async () => {
+    const user = userEvent.setup();
+    renderPanel({ initialSection: "github" });
+    await screen.findByText("Recommended minimum permissions");
+
+    expect(screen.getByText("Pull requests")).toBeInTheDocument();
+    expect(screen.getByText("Commit statuses")).toBeInTheDocument();
+    expect(screen.getByText("Read and write")).toBeInTheDocument();
+    expect(screen.getByText("Read-only")).toBeInTheDocument();
+    expect(screen.getByText(/may not offer the Checks permission/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Create token on GitHub" }));
+    expect(opener.openUrl).toHaveBeenCalledWith(
+      "https://github.com/settings/personal-access-tokens/new",
+    );
   });
 
   it("shows only a right-aligned Save credential action for an unconfigured provider", async () => {

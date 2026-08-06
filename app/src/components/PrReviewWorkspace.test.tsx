@@ -6,6 +6,7 @@ import { PrReviewWorkspace } from "./PrReviewWorkspace";
 
 const ipc = vi.hoisted(() => ({
   getReviewPreflight: vi.fn(),
+  listReviewModels: vi.fn(),
   startPrReview: vi.fn(),
   cancelPrReview: vi.fn(),
   submitPrReview: vi.fn(),
@@ -69,11 +70,16 @@ describe("PrReviewWorkspace", () => {
     setLang("en");
     vi.clearAllMocks();
     ipc.getReviewPreflight.mockReset();
+    ipc.listReviewModels.mockReset();
     ipc.onReviewProgress.mockReset();
     ipc.startPrReview.mockReset();
     ipc.cancelPrReview.mockReset();
     ipc.submitPrReview.mockReset();
     ipc.getReviewPreflight.mockResolvedValue(normalPreflight);
+    ipc.listReviewModels.mockResolvedValue([
+      { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", provider: "DeepSeek" },
+      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "DeepSeek" },
+    ]);
     ipc.onReviewProgress.mockResolvedValue(vi.fn());
     ipc.startPrReview.mockResolvedValue(result);
     ipc.cancelPrReview.mockResolvedValue(undefined);
@@ -88,6 +94,40 @@ describe("PrReviewWorkspace", () => {
     expect(screen.getByRole("checkbox", { name: "src/b.ts" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /assets\/logo.png/ })).toBeDisabled();
     expect(screen.getByText("2 files · 300 bytes")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select all reviewable files" })).toBeChecked();
+    expect(screen.getByText(/Estimated first request:/)).toHaveTextContent(/input tokens/);
+  });
+
+  it("selects all reviewable files, exposes partial selection, and clears all", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+    await screen.findByText("0123456");
+    const selectAll = screen.getByRole("checkbox", { name: "Select all reviewable files" });
+
+    await user.click(screen.getByRole("checkbox", { name: "src/a.ts" }));
+    expect(selectAll).not.toBeChecked();
+    expect(selectAll).toHaveProperty("indeterminate", true);
+
+    await user.click(selectAll);
+    expect(screen.getByRole("checkbox", { name: "src/a.ts" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "src/b.ts" })).toBeChecked();
+    await user.click(selectAll);
+    expect(screen.getByRole("checkbox", { name: "src/a.ts" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "src/b.ts" })).not.toBeChecked();
+  });
+
+  it("sends the selected model and output language to the review command", async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+    await screen.findByText("0123456");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Model" }), "deepseek-v4-pro");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Output language" }), "simplified_chinese");
+    await acceptAndStart(user);
+
+    expect(ipc.startPrReview).toHaveBeenCalledWith(expect.objectContaining({
+      model_id: "deepseek-v4-pro",
+      output_language: "simplified_chinese",
+    }));
   });
 
   it("requires explicit selection for large PRs and enforces file and byte preview limits", async () => {
@@ -245,6 +285,23 @@ describe("PrReviewWorkspace", () => {
     expect(opener.openUrl).toHaveBeenCalledWith("https://github.com/acme/rocket/pull/17#pullrequestreview-88");
   });
 
+  it("restores the latest result and edited draft after the workspace is reopened", async () => {
+    localStorage.setItem("pr-review-consent-v1", "accepted");
+    const user = userEvent.setup();
+    const first = renderWorkspace();
+    await screen.findByText("0123456");
+    await acceptAndStart(user);
+    const editor = await screen.findByRole("textbox", { name: "Draft comment" });
+    await user.clear(editor);
+    await user.type(editor, "Persist this draft");
+    first.unmount();
+
+    renderWorkspace();
+    expect(await screen.findByRole("textbox", { name: "Draft comment" })).toHaveValue("Persist this draft");
+    expect(screen.getByText(/saved on this device/)).toBeInTheDocument();
+    expect(ipc.startPrReview).toHaveBeenCalledTimes(1);
+  });
+
   it("renders the backend summary and reviewed files instead of deriving them", async () => {
     localStorage.setItem("pr-review-consent-v1", "accepted");
     ipc.startPrReview.mockResolvedValue({
@@ -280,15 +337,24 @@ describe("PrReviewWorkspace", () => {
     expect(screen.getByRole("button", { name: "Close AI review" })).toBeDisabled();
   });
 
-  it("treats no findings as a valid result and disables submission", async () => {
+  it("renders no findings as a compact completion state with a collapsed summary", async () => {
     localStorage.setItem("pr-review-consent-v1", "accepted");
-    ipc.startPrReview.mockResolvedValue({ ...result, findings: [] });
+    ipc.startPrReview.mockResolvedValue({
+      ...result,
+      summary: "A long model explanation that should not dominate the completed state.",
+      findings: [],
+    });
     const user = userEvent.setup();
-    renderWorkspace();
+    const { props } = renderWorkspace();
     await screen.findByText("0123456");
     await acceptAndStart(user);
     expect(await screen.findByText("No actionable issues found.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Submit review" })).toBeDisabled();
+    expect(screen.getByText("Reviewed 2 files at 0123456.")).toBeInTheDocument();
+    const details = screen.getByText("View model summary").closest("details");
+    expect(details).not.toHaveAttribute("open");
+    expect(screen.queryByRole("button", { name: "Submit review" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
   it("preserves edited drafts after a publish failure and retries the same batch", async () => {

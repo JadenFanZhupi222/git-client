@@ -11,7 +11,11 @@ vi.mock("../ipc", () => ({
   getGithubToken: vi.fn().mockResolvedValue("ghp_secret"),
 }));
 vi.mock("./PrReviewWorkspace", () => ({
-  PrReviewWorkspace: () => <div role="dialog" aria-label="AI Review workspace" />,
+  PrReviewWorkspace: (props: { onConfigureCredential: (kind: "github") => void }) => (
+    <div role="dialog" aria-label="AI Review workspace">
+      <button onClick={() => props.onConfigureCredential("github")}>Open settings</button>
+    </div>
+  ),
 }));
 
 const remotes = [{ name: "origin", url: "https://github.com/acme/rocket.git" }];
@@ -45,6 +49,7 @@ describe("PullRequestsView", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
+    const onConfigureCredential = vi.fn();
 
     render(
       <ToastProvider>
@@ -54,6 +59,7 @@ describe("PullRequestsView", () => {
           preferredRemote="origin"
           onCreatePullRequest={vi.fn()}
           onConfigureToken={vi.fn()}
+          onConfigureCredential={onConfigureCredential}
         />
       </ToastProvider>,
     );
@@ -71,5 +77,9 @@ describe("PullRequestsView", () => {
     expect(screen.getByText("Current branch", { selector: "span" })).toBeInTheDocument();
 
     await waitFor(() => expect(screen.getByRole("button", { name: "AI Review" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "AI Review" }));
+    await user.click(screen.getByRole("button", { name: "Open settings" }));
+    expect(onConfigureCredential).toHaveBeenCalledWith("github");
+    expect(screen.queryByRole("dialog", { name: "AI Review workspace" })).not.toBeInTheDocument();
   });
 });
