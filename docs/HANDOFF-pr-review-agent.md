@@ -56,11 +56,16 @@ The public workflow uses these codes: `AI_KEY_MISSING`, `GITHUB_TOKEN_MISSING`,
 
 ## Follow-up milestones
 
-1. Add an issue-triage agent by reusing the provider, GitHub adapter, approval flow,
-   and sanitized trace infrastructure.
-2. Add GitLab merge-request review after defining GitLab-specific diff-position rules.
-3. Design a separate local development agent milestone. Local commands and file writes
-   must not be added to the PR review runtime's security boundary.
+The actionable next-stage plan is maintained in `AGENT-ROADMAP.md`. Its order is:
+
+1. Stabilize the provider contract and expose a backend-owned model catalog.
+2. Add a second provider adapter to prove that the runtime is genuinely provider-neutral.
+3. Add GitHub Issue triage as a read-only workflow, followed by a separately approved
+   label/comment publication slice.
+4. Keep GitLab merge-request review as the next collaboration expansion after GitHub
+   Issue triage and GitLab-specific diff-position rules are defined.
+5. Design local development agents as a separate security milestone. Local commands and
+   file writes must not be added to the PR review runtime's security boundary.
 
 ## Verification
 

@@ -164,6 +164,13 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
     依赖边界、核心桌面 E2E 和包体预算均已落地。真正公开发布仍需发布负责人配置
     Windows/macOS/updater 密钥与生产 endpoint,并完成各架构安装验收。
 - **下一里程碑:M7 · 协作/PR**(原 roadmap M6,见 `2026-06-08-world-class-roadmap.md`)。
+- ✅ **GitHub PR AI 评审 Agent 已合入 main**：支持 DeepSeek V4 Flash/Pro、中文/英文、文件选择与全选、
+  token 预估、受预算约束的只读工具循环、固定 PR head SHA、结果/草稿本地缓存、人工编辑确认后批量发布。
+  Provider 协议、评审输出解码、预算/取消/脱敏 trace 位于 `crates/review-agent`；详细现状见
+  `docs/HANDOFF-pr-review-agent.md`。
+- **Agent 下一阶段从 A1 开始**：先固化 provider 契约与后端模型目录，再增加第二 provider，随后竖切
+  GitHub Issue 分诊（先只读、再人工确认发布）。完整边界、切片和验收标准见 `docs/AGENT-ROADMAP.md`。
+  本阶段明确不做 shell、本地文件写入、自动提交/推送或无人确认的 GitHub 写操作。
 - ⚠️ **真机视觉/交互验收欠账**(自动门 test/clippy/fmt/tsc/build 全过):M5 各刀、图片 diff、
   **M6.1**(大 diff 虚拟化滚动/并排联动/折叠)、**M6.2**(图片字节流加载/滑块/洋葱皮)、
   **M6.6**(面板键盘)都需真机过一遍。M6.3/M6.4 是后端/类型纯逻辑,无需真机视觉验收。
