@@ -230,6 +230,20 @@ describe("SettingsPanel", () => {
     expect(actionBar.closest(".overflow-y-auto")).toBeNull();
   });
 
+  it("resets provider content scroll when switching providers", async () => {
+    const user = userEvent.setup();
+    renderPanel({ initialSection: "deepseek" });
+    await screen.findByText("Not configured");
+
+    const scrollOwner = screen.getByRole("tabpanel", { name: "DeepSeek" }).parentElement!;
+    scrollOwner.scrollTop = 240;
+
+    await user.click(screen.getByRole("tab", { name: "GitHub" }));
+
+    expect(scrollOwner.scrollTop).toBe(0);
+    expect(screen.getByRole("tab", { name: "GitHub" })).toHaveFocus();
+  });
+
   it("stacks categories above full-width content and keeps provider tabs scrollable on narrow screens", () => {
     renderPanel();
 

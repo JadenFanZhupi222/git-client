@@ -30,6 +30,7 @@ export function SettingsPanel({
   const toast = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
+  const providerScrollRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(
     document.activeElement instanceof HTMLElement ? document.activeElement : null,
   );
@@ -111,6 +112,7 @@ export function SettingsPanel({
   function selectProvider(next: SettingsSection) {
     if (busy || next === provider) return;
     operationGenerationRef.current += 1;
+    if (providerScrollRef.current) providerScrollRef.current.scrollTop = 0;
     providerRef.current = next;
     setSecret("");
     setProvider(next);
@@ -254,7 +256,11 @@ export function SettingsPanel({
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            <div
+              ref={providerScrollRef}
+              data-testid="settings-provider-scroll"
+              className="min-h-0 flex-1 overflow-y-auto"
+            >
               {PROVIDERS.map((kind) => (
                 <div
                   key={kind}
