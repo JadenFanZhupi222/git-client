@@ -336,7 +336,7 @@ export function SettingsPanel({
                     />
                   </label>
                   <p id={`settings-${provider}-credential-helper`} className="mt-1.5 text-xs text-fg-muted">
-                    {t("settings.credentialHelper")}
+                    {t(provider === "github" ? "settings.github.credentialHelper" : "settings.credentialHelper")}
                   </p>
 
                 </>

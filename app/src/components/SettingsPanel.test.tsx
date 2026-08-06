@@ -59,6 +59,33 @@ describe("SettingsPanel", () => {
     expect(document.getElementById("settings-panel-github")).not.toHaveAttribute("hidden");
   });
 
+  it("explains GitHub token prefixes outside the input placeholder", async () => {
+    ipc.credentialStatus.mockResolvedValue(false);
+    const english = render(
+      <ToastProvider>
+        <SettingsPanel onClose={vi.fn()} initialSection="github" />
+      </ToastProvider>,
+    );
+    await screen.findByText("Not configured");
+    expect(screen.getByPlaceholderText("Paste GitHub personal access token")).toBeInTheDocument();
+    expect(screen.getByText(
+      "Supports tokens beginning with github_pat_ or ghp_. Stored securely in the system credential store.",
+    )).toBeInTheDocument();
+
+    english.unmount();
+    setLang("zh");
+    render(
+      <ToastProvider>
+        <SettingsPanel onClose={vi.fn()} initialSection="github" />
+      </ToastProvider>,
+    );
+    await screen.findByText("未配置");
+    expect(screen.getByPlaceholderText("粘贴 GitHub Personal Access Token")).toBeInTheDocument();
+    expect(screen.getByText(
+      "支持以 github_pat_ 或 ghp_ 开头的令牌。凭据将安全存储于系统凭据库中。",
+    )).toBeInTheDocument();
+  });
+
   it("shows only a right-aligned Save credential action for an unconfigured provider", async () => {
     const user = userEvent.setup();
     renderPanel({ initialSection: "deepseek" });
@@ -85,7 +112,9 @@ describe("SettingsPanel", () => {
     const input = screen.getByLabelText("GitHub personal access token");
     expect(input).toHaveValue("");
     expect(input).toHaveAttribute("placeholder", "Enter a new credential to replace the saved credential");
-    expect(screen.getByText("Stored securely in the system credential store.")).toBeInTheDocument();
+    expect(screen.getByText(
+      "Supports tokens beginning with github_pat_ or ghp_. Stored securely in the system credential store.",
+    )).toBeInTheDocument();
     expect(screen.getByText("Authenticates private repositories, pull requests, and review publishing.")).toBeInTheDocument();
     const save = screen.getByRole("button", { name: "Save replacement" });
     const test = screen.getByRole("button", { name: "Test connection" });
@@ -202,7 +231,9 @@ describe("SettingsPanel", () => {
     expect(screen.getByText("管理 AI 评审与代码托管服务的凭据。")).toBeInTheDocument();
     expect(screen.getByText("用于私有仓库、拉取请求与评审发布的身份验证。")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("输入新凭据以替换已保存的凭据")).toBeInTheDocument();
-    expect(screen.getByText("安全存储于系统凭据库中。")).toBeInTheDocument();
+    expect(screen.getByText(
+      "支持以 github_pat_ 或 ghp_ 开头的令牌。凭据将安全存储于系统凭据库中。",
+    )).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存替换凭据" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "测试连接" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "移除凭据" })).toBeInTheDocument();
