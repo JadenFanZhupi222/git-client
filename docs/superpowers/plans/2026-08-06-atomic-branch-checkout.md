@@ -52,7 +52,7 @@ git add crates/git-engine/src/git2_backend.rs
 git commit -m "test: 复现 worktree 分支半切换"
 ```
 
-### Task 2: Make checkout preflighted and recoverable
+### Task 2: Reject an occupied branch before checkout writes
 
 **Files:**
 - Modify: `crates/git-engine/src/git2_backend.rs:1269-1300`
@@ -88,37 +88,7 @@ if let Some(worktree) = branch_checked_out_in_other_worktree(&repo, &refname)
 
 This check must run before any checkout builder that can write the worktree or index.
 
-- [ ] **Step 3: Add a safe dry-run before changing HEAD**
-
-Construct a separate checkout builder and verify the target without writing:
-
-```rust
-let mut preflight = git2::build::CheckoutBuilder::new();
-preflight.safe().dry_run();
-repo.checkout_tree(&obj, Some(&mut preflight))
-    .map_err(map_checkout_error)?;
-```
-
-Extract the existing conflict mapping into a private `map_checkout_error` helper so preflight and actual checkout return the same `CheckoutConflict` behavior.
-
-- [ ] **Step 4: Move HEAD before the actual checkout and roll it back on failure**
-
-Capture the original symbolic HEAD ref and peeled object before `set_head`. After preflight succeeds, call `set_head(&refname)`, then run the actual safe checkout. If actual checkout fails, restore the original HEAD and safe-checkout the original object before returning the original checkout error. If rollback itself fails, return `GitError::Backend` containing both errors.
-
-The execution shape must be:
-
-```rust
-repo.set_head(&refname).map_err(backend_error)?;
-if let Err(checkout_error) = repo.checkout_tree(&obj, Some(&mut checkout)) {
-    rollback_checkout(&repo, &original_ref, &original_obj)
-        .map_err(|rollback_error| combined_error(&checkout_error, &rollback_error))?;
-    return Err(map_checkout_error(checkout_error));
-}
-```
-
-`rollback_checkout` is private to this module and has no effect on the `GitBackend` trait.
-
-- [ ] **Step 5: Run the new test and verify GREEN**
+- [ ] **Step 3: Run the new test and verify GREEN**
 
 Run:
 
@@ -128,7 +98,7 @@ cargo test -p git-engine checkout_branch_used_by_other_worktree_preserves_curren
 
 Expected: PASS; the call fails before the worktree or index changes.
 
-- [ ] **Step 6: Run all checkout tests**
+- [ ] **Step 4: Run all checkout tests**
 
 Run:
 
@@ -138,7 +108,7 @@ cargo test -p git-engine checkout_
 
 Expected: all checkout-related tests pass, including normal checkout, missing branch, dirty conflict, and occupied worktree.
 
-- [ ] **Step 7: Commit the fix**
+- [ ] **Step 5: Commit the fix**
 
 ```powershell
 git add crates/git-engine/src/git2_backend.rs

@@ -19,12 +19,12 @@
 
 1. 检查目标本地分支是否已被同一仓库的其他 worktree 占用；若占用，返回后端错误，
    不执行 checkout。
-2. 使用 libgit2 的安全 checkout dry-run 验证工作区和 index 是否可以切换；冲突继续映射为
+2. 继续使用现有 libgit2 safe checkout 验证工作区和 index 是否可以切换；冲突继续映射为
    `CheckoutConflict`。
 
-预检通过后执行实际切换。实现保留原 HEAD 信息；若移动 HEAD 或实际 checkout 发生错误，
-恢复原 HEAD，并将原提交重新安全 checkout，避免暴露半切换状态。回滚失败时返回同时包含原错误
-和回滚错误的后端错误，便于诊断。
+已复现的半切换只发生在目标分支被其他 worktree 占用时：`checkout_tree` 成功后，`set_head`
+才报告占用错误。占用预检将该失败提前到任何写入之前，因此无需增加会覆盖用户本地修改风险更高的
+补偿式回滚。
 
 ## Worktree 占用检测
 

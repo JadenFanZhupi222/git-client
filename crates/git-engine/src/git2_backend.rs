@@ -25,6 +25,51 @@ fn to_repo_relative(repo: &git2::Repository, file: &Path) -> std::path::PathBuf 
     file.to_path_buf()
 }
 
+fn map_checkout_error(error: git2::Error) -> GitError {
+    if error.code() == git2::ErrorCode::Conflict {
+        GitError::CheckoutConflict
+    } else {
+        GitError::Backend(error.to_string())
+    }
+}
+
+fn branch_checked_out_in_other_worktree(
+    repo: &git2::Repository,
+    target_ref: &str,
+) -> Result<Option<std::path::PathBuf>, git2::Error> {
+    let current = repo.workdir().and_then(|path| path.canonicalize().ok());
+
+    let mut candidates = Vec::new();
+    let repo_path = repo.path();
+    let common_git_dir = repo_path
+        .parent()
+        .filter(|parent| parent.file_name().is_some_and(|name| name == "worktrees"))
+        .and_then(Path::parent)
+        .unwrap_or(repo_path);
+    if let Some(main_workdir) = common_git_dir.parent() {
+        candidates.push(main_workdir.to_path_buf());
+    }
+
+    for name in repo.worktrees()?.iter().flatten() {
+        candidates.push(repo.find_worktree(name)?.path().to_path_buf());
+    }
+
+    for candidate in candidates {
+        let canonical = candidate
+            .canonicalize()
+            .unwrap_or_else(|_| candidate.clone());
+        if current.as_ref().is_some_and(|path| path == &canonical) {
+            continue;
+        }
+        let candidate_repo = git2::Repository::open(&candidate)?;
+        if candidate_repo.head()?.name() == Some(target_ref) {
+            return Ok(Some(candidate));
+        }
+    }
+
+    Ok(None)
+}
+
 /// 从 git2::Commit 构造领域 Commit。head_commit 与 log 共用(DRY)。
 fn build_commit(c: &git2::Commit) -> Commit {
     let id = c.id().to_string();
@@ -1276,6 +1321,15 @@ impl GitBackend for Git2Backend {
             .revparse_single(&refname)
             .map_err(|_| GitError::BranchNotFound(name.to_string()))?;
 
+        if let Some(worktree) = branch_checked_out_in_other_worktree(&repo, &refname)
+            .map_err(|e| GitError::Backend(e.to_string()))?
+        {
+            return Err(GitError::Backend(format!(
+                "分支 {name} 已在工作区 {} 中检出",
+                worktree.display()
+            )));
+        }
+
         // ⚠️ 显式 .safe():CheckoutBuilder 默认策略是 NONE(dry-run,不写盘)。
         // safe = 更新可安全覆盖的文件,遇到会丢失本地改动的冲突则报错,绝不强覆盖。
         let mut co = git2::build::CheckoutBuilder::new();
@@ -1284,11 +1338,7 @@ impl GitBackend for Git2Backend {
             // 只认 Conflict code(safe checkout 遇到会丢失本地改动时正是返回它);
             // 不要用 ErrorClass::Checkout 兜底 —— 那会把 IO/损坏等无关错误也误判成
             // 「工作区有改动」,给用户不可恢复却提示去暂存的误导。
-            if e.code() == git2::ErrorCode::Conflict {
-                GitError::CheckoutConflict
-            } else {
-                GitError::Backend(e.to_string())
-            }
+            map_checkout_error(e)
         })?;
 
         // 工作区/index 已就位后再移动 HEAD 指向该分支。
