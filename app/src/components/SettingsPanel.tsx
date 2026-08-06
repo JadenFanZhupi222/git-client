@@ -336,7 +336,13 @@ export function SettingsPanel({
                     />
                   </label>
                   <p id={`settings-${provider}-credential-helper`} className="mt-1.5 text-xs text-fg-muted">
-                    {t(provider === "github" ? "settings.github.credentialHelper" : "settings.credentialHelper")}
+                    {t(
+                      provider === "github"
+                        ? "settings.github.credentialHelper"
+                        : provider === "gitlab"
+                          ? "settings.gitlab.credentialHelper"
+                          : "settings.credentialHelper",
+                    )}
                   </p>
 
                 </>

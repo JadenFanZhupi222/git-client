@@ -59,7 +59,8 @@ describe("SettingsPanel", () => {
     expect(document.getElementById("settings-panel-github")).not.toHaveAttribute("hidden");
   });
 
-  it("explains GitHub token prefixes outside the input placeholder", async () => {
+  it("explains hosting token prefixes outside the input placeholders", async () => {
+    const user = userEvent.setup();
     ipc.credentialStatus.mockResolvedValue(false);
     const english = render(
       <ToastProvider>
@@ -70,6 +71,11 @@ describe("SettingsPanel", () => {
     expect(screen.getByPlaceholderText("Paste GitHub personal access token")).toBeInTheDocument();
     expect(screen.getByText(
       "Supports tokens beginning with github_pat_ or ghp_. Stored securely in the system credential store.",
+    )).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "GitLab" }));
+    expect(screen.getByPlaceholderText("Paste GitLab personal access token")).toBeInTheDocument();
+    expect(screen.getByText(
+      "Supports tokens beginning with glpat-. Stored securely in the system credential store.",
     )).toBeInTheDocument();
 
     english.unmount();
@@ -83,6 +89,11 @@ describe("SettingsPanel", () => {
     expect(screen.getByPlaceholderText("粘贴 GitHub Personal Access Token")).toBeInTheDocument();
     expect(screen.getByText(
       "支持以 github_pat_ 或 ghp_ 开头的令牌。凭据将安全存储于系统凭据库中。",
+    )).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "GitLab" }));
+    expect(screen.getByPlaceholderText("粘贴 GitLab Personal Access Token")).toBeInTheDocument();
+    expect(screen.getByText(
+      "支持以 glpat- 开头的令牌。凭据将安全存储于系统凭据库中。",
     )).toBeInTheDocument();
   });
 
