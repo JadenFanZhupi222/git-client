@@ -93,14 +93,13 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
   const c = `var(${style.varName})`;
   return (
     <div
-      // 用 color-mix 把状态色掺进 elevated 表面:不透明(app 背景不会透出)、随主题走、
-      // 又明显有色(区别于普通灰面板)。配 4px 同色左条 + 同色图标/标题,角落/全屏都一眼可辨。
+      // Mix the state color into an opaque elevated surface so the toast follows the theme
+      // while remaining distinct from neutral panels. The full border, icon, and title share the state color.
       style={{
         background: `color-mix(in srgb, ${c} 15%, var(--color-elevated))`,
         borderColor: `color-mix(in srgb, ${c} 40%, var(--color-line-strong))`,
-        borderLeftColor: c,
       }}
-      className={`pointer-events-auto flex w-80 items-start gap-2.5 rounded-lg border border-l-4 p-3 popover ${
+      className={`pointer-events-auto flex w-80 items-start gap-2.5 rounded-lg border p-3 popover ${
         item.leaving ? "toast-out" : "toast-in"
       }`}
     >

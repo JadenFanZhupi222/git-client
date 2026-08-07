@@ -117,7 +117,7 @@ function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode
     <button
       onClick={() => onChange(v)}
       className={`rounded px-2.5 py-0.5 text-[11px] transition-colors ${
-        view === v ? "bg-accent/15 text-accent" : "text-fg-muted hover:bg-overlay hover:text-fg"
+        view === v ? "bg-accent/15 text-accent-ink" : "text-fg-muted hover:bg-overlay hover:text-fg"
       }`}
     >
       {label}
@@ -357,7 +357,7 @@ function StageHeader({
                 const lines = h.lines.map((_, li) => li).filter((li) => selected.has(`${hi}:${li}`));
                 lineStage.onStage(hi, lines);
               }}
-              className="shrink-0 rounded border border-accent bg-accent/15 px-1.5 py-px text-[10px] text-accent transition-colors hover:bg-accent/25 disabled:opacity-40"
+              className="shrink-0 rounded border border-accent bg-accent/15 px-1.5 py-px text-[10px] text-accent-ink transition-colors hover:bg-accent/25 disabled:opacity-40"
             >
               {t("diff.stageSelected", { count: selCount })}
             </button>
@@ -490,7 +490,7 @@ function ImgModeBar({ mode, onChange }: { mode: ImgMode; onChange: (m: ImgMode) 
     <button
       onClick={() => onChange(m)}
       className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
-        mode === m ? "bg-accent/15 text-accent" : "text-fg-muted hover:text-fg"
+        mode === m ? "bg-accent/15 text-accent-ink" : "text-fg-muted hover:text-fg"
       }`}
     >
       {label}

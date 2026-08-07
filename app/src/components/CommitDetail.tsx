@@ -15,7 +15,7 @@ export function CommitDetail({ repo, commit }: { repo: string; commit: CommitDto
   const t = useT();
   const sig = useCommitSignature(repo, commit?.id ?? null).data ?? null;
   const [copied, setCopied] = useState(false);
-  if (!commit) return <div className="p-3 text-xs text-fg-subtle">{t("commit.selectToView")}</div>;
+  if (!commit) return <div className="p-3 text-xs text-fg-muted">{t("commit.selectToView")}</div>;
 
   async function copySha() {
     try {
@@ -42,17 +42,17 @@ export function CommitDetail({ repo, commit }: { repo: string; commit: CommitDto
         </button>
       </div>
 
-      {/* 标题:编辑性衬线大字(Instrument Serif),完整显示、可换行 */}
-      <h2 className="serif mb-3.5 text-[25px] font-normal leading-[1.18] text-fg" style={{ textWrap: "pretty" }}>{commit.summary}</h2>
+      {/* Keep diagnostic titles in the UI sans to avoid editorial drift in a data-heavy surface. */}
+      <h2 className="mb-3.5 text-lg font-semibold leading-[1.3] text-fg" style={{ textWrap: "pretty" }}>{commit.summary}</h2>
 
       {/* 作者行:首字母方块头像(accent 底)+ 姓名 + 邮箱·时间 + 签名 */}
       <div className="flex items-center gap-2.5 border-b border-line pb-3.5">
-        <div className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-lg bg-accent/[0.16] font-mono text-[11px] font-semibold text-accent">
+        <div className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-lg bg-accent/[0.16] font-mono text-[11px] font-semibold text-accent-ink">
           {initials(commit.author_name)}
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-[13px] font-medium text-fg" title={commit.author_email}>{commit.author_name}</div>
-          <div className="truncate font-mono text-[11px] text-fg-subtle">
+          <div className="truncate font-mono text-[11px] text-fg-muted">
             {commit.author_email ? `${commit.author_email} · ` : ""}{formatAbsolute(commit.timestamp)}
           </div>
         </div>

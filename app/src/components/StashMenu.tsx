@@ -55,7 +55,7 @@ export function StashMenu({ repo }: { repo: string }) {
         <StashIcon width={13} height={13} />
         {t("stash.label")}
         {stashes.length > 0 && (
-          <span className="rounded-full bg-accent/15 px-1 font-mono text-[10px] font-semibold text-accent">
+          <span className="rounded-full bg-accent/15 px-1 font-mono text-[10px] font-semibold text-accent-ink">
             {stashes.length}
           </span>
         )}

@@ -35,7 +35,7 @@ export const zh = {
   "action.setUpstream": "设置上游",
   "action.setUpstreamTitle": "为当前分支设置上游分支",
   "action.setAsUpstream": "设为上游",
-  "header.appName": "Git 客户端",
+  "header.appName": "Strata",
   "header.home": "回到起始页",
   "header.selectRemote": "选择远程仓库",
   "pull.merge": "合并(merge)",
@@ -236,6 +236,8 @@ export const zh = {
   "common.loading": "加载中…",
   "common.lazyLoadFailed": "此区域加载失败。",
   "common.reload": "重新加载应用",
+  "common.retry": "重试",
+  "common.resizePanel": "调整{panel}宽度",
 
   // 次级视图表格列头
   "col.path": "路径",
@@ -339,6 +341,9 @@ export const zh = {
 
   // 历史页
   "history.commitHistory": "提交历史",
+  "history.searchLabel": "搜索提交",
+  "history.searchScope": "搜索范围",
+  "history.searchResults": "提交搜索结果",
   "history.reflogTitle": "查看 reflog(HEAD 移动历史 / 找回丢失提交)",
   "history.searchMessage": "搜索提交(信息 / 作者 / SHA)",
   "history.searchContent": "搜内容:引入/删除某段文本的提交(-S)",
@@ -361,6 +366,8 @@ export const zh = {
   "history.exitCompare": "退出比较",
   "history.commitDetail": "提交详情",
   "history.changedFiles": "改动文件",
+  "history.loadingFiles": "正在加载改动文件…",
+  "history.loadingDiff": "正在加载差异…",
   "history.cherryPickTitle": "把此提交拣选(cherry-pick)到当前分支",
   "history.revertTitle": "回滚此提交(生成一个抵消其改动的新提交)",
   "history.rebase": "变基",

@@ -52,7 +52,7 @@ function WorktreeRow({ wt }: { wt: WorktreeInfoDto }) {
         <span title={wt.head_sha}>{wt.short_sha || "—"}</span>
       </Cell>
       <Cell className="!font-sans flex-wrap gap-1">
-        {wt.is_current && <Badge cls="border-accent/40 bg-accent/10 text-accent">{t("worktrees.current")}</Badge>}
+        {wt.is_current && <Badge cls="border-accent/40 bg-accent/10 text-accent-ink">{t("worktrees.current")}</Badge>}
         {wt.is_main && <Badge cls="border-line-strong bg-overlay text-fg-muted">{t("worktrees.main")}</Badge>}
         {wt.locked && <Badge cls="border-warning/40 bg-warning/10 text-warning">{t("worktrees.locked")}</Badge>}
         {wt.bare && <Badge cls="border-line-strong bg-overlay text-fg-muted">{t("worktrees.bare")}</Badge>}

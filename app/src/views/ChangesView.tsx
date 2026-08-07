@@ -373,7 +373,15 @@ export function ChangesView({ repo }: { repo: string }) {
         </div>
       </div>
 
-      <Resizer onDown={listCol.onDown} />
+      <Resizer
+        value={listCol.w}
+        min={listCol.min}
+        max={listCol.max}
+        label={t("common.resizePanel", { panel: t("nav.changes") })}
+        onDown={listCol.onDown}
+        onKeyDown={listCol.onKeyDown}
+        onReset={listCol.reset}
+      />
 
       {/* 右列:选中文件的工作区 diff */}
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">

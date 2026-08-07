@@ -2,7 +2,7 @@
 
 ## Goal
 
-Move Git Client 0.1.x from a feature-rich prerelease toward a trustworthy release candidate by closing repository-local release, reliability, architecture, internationalization, and performance gaps. External signing certificates and production updater secrets remain operator-provided.
+Move Strata 0.1.x from a feature-rich prerelease toward a trustworthy release candidate by closing repository-local release, reliability, architecture, internationalization, and performance gaps. External signing certificates and production updater secrets remain operator-provided.
 
 ## Scope and Delivery Order
 

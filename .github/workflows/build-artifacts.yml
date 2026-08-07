@@ -71,8 +71,8 @@ jobs:
             echo "Release ${GITHUB_REF_NAME} already exists; artifacts will be replaced."
           else
             gh release create "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" \
-              --title "Git Client ${GITHUB_REF_NAME#app-v}" \
-              --notes "Cross-platform Git Client bundles. Code signing, notarization, and updater metadata are included when the required secrets are configured." \
+              --title "Strata ${GITHUB_REF_NAME#app-v}" \
+              --notes "Cross-platform Strata bundles. Code signing, notarization, and updater metadata are included when the required secrets are configured." \
               --prerelease
           fi
 
@@ -156,7 +156,7 @@ jobs:
               $config = @{
                 bundle = @{
                   windows = @{
-                    signCommand = "trusted-signing-cli -e `"$env:AZURE_TRUSTED_SIGNING_ENDPOINT`" -a `"$env:AZURE_TRUSTED_SIGNING_ACCOUNT`" -c `"$env:AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE`" -d `"Git Client`" %1"
+                    signCommand = "trusted-signing-cli -e `"$env:AZURE_TRUSTED_SIGNING_ENDPOINT`" -a `"$env:AZURE_TRUSTED_SIGNING_ACCOUNT`" -c `"$env:AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE`" -d `"Strata`" %1"
                   }
                 }
               } | ConvertTo-Json -Depth 5
@@ -254,8 +254,8 @@ jobs:
           projectPath: app
           tauriScript: pnpm tauri
           tagName: ${{ github.ref_name }}
-          releaseName: Git Client ${{ github.ref_name }}
-          releaseBody: Cross-platform Git Client bundles. Signed update artifacts are included when updater secrets are configured.
+          releaseName: Strata ${{ github.ref_name }}
+          releaseBody: Cross-platform Strata bundles. Signed update artifacts are included when updater secrets are configured.
           prerelease: true
           uploadUpdaterJson: ${{ steps.updater.outputs.has-updater-artifacts }}
           uploadWorkflowArtifacts: false

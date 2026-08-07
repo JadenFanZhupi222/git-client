@@ -192,8 +192,8 @@ fn prepare_e2e_repo_at(root: &Path, run_id: &str) -> Result<PathBuf, IpcError> {
     RepoService::new(Arc::new(CompositeBackend::default()))
         .init_repo(&repo)
         .map_err(to_ipc)?;
-    run_e2e_git(&repo, &["config", "user.name", "Git Client E2E"])?;
-    run_e2e_git(&repo, &["config", "user.email", "e2e@git-client.invalid"])?;
+    run_e2e_git(&repo, &["config", "user.name", "Strata E2E"])?;
+    run_e2e_git(&repo, &["config", "user.email", "e2e@strata.invalid"])?;
     Ok(repo)
 }
 
@@ -322,8 +322,8 @@ mod e2e_fixture_tests {
 
         assert!(repo.join(".git").is_dir());
         let config = std::fs::read_to_string(repo.join(".git/config")).unwrap();
-        assert!(config.contains("Git Client E2E"));
-        assert!(config.contains("e2e@git-client.invalid"));
+        assert!(config.contains("Strata E2E"));
+        assert!(config.contains("e2e@strata.invalid"));
 
         write_e2e_file_at(root.path(), "fixture-run", "hello.txt", "hello from e2e\n").unwrap();
         assert_eq!(

@@ -214,7 +214,7 @@ export function SettingsPanel({
           >
             <div
               aria-current="page"
-              className="rounded-md bg-accent/15 px-3 py-2 text-xs font-medium text-accent"
+              className="rounded-md bg-accent/15 px-3 py-2 text-xs font-medium text-accent-ink"
             >
               {t("settings.integrations.title")}
             </div>

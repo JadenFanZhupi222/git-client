@@ -22,12 +22,12 @@ function RefBadges({ refs }: { refs: RefDto[] }) {
   return (
     <>
       {head && (
-        <span className={`${pill} bg-accent/[0.16] text-accent`}>
+        <span className={`${pill} bg-accent/[0.16] text-accent-ink`}>
           {head.name === "HEAD" ? "HEAD" : `HEAD → ${head.name}`}
         </span>
       )}
       {locals.map((r) => (
-        <span key={`l-${r.name}`} className={`${pill} bg-accent/10 text-accent`}>
+        <span key={`l-${r.name}`} className={`${pill} bg-accent/10 text-accent-ink`}>
           {r.name}
         </span>
       ))}
@@ -159,7 +159,13 @@ export function CommitGraph({
 
   return (
     <div className="relative h-full">
-    <div ref={parentRef} className="fade-in h-full overflow-y-auto" onMouseLeave={() => setHoverColor(null)}>
+    <div
+      ref={parentRef}
+      role="listbox"
+      aria-label={t("history.commitHistory")}
+      className="fade-in h-full overflow-y-auto"
+      onMouseLeave={() => setHoverColor(null)}
+    >
       {/* 撑出全量高度的占位层;只有可见窗口内的行被真正渲染并绝对定位到各自位置。
           10 万提交也只挂十几个 DOM 节点,滚动恒定开销。 */}
       <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
@@ -200,6 +206,12 @@ export function CommitGraph({
           return (
             <div
               key={r.commit.id}
+              role="option"
+              aria-selected={on}
+              aria-label={`${r.commit.summary}, ${r.commit.author_name}, ${r.commit.short_id}`}
+              aria-posinset={vrow.index + 1}
+              aria-setsize={rows.length}
+              tabIndex={on ? 0 : -1}
               draggable={!!onCherryPick}
               onDragStart={onCherryPick ? (e) => { dragIdRef.current = r.commit.id; setDragId(r.commit.id); e.dataTransfer.effectAllowed = "copy"; e.dataTransfer.setData("text/plain", r.commit.id); } : undefined}
               onDragEnd={() => { dragIdRef.current = null; setDragId(null); }}
@@ -209,6 +221,12 @@ export function CommitGraph({
               onDrop={isHead && onCherryPick ? (e) => { e.preventDefault(); const id = e.dataTransfer.getData("text/plain"); dragIdRef.current = null; setDragId(null); if (!id || reachableFromHead.has(id)) return; const c = rows.find((x) => x.commit.id === id)?.commit; if (c && c.id !== r.commit.id) onCherryPick(c); } : undefined}
               onMouseEnter={() => setHoverColor(r.color)}
               onClick={(e) => onSelect(r.commit, { compare: e.metaKey || e.ctrlKey })}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelect(r.commit, { compare: e.metaKey || e.ctrlKey });
+                }
+              }}
               onContextMenu={(e) => { if (onContext) { e.preventDefault(); onSelect(r.commit); onContext(r.commit, e.clientX, e.clientY); } }}
               title={syncTip}
               className={`flex items-stretch transition-colors ${onCherryPick ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"} ${isNew ? "commit-enter" : ""} ${isDragged ? "opacity-40" : ""} ${
@@ -293,7 +311,7 @@ export function CommitGraph({
           {loading ? t("common.loading") : t("graph.loadMore")}
         </button>
       ) : (
-        rows.length > 0 && <div className="py-2.5 text-center text-[11px] text-fg-subtle">{t("graph.end")}</div>
+        rows.length > 0 && <div className="py-2.5 text-center text-[11px] text-fg-muted">{t("graph.end")}</div>
       )}
       </div>
 
@@ -303,7 +321,7 @@ export function CommitGraph({
         <div
           onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
           onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData("text/plain"); dragIdRef.current = null; setDragId(null); if (!id || reachableFromHead.has(id)) return; const c = rows.find((x) => x.commit.id === id)?.commit; if (c && onCherryPick) onCherryPick(c); }}
-          className="popover absolute inset-x-2 z-20 flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-accent bg-accent/10 py-2 text-xs font-medium text-accent backdrop-blur-sm"
+          className="popover absolute inset-x-2 z-20 flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-accent bg-accent/10 py-2 text-xs font-medium text-accent-ink backdrop-blur-sm"
           style={{ top: topInset + 8 }}
         >
           {t("graph.dropToCurrent")}

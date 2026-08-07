@@ -16,14 +16,15 @@
 
   --color-fg: #1a160f;              /* 墨黑 */
   --color-fg-muted: #6a6053;
-  --color-fg-subtle: #9a9082;
+  --color-fg-subtle: #756b5f;
 
-  --color-accent: #d83a22;          /* 朱红(UI 强调;白底偏深保 AA) */
+  --color-accent: #c93620;          /* Vermilion UI accent; small text reaches AA on light surfaces. */
   --color-accent-emphasis: #bb2f1a;
+  --color-accent-ink: #b82d18;      /* Small text and icons on pale vermilion surfaces. */
   --color-success: #2f7d4f;         /* diff 新增 / 暂存 */
   --color-danger: #bb2f1a;          /* diff 删除 / 危险(砖红,区别于 accent) */
   --color-warning: #b5791f;         /* 修改 M / tag */
-  --color-done: #d83a22;            /* 提交按钮:朱红实心 + 白字 */
+  --color-done: #c93620;            /* Solid vermilion commit button with white text. */
 
   /* diff 行底色(新增/删除) */
   --color-add-bg: rgba(47, 125, 79, 0.10);
@@ -80,10 +81,11 @@
 
   --color-fg: #f1ebe0;              /* 纸白 */
   --color-fg-muted: #a99e8d;
-  --color-fg-subtle: #6f6556;
+  --color-fg-subtle: #8f8577;
 
   --color-accent: #ff6a4d;          /* 亮朱红 */
   --color-accent-emphasis: #e2452d;
+  --color-accent-ink: #ff8a70;
   --color-success: #5aa06a;
   --color-danger: #ff7a5e;
   --color-warning: #e0a94e;
@@ -116,10 +118,11 @@
 
   --color-fg: #f0e9df;
   --color-fg-muted: #9a8e7c;
-  --color-fg-subtle: #6f6556;
+  --color-fg-subtle: #8f8577;
 
   --color-accent: #f5b54b;
   --color-accent-emphasis: #e0a235;
+  --color-accent-ink: #f5b54b;
   --color-success: #46be82;
   --color-danger: #e86e64;
   --color-warning: #e0734a;

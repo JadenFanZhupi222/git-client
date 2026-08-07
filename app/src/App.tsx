@@ -598,7 +598,7 @@ export default function App() {
                     {pulling ? <SpinnerIcon width={13} height={13} /> : <PullIcon width={13} height={13} />}
                     {pulling ? "Pull…" : pullRebase ? t("cmd.pullRebase") : "Pull"}
                     {canPull && !pulling && (
-                      <span className="rounded-full bg-accent/15 px-1 font-mono text-[10px] font-semibold text-accent">
+                      <span className="rounded-full bg-accent/15 px-1 font-mono text-[10px] font-semibold text-accent-ink">
                         ↓{sync!.behind}
                       </span>
                     )}
@@ -948,14 +948,14 @@ function BranchMark({ onHome, title }: { onHome?: () => void; title?: string }) 
     </svg>
   );
   if (!onHome) {
-    return <span className="grid h-5 w-5 place-items-center rounded bg-accent/15 text-accent">{mark}</span>;
+    return <span className="grid h-5 w-5 place-items-center rounded bg-accent/15 text-accent-ink">{mark}</span>;
   }
   return (
     <button
       onClick={onHome}
       title={title}
       aria-label={title}
-      className="grid h-5 w-5 place-items-center rounded bg-accent/15 text-accent transition-colors hover:bg-accent/25"
+      className="grid h-5 w-5 place-items-center rounded bg-accent/15 text-accent-ink transition-colors hover:bg-accent/25"
     >
       {mark}
     </button>

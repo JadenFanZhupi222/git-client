@@ -1,6 +1,6 @@
-# Git Client
+# Strata
 
-A production-oriented desktop Git client built with Tauri 2, React, and a multi-crate Rust workspace.
+A production-oriented desktop application for Git, built with Tauri 2, React, and a multi-crate Rust workspace.
 
 The long-term target is the quality bar of the Git tooling built into mature IDEs: fast on large repositories, safe for real work, predictable during complex operations, and easy to extend without mixing UI code with Git implementation details.
 

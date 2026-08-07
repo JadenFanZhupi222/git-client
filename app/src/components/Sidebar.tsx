@@ -67,7 +67,7 @@ export function Sidebar({
               "before:absolute before:left-0 before:top-1/2 before:h-0 before:w-[3px] before:-translate-y-1/2 before:rounded-full before:bg-accent before:transition-all before:duration-300 before:ease-[cubic-bezier(0.32,0.72,0,1)]",
               collapsed ? "w-9 justify-center" : "w-full",
               on
-                ? "bg-accent/12 text-accent before:h-4"
+                ? "bg-accent/12 text-accent-ink before:h-4"
                 : "text-fg-muted hover:bg-overlay hover:text-fg",
             )}
           >

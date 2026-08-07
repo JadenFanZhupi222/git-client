@@ -14,7 +14,7 @@ Rust/前端开发者与日常使用 git 的工程师。使用场景:在桌面上
 
 ## Brand Personality
 
-精密、跟手、克制(precise / responsive / restrained)。气质是「开发者工具」而非消费级 App:信息密集但有秩序,玻璃材质只用于外壳浮层点到为止,主色青绿(teal)作为身份色而非装饰。动效服务于状态反馈与「活的图谱」的生命感,不为炫技。情绪目标:打开即觉「这是个认真的专业工具」,用起来「快且可信」。
+精密、跟手、克制(precise / responsive / restrained)。气质是「开发者工具」而非消费级 App:信息密集但有秩序,玻璃材质只用于外壳浮层点到为止,主色朱红(vermilion)作为身份色而非装饰。动效服务于状态反馈与「活的图谱」的生命感,不为炫技。情绪目标:打开即觉「这是个认真的专业工具」,用起来「快且可信」。
 
 ## Anti-references
 
@@ -34,7 +34,7 @@ Rust/前端开发者与日常使用 git 的工程师。使用场景:在桌面上
 ## Accessibility & Inclusion
 
 - 目标 WCAG AA:正文 ≥4.5:1,大字 ≥3:1;accent 在白底特意加深达标。
-- 焦点可见(`:focus-visible` 青绿描边);浮层支持 Esc 关闭与焦点陷阱(`useModalListNav`)。
+- 焦点可见(`:focus-visible` 朱红描边);浮层支持 Esc 关闭与焦点陷阱(`useModalListNav`)。
 - 颜色不作为唯一信息载体(同步状态除色条外有 tooltip;节点空心/实心区分 push/pull 状态)。
 - 所有动效在 `prefers-reduced-motion: reduce` 下降级为淡入或瞬时。
 - 加速器(拖放等)始终有键盘/菜单等价路径,不锁死键盘与读屏用户。

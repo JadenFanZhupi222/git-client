@@ -35,7 +35,7 @@ export const en: Record<MessageKey, string> = {
   "action.setUpstream": "Set upstream",
   "action.setUpstreamTitle": "Set an upstream branch for the current branch",
   "action.setAsUpstream": "Set as upstream",
-  "header.appName": "Git Client",
+  "header.appName": "Strata",
   "header.home": "Back to start",
   "header.selectRemote": "Select remote",
   "pull.merge": "Merge",
@@ -236,6 +236,8 @@ export const en: Record<MessageKey, string> = {
   "common.loading": "Loading…",
   "common.lazyLoadFailed": "This section could not be loaded.",
   "common.reload": "Reload application",
+  "common.retry": "Retry",
+  "common.resizePanel": "Resize {panel}",
 
   // Secondary view table columns
   "col.path": "Path",
@@ -339,6 +341,9 @@ export const en: Record<MessageKey, string> = {
 
   // History view
   "history.commitHistory": "Commit history",
+  "history.searchLabel": "Search commits",
+  "history.searchScope": "Search scope",
+  "history.searchResults": "Commit search results",
   "history.reflogTitle": "View reflog (HEAD movement history / recover lost commits)",
   "history.searchMessage": "Search commits (message / author / SHA)",
   "history.searchContent": "Search content: commits that add/remove a text (-S)",
@@ -361,6 +366,8 @@ export const en: Record<MessageKey, string> = {
   "history.exitCompare": "Exit compare",
   "history.commitDetail": "Commit details",
   "history.changedFiles": "Changed files",
+  "history.loadingFiles": "Loading changed files…",
+  "history.loadingDiff": "Loading diff…",
   "history.cherryPickTitle": "Cherry-pick this commit onto the current branch",
   "history.revertTitle": "Revert this commit (creates a new commit undoing its changes)",
   "history.rebase": "Rebase",

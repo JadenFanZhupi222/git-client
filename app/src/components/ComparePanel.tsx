@@ -60,7 +60,15 @@ export function ComparePanel({
             <div className="min-h-0 flex-1 overflow-hidden">{list}</div>
           )}
         </div>
-        <Resizer onDown={col.onDown} />
+        <Resizer
+          value={col.w}
+          min={col.min}
+          max={col.max}
+          label={t("common.resizePanel", { panel: t("history.changedFiles") })}
+          onDown={col.onDown}
+          onKeyDown={col.onKeyDown}
+          onReset={col.reset}
+        />
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!file} repo={repo} />
         </main>

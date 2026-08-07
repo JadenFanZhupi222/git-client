@@ -20,10 +20,10 @@ export function CommitLines({ commit, badges, selected }: { commit: CommitDto; b
             {commit.summary}
           </span>
         </div>
-        <div className="truncate font-mono text-[11px] text-fg-subtle">{commit.author_name}</div>
+        <div className="truncate font-mono text-[11px] text-fg-muted">{commit.author_name}</div>
       </div>
-      <span className="shrink-0 text-right text-[11px] text-fg-subtle" style={{ width: 62 }}>{formatRelative(commit.timestamp)}</span>
-      <span className={`shrink-0 text-right font-mono text-[11.5px] ${selected ? "text-accent" : "text-fg-subtle"}`} style={{ width: 54 }}>
+      <span className="shrink-0 text-right text-[11px] text-fg-muted" style={{ width: 62 }}>{formatRelative(commit.timestamp)}</span>
+      <span className={`shrink-0 text-right font-mono text-[11.5px] ${selected ? "text-accent" : "text-fg-muted"}`} style={{ width: 54 }}>
         {commit.short_id}
       </span>
     </div>

@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 export function SecondaryHeader({ icon, title, count }: { icon: ReactNode; title: string; count?: ReactNode }) {
   return (
     <div className="mb-5 flex items-center gap-3">
-      <span className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[9px] bg-accent/[0.14] text-accent">{icon}</span>
+      <span className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[9px] bg-accent/[0.14] text-accent-ink">{icon}</span>
       <div>
         <h2 className="serif text-[27px] font-normal leading-[1.1] text-fg">{title}</h2>
         {count != null && <p className="mt-0.5 font-mono text-[11.5px] text-fg-subtle">{count}</p>}

@@ -129,7 +129,7 @@ export function CommandPalette({ commands, onClose }: { commands: Command[]; onC
           {jump && (
             <button
               onClick={() => setJump(null)}
-              className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[11px] text-accent transition-colors hover:bg-accent/25"
+              className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[11px] text-accent-ink transition-colors hover:bg-accent/25"
               title={t("palette.back")}
             >
               {t("palette.backShort")}
