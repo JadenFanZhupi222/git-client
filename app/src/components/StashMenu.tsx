@@ -53,7 +53,7 @@ export function StashMenu({ repo }: { repo: string }) {
         className="hover:border-fg-subtle"
       >
         <StashIcon width={13} height={13} />
-        {t("stash.label")}
+        <span className="titlebar-action-label">{t("stash.label")}</span>
         {stashes.length > 0 && (
           <span className="rounded-full bg-accent/15 px-1 font-mono text-[10px] font-semibold text-accent">
             {stashes.length}

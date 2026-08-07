@@ -1,4 +1,4 @@
-import { lazy, useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -25,6 +25,7 @@ import { checkForAppUpdate } from "./lib/updater";
 import { buildCreateChangeRequestUrl, buildFindChangeRequestUrl } from "./lib/hosting";
 import { LazyBoundary } from "./components/LazyBoundary";
 import { APP_SETTINGS_ENTRY_POINTS, settingsSectionForEntryPoint, type SettingsEntryPoint, type SettingsSection } from "./lib/settings";
+import { getDesktopPlatform } from "./lib/platform";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
 
@@ -42,6 +43,7 @@ const IssuesView = lazy(() => import("./components/IssuesView").then((m) => ({ d
 const GitlabMrPanel = lazy(() => import("./components/GitlabMrPanel").then((m) => ({ default: m.GitlabMrPanel })));
 const CloneDialog = lazy(() => import("./components/CloneDialog").then((m) => ({ default: m.CloneDialog })));
 const OpLogPanel = lazy(() => import("./components/OpLogPanel").then((m) => ({ default: m.OpLogPanel })));
+const WindowControls = lazy(() => import("./components/WindowControls").then((m) => ({ default: m.WindowControls })));
 
 /** 把 git fetch 的原始摘要提炼成简洁细节:优先取 "->" 更新行。 */
 function fetchDetail(summary: string): string | undefined {
@@ -319,8 +321,8 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const isMac = navigator.platform.toLowerCase().includes("mac");
-  const modLabel = isMac ? "⌘K" : "Ctrl K";
+  const desktopPlatform = getDesktopPlatform();
+  const modLabel = desktopPlatform === "macos" ? "⌘ K" : "Ctrl K";
 
   // 命令面板的命令清单。每次渲染重建,保证 run() 闭包拿到最新 state(如 selectedRemote),
   // 避免 useMemo 漏依赖导致的陈旧闭包;十来条命令,重建成本可忽略。
@@ -492,12 +494,16 @@ export default function App() {
   return (
     <div className={`flex h-screen flex-col text-fg ${repo ? "bg-canvas" : "launch-ambient"}`}>
       {busy && <TopProgress />}
-      {/* 顶栏:轻、紧凑、左标题右仓库 */}
-      <Glass as="header" className="relative z-20 flex h-11 shrink-0 items-center gap-3 border-b border-line px-3">
-        <div className="flex min-w-0 items-center gap-2">
+      {/* 跨平台标题栏:共享仓库工具栏;Windows 右侧自绘窗口键,macOS 左侧保留原生交通灯。 */}
+      <Glass
+        as="header"
+        data-platform={desktopPlatform}
+        className="app-titlebar relative z-20 flex h-12 shrink-0 items-center border-b border-line px-3"
+      >
+        <div className="titlebar-context flex min-w-0 shrink items-center gap-2">
           <BranchMark onHome={repo ? () => setRepo(null) : undefined} title={t("header.home")} />
           {repo ? (
-            <span className="max-w-[12rem] truncate font-mono text-sm font-medium text-fg" title={repo}>{repoName}</span>
+            <span className="titlebar-repo-name max-w-[12rem] truncate font-mono text-sm font-medium text-fg" title={repo}>{repoName}</span>
           ) : (
             <span className="text-sm font-semibold">{t("header.appName")}</span>
           )}
@@ -510,18 +516,21 @@ export default function App() {
           )}
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="titlebar-drag-region min-w-3 flex-1 self-stretch" data-tauri-drag-region />
+
+        <div className="titlebar-actions flex min-w-0 shrink-0 items-center gap-2">
           {repo && (
             <div className="flex items-center gap-1.5">
               {remotes.length > 1 && (
-                <div className="relative">
+                <div className="titlebar-remote relative">
                   <button
                     onClick={() => setRemoteMenu((o) => !o)}
                     disabled={busy}
                     title={t("header.selectRemote")}
                     className="flex items-center gap-1 rounded-md border border-line-strong bg-elevated px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
                   >
-                    <span className="max-w-[8rem] truncate font-mono">{selectedRemote ?? remotes[0]}</span>
+                    <CloudIcon width={13} height={13} />
+                    <span className="titlebar-action-label max-w-[8rem] truncate font-mono">{selectedRemote ?? remotes[0]}</span>
                     <ChevronDownIcon width={11} height={11} />
                   </button>
                   {remoteMenu && (
@@ -584,7 +593,7 @@ export default function App() {
                   ) : (
                     <FetchIcon width={13} height={13} />
                   )}
-                  {fetching ? "Fetch…" : "Fetch"}
+                  <span className="titlebar-action-label">{fetching ? "Fetch…" : "Fetch"}</span>
                 </button>
                 <div className="relative flex items-stretch">
                   <button
@@ -596,7 +605,7 @@ export default function App() {
                     }`}
                   >
                     {pulling ? <SpinnerIcon width={13} height={13} /> : <PullIcon width={13} height={13} />}
-                    {pulling ? "Pull…" : pullRebase ? t("cmd.pullRebase") : "Pull"}
+                    <span className="titlebar-action-label">{pulling ? "Pull…" : pullRebase ? t("cmd.pullRebase") : "Pull"}</span>
                     {canPull && !pulling && (
                       <span className="rounded-full bg-accent/15 px-1 font-mono text-[10px] font-semibold text-accent">
                         ↓{sync!.behind}
@@ -638,7 +647,7 @@ export default function App() {
                   ) : (
                     <PushIcon width={13} height={13} />
                   )}
-                  {pushing ? "Push…" : "Push"}
+                  <span className="titlebar-action-label">{pushing ? "Push…" : "Push"}</span>
                   {canPush && !pushing && (
                     <span className="rounded-full bg-success/15 px-1 font-mono text-[10px] font-semibold text-success">
                       ↑{sync!.ahead}
@@ -732,6 +741,11 @@ export default function App() {
             <span className="hidden lg:inline">{repo ? t("action.switchRepo") : t("action.pickRepo")}</span>
           </button>
         </div>
+        {desktopPlatform === "windows" && (
+          <Suspense fallback={<div className="w-[138px]" />}>
+            <WindowControls />
+          </Suspense>
+        )}
       </Glass>
 
       {/* 主体 */}
@@ -969,7 +983,7 @@ function EmptyState({ onPick, onClone, onInit, lastRepo, onResume }: { onPick: (
   const t = useT();
   const lang = useLang();
   const lastName = lastRepo?.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? null;
-  const isMac = navigator.platform.toLowerCase().includes("mac");
+  const isMac = getDesktopPlatform() === "macos";
   return (
     <div className="relative flex flex-1 items-center justify-start overflow-hidden px-[clamp(40px,8vw,128px)]">
       {/* 签名背景:极淡缓行的「活的图谱」(书脊母题),垫在最底,呼应产品本体 */}
@@ -1065,7 +1079,7 @@ function EmptyState({ onPick, onClone, onInit, lastRepo, onResume }: { onPick: (
             <span className="text-xs text-fg-subtle">{t("launch.paletteHint")}</span>
           )}
           <span className="ml-auto text-xs text-fg-subtle">
-            <kbd className="rounded-md border border-line-strong bg-elevated/60 px-1.5 py-0.5 font-mono text-[11px] text-fg-muted">{isMac ? "⌘K" : "Ctrl K"}</kbd> {t("launch.paletteHint")}
+            <kbd className="rounded-md border border-line-strong bg-elevated/60 px-1.5 py-0.5 font-mono text-[11px] text-fg-muted">{isMac ? "⌘ K" : "Ctrl K"}</kbd> {t("launch.paletteHint")}
           </span>
         </div>
       </div>

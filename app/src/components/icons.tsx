@@ -196,6 +196,25 @@ export const MinusIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+export const MinimizeIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M3 8h10" />
+  </svg>
+);
+
+export const MaximizeIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <rect x="3" y="3" width="10" height="10" rx="0.5" />
+  </svg>
+);
+
+export const RestoreIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M5 5V3h8v8h-2" />
+    <rect x="3" y="5" width="8" height="8" rx="0.5" />
+  </svg>
+);
+
 export const TrashIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
     <path d="M2.5 4h11M6 4V2.5h4V4M5 4l.5 9a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1L11 4" />

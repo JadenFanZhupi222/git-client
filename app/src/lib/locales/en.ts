@@ -35,7 +35,7 @@ export const en: Record<MessageKey, string> = {
   "action.setUpstream": "Set upstream",
   "action.setUpstreamTitle": "Set an upstream branch for the current branch",
   "action.setAsUpstream": "Set as upstream",
-  "header.appName": "Git Client",
+  "header.appName": "Strata",
   "header.home": "Back to start",
   "header.selectRemote": "Select remote",
   "pull.merge": "Merge",
