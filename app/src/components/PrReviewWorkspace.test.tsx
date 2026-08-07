@@ -46,6 +46,10 @@ const result = {
   reviewed_files: ["src/a.ts", "src/b.ts"],
   findings: [finding],
   usage: { input_tokens: 100, output_tokens: 25, tool_calls: 1 },
+  model_id: "deepseek-v4-flash",
+  duration_ms: 950,
+  diagnostic_id: "diag-0123456789abcdef",
+  provider_attempts: 2,
 };
 
 function renderWorkspace(overrides: Partial<React.ComponentProps<typeof PrReviewWorkspace>> = {}) {
@@ -210,6 +214,31 @@ describe("PrReviewWorkspace", () => {
     expect(screen.getByRole("button", { name: "Cancelling…" })).toBeDisabled();
     expect(ipc.cancelPrReview).toHaveBeenCalledWith(ipc.startPrReview.mock.calls[0][0].run_id);
     finish({ ...result, findings: [] });
+  });
+
+  it("shows a cancelled terminal state with its diagnostic id", async () => {
+    let rejectRun!: (reason: unknown) => void;
+    ipc.startPrReview.mockReturnValue(new Promise((_, reject) => { rejectRun = reject; }));
+    const user = userEvent.setup();
+    renderWorkspace();
+    await screen.findByText("0123456");
+    await acceptAndStart(user);
+    await user.click(screen.getByRole("button", { name: "Cancel review" }));
+    rejectRun({ code: "CANCELLED", message: "cancelled", recoverable: true, diagnostic_id: "diag-1111111111111111" });
+
+    expect(await screen.findByText("Review was cancelled. No result was saved and no GitHub review was published.")).toBeInTheDocument();
+    expect(screen.getByText("Diagnostic diag-1111111111111111")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start review" })).toBeEnabled();
+  });
+
+  it("shows the diagnostic id returned with an agent failure", async () => {
+    ipc.startPrReview.mockRejectedValue({ code: "NETWORK_ERROR", message: "network", recoverable: true, diagnostic_id: "diag-2222222222222222" });
+    const user = userEvent.setup();
+    renderWorkspace();
+    await screen.findByText("0123456");
+    await acceptAndStart(user);
+
+    expect(await screen.findByText("Diagnostic diag-2222222222222222")).toBeInTheDocument();
   });
 
   it("traps initial focus and restores focus on close", async () => {

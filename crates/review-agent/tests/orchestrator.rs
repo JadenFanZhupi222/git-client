@@ -6,27 +6,67 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::Notify;
 
+fn final_review(
+    summary: impl Into<String>,
+    findings: Vec<ReviewFinding>,
+    usage: ReviewUsage,
+) -> ModelResponse {
+    ModelResponse::final_text(
+        serde_json::json!({"summary": summary.into(), "findings": findings}).to_string(),
+        usage,
+    )
+}
+
+fn final_findings(findings: Vec<ReviewFinding>, usage: ReviewUsage) -> ModelResponse {
+    let summary = if findings.is_empty() {
+        "No actionable issues found.".to_owned()
+    } else {
+        format!("Review found {} actionable issue(s).", findings.len())
+    };
+    final_review(summary, findings, usage)
+}
+
+fn fixture_descriptor() -> ProviderDescriptor {
+    ProviderDescriptor {
+        provider_id: "fixture".into(),
+        model_id: "fixture-review-v1".into(),
+        capabilities: ProviderCapabilities {
+            structured_output: StructuredOutputSupport::JsonObject,
+            tool_calling: ToolCallingSupport::Serial,
+            can_disable_tools: true,
+            requires_reasoning_replay: false,
+            context_window_tokens: 100_000,
+            max_output_tokens: 8_192,
+            usage: UsageSupport::InputOutputTokens,
+        },
+    }
+}
+
 struct FakeModel(Mutex<VecDeque<ModelResponse>>);
 
 #[async_trait]
 impl ModelProvider for FakeModel {
     fn descriptor(&self) -> ProviderDescriptor {
-        ProviderDescriptor {
-            provider: "fixture".into(),
-            model: "fixture-review-v1".into(),
-            capabilities: ProviderCapabilities::default(),
-        }
+        fixture_descriptor()
     }
 
-    async fn respond(&self, transcript: &[TranscriptItem]) -> Result<ModelResponse, ReviewError> {
-        assert!(transcript
+    async fn respond(&self, request: &ModelRequest) -> Result<ModelResponse, ProviderError> {
+        assert!(request
+            .transcript
             .first()
             .is_some_and(|m| matches!(m, TranscriptItem::System(s) if s.contains("untrusted") && s.contains("in English"))));
+        if request.tools.is_empty() {
+            assert!(request.transcript.last().is_some_and(
+                |item| matches!(item, TranscriptItem::System(text) if text.contains("tool budget is exhausted"))
+            ));
+        } else {
+            assert_eq!(request.tools.len(), 2);
+        }
         self.0
             .lock()
             .unwrap()
             .pop_front()
-            .ok_or_else(|| ReviewError::InvalidModelOutput("empty fake".into()))
+            .ok_or_else(|| ProviderError::InvalidResponse("empty fake".into()))
     }
 }
 
@@ -184,11 +224,8 @@ impl ProgressSink for RecordingProgress {
 #[tokio::test]
 async fn reports_real_tool_calls_with_running_counter() {
     let model = FakeModel(Mutex::new(VecDeque::from([
-        ModelResponse::tool_calls(
-            vec![ToolCall::list_tree("tree", "src")],
-            ReviewUsage::default(),
-        ),
-        ModelResponse::final_findings(vec![], ReviewUsage::default()),
+        ModelResponse::tool_calls(vec![list_tree_call("tree", "src")], ReviewUsage::default()),
+        final_findings(vec![], ReviewUsage::default()),
     ])));
     let progress = RecordingProgress::default();
     ReviewOrchestrator::new_with_progress(&model, &source(), &NoTrace, &NeverCancel, &progress)
@@ -248,15 +285,12 @@ fn finding(id: &str, line: u32) -> ReviewFinding {
 #[tokio::test]
 async fn performs_stateless_multi_turn_tool_loop() {
     let model = FakeModel(Mutex::new(VecDeque::from([
+        ModelResponse::tool_calls(vec![list_tree_call("c1", "src")], ReviewUsage::default()),
         ModelResponse::tool_calls(
-            vec![ToolCall::list_tree("c1", "src")],
+            vec![read_file_call("c2", "src/lib.rs", 1, 2)],
             ReviewUsage::default(),
         ),
-        ModelResponse::tool_calls(
-            vec![ToolCall::read_file("c2", "src/lib.rs", 1, 2)],
-            ReviewUsage::default(),
-        ),
-        ModelResponse::final_review(
+        final_review(
             "One correctness issue.",
             vec![finding("f1", 1)],
             ReviewUsage {
@@ -292,7 +326,11 @@ struct PendingModel {
 
 #[async_trait]
 impl ModelProvider for PendingModel {
-    async fn respond(&self, _: &[TranscriptItem]) -> Result<ModelResponse, ReviewError> {
+    fn descriptor(&self) -> ProviderDescriptor {
+        fixture_descriptor()
+    }
+
+    async fn respond(&self, _: &ModelRequest) -> Result<ModelResponse, ProviderError> {
         self.started.notify_one();
         std::future::pending().await
     }
@@ -411,7 +449,7 @@ async fn returns_tool_error_to_model_for_unknown_tool_then_finishes_review() {
             }],
             ReviewUsage::default(),
         ),
-        ModelResponse::final_findings(vec![], ReviewUsage::default()),
+        final_findings(vec![], ReviewUsage::default()),
     ])));
     let source = source();
     let result = ReviewOrchestrator::new(&model, &source, &NoTrace, &NeverCancel)
@@ -425,7 +463,7 @@ async fn returns_tool_error_to_model_for_unknown_tool_then_finishes_review() {
 #[tokio::test]
 async fn rejects_oversized_read() {
     let model = FakeModel(Mutex::new(VecDeque::from([ModelResponse::tool_calls(
-        vec![ToolCall::read_file("oversized", "src/lib.rs", 1, 402)],
+        vec![read_file_call("oversized", "src/lib.rs", 1, 402)],
         ReviewUsage::default(),
     )])));
     let err = ReviewOrchestrator::new(&model, &source(), &NoTrace, &NeverCancel)
@@ -510,14 +548,8 @@ async fn rejects_missing_empty_or_duplicate_call_ids_before_source_io() {
 #[tokio::test]
 async fn rejects_call_id_reused_in_later_round_before_duplicate_source_io() {
     let model = FakeModel(Mutex::new(VecDeque::from([
-        ModelResponse::tool_calls(
-            vec![ToolCall::list_tree("c1", "src")],
-            ReviewUsage::default(),
-        ),
-        ModelResponse::tool_calls(
-            vec![ToolCall::list_tree("c1", "src")],
-            ReviewUsage::default(),
-        ),
+        ModelResponse::tool_calls(vec![list_tree_call("c1", "src")], ReviewUsage::default()),
+        ModelResponse::tool_calls(vec![list_tree_call("c1", "src")], ReviewUsage::default()),
     ])));
     let source = source();
     let error = ReviewOrchestrator::new(&model, &source, &NoTrace, &NeverCancel)
@@ -537,7 +569,7 @@ async fn deduplicates_and_drops_unmapped_findings_then_sorts() {
     let mut low = finding("low", 2);
     low.severity = Severity::Low;
     let invalid = finding("bad", 99);
-    let model = FakeModel(Mutex::new(VecDeque::from([ModelResponse::final_findings(
+    let model = FakeModel(Mutex::new(VecDeque::from([final_findings(
         vec![low, medium, invalid, high],
         ReviewUsage::default(),
     )])));
@@ -553,7 +585,7 @@ async fn deduplicates_and_drops_unmapped_findings_then_sorts() {
 async fn deduplicates_semantically_identical_findings_with_different_model_ids() {
     let first = finding("model-a", 1);
     let second = finding("model-b", 1);
-    let model = FakeModel(Mutex::new(VecDeque::from([ModelResponse::final_findings(
+    let model = FakeModel(Mutex::new(VecDeque::from([final_findings(
         vec![first, second],
         ReviewUsage::default(),
     )])));
@@ -572,7 +604,7 @@ async fn distinct_findings_with_same_model_id_survive_with_stable_ids() {
     second.draft_comment = "different fix".into();
 
     async fn run(findings: Vec<ReviewFinding>) -> Vec<String> {
-        let model = FakeModel(Mutex::new(VecDeque::from([ModelResponse::final_findings(
+        let model = FakeModel(Mutex::new(VecDeque::from([final_findings(
             findings,
             ReviewUsage::default(),
         )])));
@@ -622,7 +654,7 @@ async fn repeated_identical_calls_use_one_source_read_until_round_ceiling() {
     let responses = (0..MAX_TOOL_CALLS + 2)
         .map(|round| {
             ModelResponse::tool_calls(
-                vec![ToolCall::list_tree(format!("round-{round}"), "src")],
+                vec![list_tree_call(format!("round-{round}"), "src")],
                 ReviewUsage::default(),
             )
         })
@@ -641,15 +673,15 @@ async fn repeated_identical_calls_use_one_source_read_until_round_ceiling() {
 #[tokio::test]
 async fn stops_before_executing_a_call_beyond_the_tool_ceiling() {
     let calls_at_ceiling = (0..MAX_TOOL_CALLS)
-        .map(|call| ToolCall::list_tree(format!("call-{call}"), format!("src/{call}")))
+        .map(|call| list_tree_call(format!("call-{call}"), format!("src/{call}")))
         .collect();
     let model = FakeModel(Mutex::new(VecDeque::from([
         ModelResponse::tool_calls(calls_at_ceiling, ReviewUsage::default()),
         ModelResponse::tool_calls(
-            vec![ToolCall::list_tree("call-over-ceiling", "src/over-ceiling")],
+            vec![list_tree_call("call-over-ceiling", "src/over-ceiling")],
             ReviewUsage::default(),
         ),
-        ModelResponse::final_findings(vec![], ReviewUsage::default()),
+        final_findings(vec![], ReviewUsage::default()),
     ])));
     let source = source();
     let result = ReviewOrchestrator::new(&model, &source, &NoTrace, &NeverCancel)
@@ -666,16 +698,16 @@ async fn stops_when_cumulative_tool_output_exceeds_three_hundred_kilobytes() {
     let model = FakeModel(Mutex::new(VecDeque::from([
         ModelResponse::tool_calls(
             vec![
-                ToolCall::read_file("read-1", "src/lib.rs", 1, 2),
-                ToolCall::read_file("read-2", "src/lib.rs", 2, 3),
+                read_file_call("read-1", "src/lib.rs", 1, 2),
+                read_file_call("read-2", "src/lib.rs", 2, 3),
             ],
             ReviewUsage::default(),
         ),
         ModelResponse::tool_calls(
-            vec![ToolCall::read_file("read-3", "src/lib.rs", 3, 4)],
+            vec![read_file_call("read-3", "src/lib.rs", 3, 4)],
             ReviewUsage::default(),
         ),
-        ModelResponse::final_findings(vec![], ReviewUsage::default()),
+        final_findings(vec![], ReviewUsage::default()),
     ])));
     let source = FakeSource {
         read_output_bytes: 150_001,
@@ -692,7 +724,7 @@ async fn stops_when_cumulative_tool_output_exceeds_three_hundred_kilobytes() {
 
 #[tokio::test]
 async fn patch_fetch_head_race_returns_pr_updated_before_model_analysis() {
-    let model = FakeModel(Mutex::new(VecDeque::from([ModelResponse::final_findings(
+    let model = FakeModel(Mutex::new(VecDeque::from([final_findings(
         vec![],
         ReviewUsage::default(),
     )])));
@@ -712,9 +744,13 @@ struct DelayedFinalModel;
 
 #[async_trait]
 impl ModelProvider for DelayedFinalModel {
-    async fn respond(&self, _: &[TranscriptItem]) -> Result<ModelResponse, ReviewError> {
+    fn descriptor(&self) -> ProviderDescriptor {
+        fixture_descriptor()
+    }
+
+    async fn respond(&self, _: &ModelRequest) -> Result<ModelResponse, ProviderError> {
         tokio::time::sleep(Duration::from_millis(15)).await;
-        Ok(ModelResponse::final_findings(
+        Ok(final_findings(
             vec![],
             ReviewUsage {
                 input_tokens: 4,
@@ -728,14 +764,19 @@ impl ModelProvider for DelayedFinalModel {
 #[tokio::test]
 async fn trace_records_measured_success_once() {
     let trace = RecordingTrace::default();
-    ReviewOrchestrator::new(&DelayedFinalModel, &source(), &trace, &NeverCancel)
+    let result = ReviewOrchestrator::new(&DelayedFinalModel, &source(), &trace, &NeverCancel)
         .run(input())
         .await
         .unwrap();
+    assert!(result.duration_ms >= 10);
+    assert!(result.diagnostic_id.starts_with("diag-"));
+    assert_eq!(result.provider_attempts, 1);
     let entries = trace.0.lock().unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].status, "completed");
     assert!(entries[0].duration_ms >= 10);
+    assert_eq!(entries[0].diagnostic_id, result.diagnostic_id);
+    assert_eq!(entries[0].provider_attempts, 1);
     assert_eq!(entries[0].input_tokens, 4);
     assert_eq!(entries[0].error_code, None);
 }
@@ -769,7 +810,7 @@ async fn trace_records_cancelled_and_error_exits_once_with_stable_codes() {
             }],
             ReviewUsage::default(),
         ),
-        ModelResponse::final_findings(vec![], ReviewUsage::default()),
+        final_findings(vec![], ReviewUsage::default()),
     ])));
     let result = ReviewOrchestrator::new(&bad_model, &source(), &error_trace, &NeverCancel)
         .run(input())

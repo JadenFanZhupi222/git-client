@@ -1,5 +1,10 @@
-use crate::{validate_repository_path, CancelSignal, ReviewError, ReviewLanguage, ReviewUsage};
+use crate::{
+    validate_repository_path, CancelSignal, ModelOutput, ModelProvider, ModelRequest,
+    ProviderError, ResponseFormat, ReviewError, ReviewLanguage, ReviewUsage,
+    StructuredOutputSupport, TraceEntry, TraceSink, TranscriptItem,
+};
 use async_trait::async_trait;
+use chrono::Utc;
 use reqwest::{Client, Response, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -110,6 +115,14 @@ pub struct IssueTriageResult {
     pub comments_truncated: bool,
     pub proposal: IssueTriageProposal,
     pub usage: ReviewUsage,
+    #[serde(default)]
+    pub model_id: String,
+    #[serde(default)]
+    pub duration_ms: u64,
+    #[serde(default)]
+    pub diagnostic_id: String,
+    #[serde(default)]
+    pub provider_attempts: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,12 +172,6 @@ pub enum IssueMutationOutcome {
     AlreadyApplied,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct IssueTriageModelResponse {
-    pub proposal: IssueTriageProposal,
-    pub usage: ReviewUsage,
-}
-
 #[async_trait]
 pub trait IssueSource: Send + Sync {
     async fn list_open_issues(
@@ -189,24 +196,22 @@ pub trait IssuePublicationSource: IssueSource {
     ) -> Result<IssueMutationOutcome, ReviewError>;
 }
 
-#[async_trait]
-pub trait IssueTriageModel: Send + Sync {
-    async fn analyze(
-        &self,
-        system: &str,
-        input: &str,
-    ) -> Result<IssueTriageModelResponse, ReviewError>;
-}
-
 pub struct IssueTriageOrchestrator<'a> {
-    model: &'a dyn IssueTriageModel,
+    model: &'a dyn ModelProvider,
     source: &'a dyn IssueSource,
     cancel: &'a dyn CancelSignal,
+    trace: Option<&'a dyn TraceSink>,
+}
+
+#[derive(Default)]
+struct IssueRunTelemetry {
+    usage: ReviewUsage,
+    provider_attempts: u32,
 }
 
 impl<'a> IssueTriageOrchestrator<'a> {
     pub fn new(
-        model: &'a dyn IssueTriageModel,
+        model: &'a dyn ModelProvider,
         source: &'a dyn IssueSource,
         cancel: &'a dyn CancelSignal,
     ) -> Self {
@@ -214,10 +219,67 @@ impl<'a> IssueTriageOrchestrator<'a> {
             model,
             source,
             cancel,
+            trace: None,
+        }
+    }
+
+    pub fn new_with_trace(
+        model: &'a dyn ModelProvider,
+        source: &'a dyn IssueSource,
+        cancel: &'a dyn CancelSignal,
+        trace: &'a dyn TraceSink,
+    ) -> Self {
+        Self {
+            model,
+            source,
+            cancel,
+            trace: Some(trace),
         }
     }
 
     pub async fn run(&self, input: IssueTriageInput) -> Result<IssueTriageResult, ReviewError> {
+        let started = std::time::Instant::now();
+        let diagnostic_id = crate::diagnostic_id(&input.run_id);
+        let descriptor = self.model.descriptor();
+        let mut telemetry = IssueRunTelemetry::default();
+        let mut result = self.run_inner(input, &mut telemetry).await;
+        let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        if let Ok(run_result) = &mut result {
+            run_result.model_id.clone_from(&descriptor.model_id);
+            run_result.duration_ms = duration_ms;
+            run_result.diagnostic_id.clone_from(&diagnostic_id);
+            run_result.provider_attempts = telemetry.provider_attempts;
+        }
+        if let Some(trace) = self.trace {
+            let (status, error_code) = match &result {
+                Ok(_) => ("completed", None),
+                Err(ReviewError::Cancelled) => ("cancelled", Some("CANCELLED".to_owned())),
+                Err(error) => ("error", Some(error.code().to_owned())),
+            };
+            let _ = trace
+                .record(TraceEntry {
+                    timestamp: Utc::now(),
+                    model: descriptor.model_id,
+                    duration_ms,
+                    diagnostic_id,
+                    provider_attempts: telemetry.provider_attempts,
+                    input_tokens: telemetry.usage.input_tokens,
+                    output_tokens: telemetry.usage.output_tokens,
+                    tool_names: Vec::new(),
+                    status: status.into(),
+                    error_code,
+                    error_detail: None,
+                })
+                .await;
+        }
+        result
+    }
+
+    async fn run_inner(
+        &self,
+        input: IssueTriageInput,
+        telemetry: &mut IssueRunTelemetry,
+    ) -> Result<IssueTriageResult, ReviewError> {
         if self.cancel.is_cancelled() {
             return Err(ReviewError::Cancelled);
         }
@@ -249,18 +311,57 @@ impl<'a> IssueTriageOrchestrator<'a> {
             input.output_language.prompt_instruction(),
             ISSUE_TRIAGE_OUTPUT_CONTRACT
         );
-        let mut response = self
-            .cancellable(self.model.analyze(&system, &encoded))
-            .await?;
-        validate_proposal(&mut response.proposal, &context, input.target.issue_number)?;
+        let descriptor = self.model.descriptor();
+        if descriptor.provider_id != "unknown"
+            && descriptor.capabilities.structured_output == StructuredOutputSupport::None
+        {
+            return Err(ReviewError::InvalidModelOutput(
+                "selected model does not support the issue triage contract".into(),
+            ));
+        }
+        let request = ModelRequest {
+            transcript: vec![
+                TranscriptItem::System(system),
+                TranscriptItem::User(encoded),
+            ],
+            tools: Vec::new(),
+            response_format: ResponseFormat::JsonObject,
+            max_output_tokens: 4096,
+        };
+        let response = crate::provider_retry::respond_with_retry(
+            self.model,
+            &request,
+            self.cancel,
+            &input.run_id,
+            &mut telemetry.provider_attempts,
+        )
+        .await
+        .map_err(|error| match error {
+            crate::provider_retry::ProviderCallError::Cancelled => ReviewError::Cancelled,
+            crate::provider_retry::ProviderCallError::Provider(error) => {
+                map_issue_provider_error(error)
+            }
+        })?;
+        telemetry.usage = response.usage.clone();
+        let ModelOutput::FinalText { text } = response.output else {
+            return Err(ReviewError::InvalidModelOutput(
+                "issue triage model attempted a tool call".into(),
+            ));
+        };
+        let mut proposal = IssueTriageOutputCodec::decode(&text)?;
+        validate_proposal(&mut proposal, &context, input.target.issue_number)?;
 
         Ok(IssueTriageResult {
             run_id: input.run_id,
             snapshot: context.snapshot,
             comments_analyzed: context.comments.len(),
             comments_truncated: context.comments_truncated,
-            proposal: response.proposal,
-            usage: response.usage,
+            proposal,
+            usage: telemetry.usage.clone(),
+            model_id: String::new(),
+            duration_ms: 0,
+            diagnostic_id: String::new(),
+            provider_attempts: 0,
         })
     }
 
@@ -574,113 +675,14 @@ fn parse_json_object(text: &str) -> Result<Value, ReviewError> {
     ))
 }
 
-pub struct DeepSeekIssueTriageModel {
-    client: Client,
-    api_key: String,
-    base_url: String,
-    model: String,
-}
-
-impl DeepSeekIssueTriageModel {
-    pub fn new_with_model(
-        api_key: impl Into<String>,
-        model: impl Into<String>,
-    ) -> Result<Self, ReviewError> {
-        let api_key = api_key.into();
-        if api_key.trim().is_empty() {
-            return Err(ReviewError::AiKeyMissing);
-        }
-        let model = model.into();
-        if !matches!(
-            model.as_str(),
-            crate::DEEPSEEK_V4_FLASH_MODEL | crate::DEEPSEEK_V4_PRO_MODEL
-        ) {
-            return Err(ReviewError::InvalidModelOutput(
-                "unsupported DeepSeek model".into(),
-            ));
-        }
-        let client = Client::builder()
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
-            .build()
-            .map_err(|_| ReviewError::NetworkError("could not initialize HTTP client".into()))?;
-        Ok(Self {
-            client,
-            api_key,
-            base_url: "https://api.deepseek.com".into(),
-            model,
-        })
-    }
-
-    #[cfg(test)]
-    fn new_with_base_for_test(api_key: impl Into<String>, base_url: String) -> Self {
-        Self {
-            client: Client::builder()
-                .connect_timeout(Duration::from_millis(50))
-                .timeout(Duration::from_millis(200))
-                .build()
-                .expect("test client"),
-            api_key: api_key.into(),
-            base_url,
-            model: crate::DEEPSEEK_V4_FLASH_MODEL.into(),
-        }
-    }
-}
-
-#[async_trait]
-impl IssueTriageModel for DeepSeekIssueTriageModel {
-    async fn analyze(
-        &self,
-        system: &str,
-        input: &str,
-    ) -> Result<IssueTriageModelResponse, ReviewError> {
-        let response = self
-            .client
-            .post(format!(
-                "{}/chat/completions",
-                self.base_url.trim_end_matches('/')
-            ))
-            .bearer_auth(&self.api_key)
-            .json(&json!({
-                "model": self.model,
-                "stream": false,
-                "thinking": {"type":"disabled"},
-                "max_tokens": 4096,
-                "response_format": {"type":"json_object"},
-                "messages": [
-                    {"role":"system","content":system},
-                    {"role":"user","content":input}
-                ]
-            }))
-            .send()
-            .await
-            .map_err(|_| ReviewError::NetworkError("request failed".into()))?;
-        let body = checked_json(response).await?;
-        if body
-            .pointer("/choices/0/finish_reason")
-            .and_then(Value::as_str)
-            == Some("length")
-        {
-            return Err(ReviewError::IssueTriageBudgetExceeded);
-        }
-        let text = body
-            .pointer("/choices/0/message/content")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ReviewError::InvalidModelOutput("missing issue triage output".into()))?;
-        Ok(IssueTriageModelResponse {
-            proposal: IssueTriageOutputCodec::decode(text)?,
-            usage: ReviewUsage {
-                input_tokens: body
-                    .pointer("/usage/prompt_tokens")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0),
-                output_tokens: body
-                    .pointer("/usage/completion_tokens")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0),
-                tool_calls: 0,
-            },
-        })
+fn map_issue_provider_error(error: ProviderError) -> ReviewError {
+    match error {
+        ProviderError::CredentialMissing => ReviewError::AiKeyMissing,
+        ProviderError::AuthFailed => ReviewError::AuthFailed,
+        ProviderError::RateLimited => ReviewError::RateLimited,
+        ProviderError::Network(message) => ReviewError::NetworkError(message),
+        ProviderError::OutputTruncated => ReviewError::IssueTriageBudgetExceeded,
+        ProviderError::InvalidResponse(message) => ReviewError::InvalidModelOutput(message),
     }
 }
 
@@ -1066,8 +1068,8 @@ fn parse_comment(value: &Value) -> Result<IssueComment, ReviewError> {
         body: value
             .get("body")
             .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
+            .map(strip_internal_issue_triage_markers)
+            .unwrap_or_default(),
         created_at: value
             .get("created_at")
             .and_then(Value::as_str)
@@ -1079,6 +1081,25 @@ fn parse_comment(value: &Value) -> Result<IssueComment, ReviewError> {
             .unwrap_or_default()
             .to_owned(),
     })
+}
+
+fn strip_internal_issue_triage_markers(body: &str) -> String {
+    const MARKER_PREFIX: &str = "<!-- git-client-issue-triage:";
+    let mut cleaned = String::with_capacity(body.len());
+    let mut remaining = body;
+
+    while let Some(start) = remaining.find(MARKER_PREFIX) {
+        cleaned.push_str(&remaining[..start]);
+        let marker = &remaining[start..];
+        let Some(end) = marker.find("-->") else {
+            cleaned.push_str(marker);
+            return cleaned;
+        };
+        remaining = &marker[end + 3..];
+    }
+
+    cleaned.push_str(remaining);
+    cleaned.trim_end().to_owned()
 }
 
 fn network_error(_: reqwest::Error) -> ReviewError {
@@ -1166,17 +1187,37 @@ mod tests {
     struct CountingIssueModel(AtomicUsize);
 
     #[async_trait]
-    impl IssueTriageModel for CountingIssueModel {
-        async fn analyze(&self, _: &str, _: &str) -> Result<IssueTriageModelResponse, ReviewError> {
+    impl ModelProvider for CountingIssueModel {
+        fn descriptor(&self) -> crate::ProviderDescriptor {
+            crate::ProviderDescriptor {
+                provider_id: "fixture".into(),
+                model_id: "fixture-issue".into(),
+                capabilities: crate::ProviderCapabilities {
+                    structured_output: StructuredOutputSupport::JsonObject,
+                    tool_calling: crate::ToolCallingSupport::None,
+                    can_disable_tools: true,
+                    requires_reasoning_replay: false,
+                    context_window_tokens: 100_000,
+                    max_output_tokens: 4_096,
+                    usage: crate::UsageSupport::InputOutputTokens,
+                },
+            }
+        }
+
+        async fn respond(
+            &self,
+            request: &ModelRequest,
+        ) -> Result<crate::ModelResponse, ProviderError> {
             self.0.fetch_add(1, Ordering::SeqCst);
-            Ok(IssueTriageModelResponse {
-                proposal: proposal(),
-                usage: ReviewUsage {
+            assert!(request.tools.is_empty());
+            Ok(crate::ModelResponse::final_text(
+                serde_json::to_string(&proposal()).unwrap(),
+                ReviewUsage {
                     input_tokens: 1,
                     output_tokens: 1,
                     tool_calls: 0,
                 },
-            })
+            ))
         }
     }
 
@@ -1185,6 +1226,17 @@ mod tests {
     impl CancelSignal for NeverCancel {
         fn is_cancelled(&self) -> bool {
             false
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingTrace(Mutex<Vec<TraceEntry>>);
+
+    #[async_trait]
+    impl TraceSink for RecordingTrace {
+        async fn record(&self, entry: TraceEntry) -> Result<(), ReviewError> {
+            self.0.lock().unwrap().push(entry);
+            Ok(())
         }
     }
 
@@ -1355,6 +1407,24 @@ mod tests {
     }
 
     #[test]
+    fn comment_parser_hides_internal_triage_markers_only() {
+        let comment = parse_comment(&json!({
+            "user":{"login":"lin"},
+            "body":"Visible reply\n\n<!-- git-client-issue-triage:ae165da9-51fa-4b70-bfc3-0498f323ac9b -->",
+            "created_at":"now",
+            "updated_at":"now"
+        }))
+        .unwrap();
+        assert_eq!(comment.body, "Visible reply");
+
+        let unrelated = parse_comment(&json!({
+            "body":"Keep this <!-- ordinary-comment --> text"
+        }))
+        .unwrap();
+        assert_eq!(unrelated.body, "Keep this <!-- ordinary-comment --> text");
+    }
+
+    #[test]
     fn validation_drops_hallucinated_actions() {
         let mut value = proposal();
         let context = context();
@@ -1384,6 +1454,52 @@ mod tests {
 
         assert_eq!(error, ReviewError::IssueUpdated);
         assert_eq!(model.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn issue_trace_uses_the_result_diagnostic_and_records_early_errors() {
+        let trace = RecordingTrace::default();
+        let source = StaticIssueSource(context());
+        let model = CountingIssueModel::default();
+        let result = IssueTriageOrchestrator::new_with_trace(&model, &source, &NeverCancel, &trace)
+            .run(IssueTriageInput {
+                run_id: "trace-success".into(),
+                target: IssueTarget {
+                    owner: "acme".into(),
+                    repo: "rocket".into(),
+                    issue_number: 1,
+                },
+                expected_updated_at: "now".into(),
+                expected_comments: 1,
+                output_language: ReviewLanguage::English,
+            })
+            .await
+            .unwrap();
+
+        let stale = IssueTriageOrchestrator::new_with_trace(&model, &source, &NeverCancel, &trace)
+            .run(IssueTriageInput {
+                run_id: "trace-stale".into(),
+                target: IssueTarget {
+                    owner: "acme".into(),
+                    repo: "rocket".into(),
+                    issue_number: 1,
+                },
+                expected_updated_at: "older".into(),
+                expected_comments: 0,
+                output_language: ReviewLanguage::English,
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(stale, ReviewError::IssueUpdated);
+        let entries = trace.0.lock().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].diagnostic_id, result.diagnostic_id);
+        assert_eq!(entries[0].provider_attempts, 1);
+        assert_eq!(entries[0].input_tokens, 1);
+        assert_eq!(entries[1].status, "error");
+        assert_eq!(entries[1].error_code.as_deref(), Some("ISSUE_UPDATED"));
+        assert_eq!(entries[1].provider_attempts, 0);
     }
 
     #[tokio::test]
@@ -1486,10 +1602,29 @@ mod tests {
             })))
             .mount(&server)
             .await;
-        let model = DeepSeekIssueTriageModel::new_with_base_for_test("key", server.uri());
-        let response = model.analyze("system", "input").await.unwrap();
-        assert_eq!(response.usage.input_tokens, 12);
-        assert_eq!(response.proposal.category, "bug");
+        let model = crate::DeepSeekProvider::new_with_base_for_test("key", server.uri());
+        let source = StaticIssueSource(context());
+        let result = IssueTriageOrchestrator::new(&model, &source, &NeverCancel)
+            .run(IssueTriageInput {
+                run_id: "live-provider".into(),
+                target: IssueTarget {
+                    owner: "acme".into(),
+                    repo: "rocket".into(),
+                    issue_number: 1,
+                },
+                expected_updated_at: "now".into(),
+                expected_comments: 1,
+                output_language: ReviewLanguage::English,
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.usage.input_tokens, 12);
+        assert_eq!(result.proposal.category, "bug");
+        assert!(result.diagnostic_id.starts_with("diag-"));
+        assert_eq!(result.provider_attempts, 1);
+        let requests = server.received_requests().await.unwrap();
+        let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
+        assert!(body.get("tools").is_none());
     }
 
     #[tokio::test]

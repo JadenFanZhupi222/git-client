@@ -1,16 +1,16 @@
 use crate::credentials::read_credential;
 use async_trait::async_trait;
 use ipc_types::{
-    CredentialKindDto, IpcError, IssueContextDto, IssueRepositoryTargetDto, IssueSummaryDto,
-    IssueTargetDto, IssueTriageInputDto, IssueTriagePublishInputDto, IssueTriagePublishResultDto,
-    IssueTriageResultDto, PublishedReviewDto, ReviewModelOptionDto, ReviewPreflightDto,
+    AgentIpcErrorDto, CredentialKindDto, IpcError, IssueContextDto, IssueRepositoryTargetDto,
+    IssueSummaryDto, IssueTargetDto, IssueTriageInputDto, IssueTriagePublishInputDto,
+    IssueTriagePublishResultDto, IssueTriageResultDto, PublishedReviewDto,
+    ReviewModelCapabilitiesDto, ReviewModelOptionDto, ReviewModelPricingDto, ReviewPreflightDto,
     ReviewProgressEventDto, ReviewRunInputDto, ReviewRunResultDto, ReviewTargetDto,
     SubmitReviewDto,
 };
 use review_agent::{
-    CancelSignal, DeepSeekIssueTriageModel, DeepSeekProvider, GithubIssueSource,
-    GithubReviewSource, IssuePublicationSource, IssueSource, IssueTriageModel,
-    IssueTriageOrchestrator, IssueTriagePublisher, ProgressSink, ProgressUpdate,
+    CancelSignal, DeepSeekProvider, GithubIssueSource, GithubReviewSource, IssuePublicationSource,
+    IssueSource, IssueTriageOrchestrator, IssueTriagePublisher, ProgressSink, ProgressUpdate,
     ReviewOrchestrator, ReviewSource, SanitizedTraceStore,
 };
 use std::collections::{HashMap, VecDeque};
@@ -106,13 +106,24 @@ impl<'a> ReviewCommandService<'a> {
         .into())
     }
 
-    async fn start(&self, input: ReviewRunInputDto) -> Result<ReviewRunResultDto, IpcError> {
+    async fn start(
+        &self,
+        input: ReviewRunInputDto,
+    ) -> Result<ReviewRunResultDto, AgentIpcErrorDto> {
         let run_id = input.run_id.clone();
-        let cancel = self.registry.register(&run_id)?;
+        let diagnostic_id = review_agent::diagnostic_id(&run_id);
+        let resource_key = review_resource_key(&input.target);
+        let cancel = self
+            .registry
+            .register_resource(&run_id, &resource_key)
+            .map_err(|error| agent_error(error, &diagnostic_id))?;
         if cancel.is_cancelled() {
             self.registry.finish(&run_id);
             self.progress(&run_id, "cancelled");
-            return Err(review_error(review_agent::ReviewError::Cancelled));
+            return Err(agent_error(
+                review_error(review_agent::ReviewError::Cancelled),
+                &diagnostic_id,
+            ));
         }
         self.progress(&run_id, "loading_pr");
         let result: Result<ReviewRunResultDto, IpcError> = async {
@@ -152,7 +163,7 @@ impl<'a> ReviewCommandService<'a> {
             Err(e) if e.code == "CANCELLED" => self.progress(&run_id, "cancelled"),
             Err(_) => self.progress(&run_id, "failed"),
         }
-        result
+        result.map_err(|error| agent_error(error, &diagnostic_id))
     }
 
     fn cancel(&self, run_id: &str) {
@@ -203,7 +214,7 @@ trait IssueBackendFactory: Send + Sync {
         &self,
         model_id: &str,
         key: String,
-    ) -> Result<Box<dyn IssueTriageModel>, review_agent::ReviewError>;
+    ) -> Result<Box<dyn review_agent::ModelProvider>, review_agent::ReviewError>;
     fn issue_publisher(
         &self,
         token: String,
@@ -214,6 +225,7 @@ struct IssueCommandService<'a> {
     credentials: &'a dyn CredentialReader,
     factory: &'a dyn IssueBackendFactory,
     progress: &'a dyn ProgressEmitter,
+    trace: Option<&'a dyn review_agent::TraceSink>,
     registry: &'a ReviewRunRegistry,
 }
 
@@ -228,6 +240,23 @@ impl<'a> IssueCommandService<'a> {
             credentials,
             factory,
             progress,
+            trace: None,
+            registry,
+        }
+    }
+
+    fn new_with_trace(
+        credentials: &'a dyn CredentialReader,
+        factory: &'a dyn IssueBackendFactory,
+        progress: &'a dyn ProgressEmitter,
+        trace: &'a dyn review_agent::TraceSink,
+        registry: &'a ReviewRunRegistry,
+    ) -> Self {
+        Self {
+            credentials,
+            factory,
+            progress,
+            trace: Some(trace),
             registry,
         }
     }
@@ -275,13 +304,24 @@ impl<'a> IssueCommandService<'a> {
             .into())
     }
 
-    async fn start(&self, input: IssueTriageInputDto) -> Result<IssueTriageResultDto, IpcError> {
+    async fn start(
+        &self,
+        input: IssueTriageInputDto,
+    ) -> Result<IssueTriageResultDto, AgentIpcErrorDto> {
         let run_id = input.run_id.clone();
-        let cancel = self.registry.register(&run_id)?;
+        let diagnostic_id = review_agent::diagnostic_id(&run_id);
+        let resource_key = issue_resource_key(&input.target);
+        let cancel = self
+            .registry
+            .register_resource(&run_id, &resource_key)
+            .map_err(|error| agent_error(error, &diagnostic_id))?;
         if cancel.is_cancelled() {
             self.registry.finish(&run_id);
             self.progress(&run_id, "cancelled");
-            return Err(review_error(review_agent::ReviewError::Cancelled));
+            return Err(agent_error(
+                review_error(review_agent::ReviewError::Cancelled),
+                &diagnostic_id,
+            ));
         }
         self.progress(&run_id, "loading_issue");
         let result: Result<IssueTriageResultDto, IpcError> = async {
@@ -297,13 +337,21 @@ impl<'a> IssueCommandService<'a> {
                 .issue_model(&input.model_id, key)
                 .map_err(review_error)?;
             self.progress(&run_id, "analyzing_issue");
-            Ok(
+            let result = if let Some(trace) = self.trace {
+                IssueTriageOrchestrator::new_with_trace(
+                    model.as_ref(),
+                    source.as_ref(),
+                    &cancel,
+                    trace,
+                )
+                .run(input.into())
+                .await
+            } else {
                 IssueTriageOrchestrator::new(model.as_ref(), source.as_ref(), &cancel)
                     .run(input.into())
                     .await
-                    .map_err(review_error)?
-                    .into(),
-            )
+            };
+            Ok(result.map_err(review_error)?.into())
         }
         .await;
         self.registry.finish(&run_id);
@@ -312,7 +360,7 @@ impl<'a> IssueCommandService<'a> {
             Err(error) if error.code == "CANCELLED" => self.progress(&run_id, "cancelled"),
             Err(_) => self.progress(&run_id, "failed"),
         }
-        result
+        result.map_err(|error| agent_error(error, &diagnostic_id))
     }
 
     async fn publish(
@@ -360,8 +408,14 @@ const PENDING_CANCELLATION_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
 struct ReviewRunRegistryInner {
-    active: HashMap<String, ReviewCancellation>,
+    active: HashMap<String, ActiveReviewRun>,
+    active_resources: HashMap<String, String>,
     pending: VecDeque<(String, Instant)>,
+}
+
+struct ActiveReviewRun {
+    cancellation: ReviewCancellation,
+    resource_key: String,
 }
 
 #[derive(Default)]
@@ -381,11 +435,25 @@ impl ReviewRunRegistry {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn register(&self, run_id: &str) -> Result<ReviewCancellation, IpcError> {
-        self.register_at(run_id, Instant::now())
+        self.register_resource(run_id, &format!("run:{run_id}"))
     }
 
-    fn register_at(&self, run_id: &str, now: Instant) -> Result<ReviewCancellation, IpcError> {
+    pub(crate) fn register_resource(
+        &self,
+        run_id: &str,
+        resource_key: &str,
+    ) -> Result<ReviewCancellation, IpcError> {
+        self.register_at(run_id, resource_key, Instant::now())
+    }
+
+    fn register_at(
+        &self,
+        run_id: &str,
+        resource_key: &str,
+        now: Instant,
+    ) -> Result<ReviewCancellation, IpcError> {
         let mut inner = self.0.lock().expect("review run registry lock poisoned");
         Self::prune_pending(&mut inner, now);
         if inner.active.contains_key(run_id) {
@@ -393,6 +461,13 @@ impl ReviewRunRegistry {
                 code: "REVIEW_ALREADY_RUNNING".into(),
                 message: "A review with this run id is already active".into(),
                 recoverable: false,
+            });
+        }
+        if inner.active_resources.contains_key(resource_key) {
+            return Err(IpcError {
+                code: "AGENT_RESOURCE_BUSY".into(),
+                message: "An agent task is already active for this resource".into(),
+                recoverable: true,
             });
         }
         let token = ReviewCancellation::new();
@@ -404,7 +479,16 @@ impl ReviewRunRegistry {
             inner.pending.remove(index);
             token.cancel();
         }
-        inner.active.insert(run_id.to_owned(), token.clone());
+        inner.active.insert(
+            run_id.to_owned(),
+            ActiveReviewRun {
+                cancellation: token.clone(),
+                resource_key: resource_key.to_owned(),
+            },
+        );
+        inner
+            .active_resources
+            .insert(resource_key.to_owned(), run_id.to_owned());
         Ok(token)
     }
     pub(crate) fn cancel(&self, run_id: &str) {
@@ -414,8 +498,8 @@ impl ReviewRunRegistry {
     fn cancel_at(&self, run_id: &str, now: Instant) {
         let mut inner = self.0.lock().expect("review run registry lock poisoned");
         Self::prune_pending(&mut inner, now);
-        if let Some(token) = inner.active.get(run_id) {
-            token.cancel();
+        if let Some(run) = inner.active.get(run_id) {
+            run.cancellation.cancel();
             return;
         }
         if !inner
@@ -428,11 +512,10 @@ impl ReviewRunRegistry {
         }
     }
     pub(crate) fn finish(&self, run_id: &str) {
-        self.0
-            .lock()
-            .expect("review run registry lock poisoned")
-            .active
-            .remove(run_id);
+        let mut inner = self.0.lock().expect("review run registry lock poisoned");
+        if let Some(run) = inner.active.remove(run_id) {
+            inner.active_resources.remove(&run.resource_key);
+        }
     }
 
     #[cfg(test)]
@@ -443,6 +526,24 @@ impl ReviewRunRegistry {
             .pending
             .len()
     }
+}
+
+fn review_resource_key(target: &ReviewTargetDto) -> String {
+    format!(
+        "pr:{}/{}#{}",
+        target.owner.trim().to_ascii_lowercase(),
+        target.repo.trim().to_ascii_lowercase(),
+        target.pull_number
+    )
+}
+
+fn issue_resource_key(target: &IssueTargetDto) -> String {
+    format!(
+        "issue:{}/{}#{}",
+        target.owner.trim().to_ascii_lowercase(),
+        target.repo.trim().to_ascii_lowercase(),
+        target.issue_number
+    )
 }
 
 pub(crate) fn review_error(error: review_agent::ReviewError) -> IpcError {
@@ -471,6 +572,10 @@ pub(crate) fn review_error(error: review_agent::ReviewError) -> IpcError {
     }
 }
 
+fn agent_error(error: IpcError, diagnostic_id: &str) -> AgentIpcErrorDto {
+    AgentIpcErrorDto::from_ipc(error, diagnostic_id)
+}
+
 fn map_review_credential_error(kind: CredentialKindDto, mut error: IpcError) -> IpcError {
     if error.code == "CREDENTIAL_MISSING" {
         error.code = match kind {
@@ -484,18 +589,33 @@ fn map_review_credential_error(kind: CredentialKindDto, mut error: IpcError) -> 
 }
 
 fn review_model_options() -> Vec<ReviewModelOptionDto> {
-    vec![
-        ReviewModelOptionDto {
-            id: review_agent::DEEPSEEK_V4_FLASH_MODEL.into(),
-            label: "DeepSeek V4 Flash".into(),
-            provider: "DeepSeek".into(),
-        },
-        ReviewModelOptionDto {
-            id: review_agent::DEEPSEEK_V4_PRO_MODEL.into(),
-            label: "DeepSeek V4 Pro".into(),
-            provider: "DeepSeek".into(),
-        },
-    ]
+    review_agent::deepseek_model_catalog()
+        .into_iter()
+        .map(|entry| ReviewModelOptionDto {
+            id: entry.id,
+            label: entry.label,
+            provider: entry.provider_label,
+            provider_id: entry.provider_id,
+            capabilities: ReviewModelCapabilitiesDto {
+                supports_tool_calling: entry.capabilities.tool_calling
+                    != review_agent::ToolCallingSupport::None,
+                supports_structured_output: entry.capabilities.structured_output
+                    != review_agent::StructuredOutputSupport::None,
+                context_window_tokens: entry.capabilities.context_window_tokens,
+                max_output_tokens: entry.capabilities.max_output_tokens,
+                reports_usage: entry.capabilities.usage != review_agent::UsageSupport::None,
+            },
+            pricing: entry.pricing.map(|pricing| ReviewModelPricingDto {
+                currency: pricing.currency,
+                input_cache_hit_per_million_micros: pricing.input_cache_hit_per_million_micros,
+                input_cache_miss_per_million_micros: pricing.input_cache_miss_per_million_micros,
+                output_per_million_micros: pricing.output_per_million_micros,
+                source_url: pricing.source_url,
+                source_version: pricing.source_version,
+                checked_at: pricing.checked_at,
+            }),
+        })
+        .collect()
 }
 
 fn review_model_credential(model_id: &str) -> Result<CredentialKindDto, IpcError> {
@@ -547,10 +667,8 @@ impl IssueBackendFactory for ProductionBackendFactory {
         &self,
         model_id: &str,
         key: String,
-    ) -> Result<Box<dyn IssueTriageModel>, review_agent::ReviewError> {
-        Ok(Box::new(DeepSeekIssueTriageModel::new_with_model(
-            key, model_id,
-        )?))
+    ) -> Result<Box<dyn review_agent::ModelProvider>, review_agent::ReviewError> {
+        Ok(Box::new(DeepSeekProvider::new_with_model(key, model_id)?))
     }
 
     fn issue_publisher(
@@ -605,7 +723,8 @@ pub(crate) async fn start_pr_review(
     app: tauri::AppHandle,
     state: tauri::State<'_, ReviewRunRegistry>,
     input: ReviewRunInputDto,
-) -> Result<ReviewRunResultDto, IpcError> {
+) -> Result<ReviewRunResultDto, AgentIpcErrorDto> {
+    let diagnostic_id = review_agent::diagnostic_id(&input.run_id);
     let trace_path = app
         .path()
         .app_data_dir()
@@ -613,7 +732,8 @@ pub(crate) async fn start_pr_review(
             code: "APP_DATA_DIR".into(),
             message: "Application data directory is unavailable".into(),
             recoverable: false,
-        })?
+        })
+        .map_err(|error| agent_error(error, &diagnostic_id))?
         .join("review-agent-trace.json");
     let trace = SanitizedTraceStore::new(trace_path);
     let emitter = AppProgressEmitter(app);
@@ -688,11 +808,25 @@ pub(crate) async fn start_issue_triage(
     app: tauri::AppHandle,
     state: tauri::State<'_, ReviewRunRegistry>,
     input: IssueTriageInputDto,
-) -> Result<IssueTriageResultDto, IpcError> {
-    IssueCommandService::new(
+) -> Result<IssueTriageResultDto, AgentIpcErrorDto> {
+    let diagnostic_id = review_agent::diagnostic_id(&input.run_id);
+    let trace_path = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| IpcError {
+            code: "APP_DATA_DIR".into(),
+            message: "Application data directory is unavailable".into(),
+            recoverable: false,
+        })
+        .map_err(|error| agent_error(error, &diagnostic_id))?
+        .join("review-agent-trace.json");
+    let trace = SanitizedTraceStore::new(trace_path);
+    let emitter = AppProgressEmitter(app);
+    IssueCommandService::new_with_trace(
         &KeyringCredentialReader,
         &ProductionBackendFactory,
-        &AppProgressEmitter(app),
+        &emitter,
+        &trace,
         &state,
     )
     .start(input)
@@ -729,6 +863,24 @@ mod tests {
     use super::*;
     use std::collections::VecDeque;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+    fn fixture_descriptor(
+        tool_calling: review_agent::ToolCallingSupport,
+    ) -> review_agent::ProviderDescriptor {
+        review_agent::ProviderDescriptor {
+            provider_id: "fixture".into(),
+            model_id: "fixture-model".into(),
+            capabilities: review_agent::ProviderCapabilities {
+                structured_output: review_agent::StructuredOutputSupport::JsonObject,
+                tool_calling,
+                can_disable_tools: true,
+                requires_reasoning_replay: false,
+                context_window_tokens: 100_000,
+                max_output_tokens: 8_192,
+                usage: review_agent::UsageSupport::InputOutputTokens,
+            },
+        }
+    }
 
     struct FakeCredentials;
     #[async_trait]
@@ -822,16 +974,20 @@ mod tests {
     }
 
     struct FakeModel(
-        Arc<Mutex<VecDeque<Result<review_agent::ModelResponse, review_agent::ReviewError>>>>,
+        Arc<Mutex<VecDeque<Result<review_agent::ModelResponse, review_agent::ProviderError>>>>,
     );
     #[async_trait]
     impl review_agent::ModelProvider for FakeModel {
+        fn descriptor(&self) -> review_agent::ProviderDescriptor {
+            fixture_descriptor(review_agent::ToolCallingSupport::Serial)
+        }
+
         async fn respond(
             &self,
-            _: &[review_agent::TranscriptItem],
-        ) -> Result<review_agent::ModelResponse, review_agent::ReviewError> {
+            _: &review_agent::ModelRequest,
+        ) -> Result<review_agent::ModelResponse, review_agent::ProviderError> {
             self.0.lock().unwrap().pop_front().unwrap_or_else(|| {
-                Err(review_agent::ReviewError::InvalidModelOutput(
+                Err(review_agent::ProviderError::InvalidResponse(
                     "empty fake".into(),
                 ))
             })
@@ -844,10 +1000,14 @@ mod tests {
     }
     #[async_trait]
     impl review_agent::ModelProvider for SelfCancellingModel {
+        fn descriptor(&self) -> review_agent::ProviderDescriptor {
+            fixture_descriptor(review_agent::ToolCallingSupport::Serial)
+        }
+
         async fn respond(
             &self,
-            _: &[review_agent::TranscriptItem],
-        ) -> Result<review_agent::ModelResponse, review_agent::ReviewError> {
+            _: &review_agent::ModelRequest,
+        ) -> Result<review_agent::ModelResponse, review_agent::ProviderError> {
             self.registry.cancel(&self.run_id);
             std::future::pending().await
         }
@@ -856,6 +1016,53 @@ mod tests {
     struct CancellingFactory {
         source: FakeSource,
         registry: Arc<ReviewRunRegistry>,
+    }
+
+    struct GateModel {
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl review_agent::ModelProvider for GateModel {
+        fn descriptor(&self) -> review_agent::ProviderDescriptor {
+            fixture_descriptor(review_agent::ToolCallingSupport::Serial)
+        }
+
+        async fn respond(
+            &self,
+            _: &review_agent::ModelRequest,
+        ) -> Result<review_agent::ModelResponse, review_agent::ProviderError> {
+            self.entered.notify_one();
+            self.release.notified().await;
+            Ok(review_agent::ModelResponse::final_text(
+                r#"{"summary":"Completed","findings":[]}"#,
+                review_agent::ReviewUsage::default(),
+            ))
+        }
+    }
+
+    struct GateFactory {
+        source: FakeSource,
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    impl ReviewBackendFactory for GateFactory {
+        fn source(&self, _: String) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError> {
+            Ok(Box::new(self.source.clone()))
+        }
+
+        fn model(
+            &self,
+            _: &str,
+            _: String,
+        ) -> Result<Box<dyn review_agent::ModelProvider>, review_agent::ReviewError> {
+            Ok(Box::new(GateModel {
+                entered: self.entered.clone(),
+                release: self.release.clone(),
+            }))
+        }
     }
     impl ReviewBackendFactory for CancellingFactory {
         fn source(&self, _: String) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError> {
@@ -876,7 +1083,7 @@ mod tests {
     struct FakeFactory {
         source: FakeSource,
         responses:
-            Arc<Mutex<VecDeque<Result<review_agent::ModelResponse, review_agent::ReviewError>>>>,
+            Arc<Mutex<VecDeque<Result<review_agent::ModelResponse, review_agent::ProviderError>>>>,
     }
 
     struct CountingFactory {
@@ -919,7 +1126,7 @@ mod tests {
     }
 
     fn fake_factory(
-        responses: Vec<Result<review_agent::ModelResponse, review_agent::ReviewError>>,
+        responses: Vec<Result<review_agent::ModelResponse, review_agent::ProviderError>>,
     ) -> FakeFactory {
         FakeFactory {
             source: FakeSource {
@@ -943,6 +1150,19 @@ mod tests {
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].id, "deepseek-v4-flash");
         assert_eq!(models[0].provider, "DeepSeek");
+        assert_eq!(models[0].provider_id, "deepseek");
+        assert!(models[0].capabilities.supports_tool_calling);
+        assert!(models[0].capabilities.supports_structured_output);
+        assert!(models[0].capabilities.reports_usage);
+        assert_eq!(models[0].capabilities.context_window_tokens, 1_000_000);
+        let pricing = models[0].pricing.as_ref().unwrap();
+        assert_eq!(pricing.currency, "USD");
+        assert_eq!(pricing.checked_at, "2026-08-07");
+        assert!(
+            pricing
+                .source_url
+                .starts_with("https://api-docs.deepseek.com/")
+        );
         assert_eq!(models[1].id, "deepseek-v4-pro");
         assert_eq!(
             review_model_credential(&models[0].id).unwrap(),
@@ -973,12 +1193,11 @@ mod tests {
     async fn service_preflight_and_start_success_emit_ordered_real_progress_and_cleanup() {
         let factory = fake_factory(vec![
             Ok(review_agent::ModelResponse::tool_calls(
-                vec![review_agent::ToolCall::list_tree("tree", "src")],
+                vec![review_agent::list_tree_call("tree", "src")],
                 review_agent::ReviewUsage::default(),
             )),
-            Ok(review_agent::ModelResponse::final_review(
-                "No correctness issues found.",
-                vec![],
+            Ok(review_agent::ModelResponse::final_text(
+                r#"{"summary":"No correctness issues found.","findings":[]}"#,
                 review_agent::ReviewUsage::default(),
             )),
         ]);
@@ -1057,7 +1276,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn service_rejects_duplicate_and_cleans_up_cancelled_and_failed_runs() {
+    async fn service_rejects_duplicate_and_cleans_up_failed_runs() {
         let registry = ReviewRunRegistry::default();
         let _ = registry.register("duplicate").unwrap();
         let factory = fake_factory(vec![]);
@@ -1079,25 +1298,6 @@ mod tests {
         );
         registry.finish("duplicate");
 
-        let cancelled_factory = fake_factory(vec![Err(review_agent::ReviewError::Cancelled)]);
-        let cancelled = ReviewCommandService::new(
-            &FakeCredentials,
-            &cancelled_factory,
-            &emitter,
-            &NoopTraceSink,
-            &registry,
-        );
-        assert_eq!(
-            cancelled
-                .start(run_input("cancelled"))
-                .await
-                .unwrap_err()
-                .code,
-            "CANCELLED"
-        );
-        assert!(registry.register("cancelled").is_ok());
-        registry.finish("cancelled");
-
         let failed_factory = fake_factory(vec![]);
         let failed = ReviewCommandService::new(
             &FakeCredentials,
@@ -1110,7 +1310,55 @@ mod tests {
             failed.start(run_input("failed")).await.unwrap_err().code,
             "INVALID_MODEL_OUTPUT"
         );
+        assert_eq!(
+            failed
+                .start(run_input("failed-diagnostic"))
+                .await
+                .unwrap_err()
+                .diagnostic_id,
+            review_agent::diagnostic_id("failed-diagnostic")
+        );
         assert!(registry.register("failed").is_ok());
+    }
+
+    #[tokio::test]
+    async fn service_rejects_a_second_run_for_the_same_pr_without_replacing_the_first() {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let factory = GateFactory {
+            source: fake_factory(vec![]).source,
+            entered: entered.clone(),
+            release: release.clone(),
+        };
+        let registry = ReviewRunRegistry::default();
+        let service = ReviewCommandService::new(
+            &FakeCredentials,
+            &factory,
+            &NoopProgressEmitter,
+            &NoopTraceSink,
+            &registry,
+        );
+        let entered_event = entered.notified();
+        tokio::pin!(entered_event);
+        let first = service.start(run_input("resource-first"));
+        tokio::pin!(first);
+        tokio::select! {
+            result = &mut first => panic!("first run completed before the concurrency check: {result:?}"),
+            _ = &mut entered_event => {}
+        }
+
+        let second = service
+            .start(run_input("resource-second"))
+            .await
+            .unwrap_err();
+        assert_eq!(second.code, "AGENT_RESOURCE_BUSY");
+        assert_eq!(
+            second.diagnostic_id,
+            review_agent::diagnostic_id("resource-second")
+        );
+
+        release.notify_one();
+        assert_eq!(first.await.unwrap().summary, "Completed");
     }
 
     #[tokio::test]
@@ -1136,6 +1384,10 @@ mod tests {
         .unwrap()
         .unwrap_err();
         assert_eq!(error.code, "CANCELLED");
+        assert_eq!(
+            error.diagnostic_id,
+            review_agent::diagnostic_id("live-cancel")
+        );
         assert_eq!(emitter.0.lock().unwrap().last().unwrap().stage, "cancelled");
         assert!(registry.register("live-cancel").is_ok());
     }
@@ -1211,6 +1463,58 @@ mod tests {
     }
 
     #[test]
+    fn registry_serializes_each_resource_without_blocking_other_resources() {
+        let registry = ReviewRunRegistry::default();
+        registry
+            .register_resource("pr-first", "pr:acme/rocket#17")
+            .unwrap();
+        assert_eq!(
+            registry
+                .register_resource("pr-second", "pr:acme/rocket#17")
+                .unwrap_err()
+                .code,
+            "AGENT_RESOURCE_BUSY"
+        );
+        assert!(
+            registry
+                .register_resource("other-pr", "pr:acme/rocket#18")
+                .is_ok()
+        );
+        assert!(
+            registry
+                .register_resource("same-number-issue", "issue:acme/rocket#17")
+                .is_ok()
+        );
+
+        registry.finish("pr-first");
+        assert!(
+            registry
+                .register_resource("pr-after-finish", "pr:acme/rocket#17")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn resource_keys_are_case_insensitive_and_workflow_scoped() {
+        assert_eq!(
+            review_resource_key(&ReviewTargetDto {
+                owner: " Acme ".into(),
+                repo: "ROCKET".into(),
+                pull_number: 17,
+            }),
+            "pr:acme/rocket#17"
+        );
+        assert_eq!(
+            issue_resource_key(&IssueTargetDto {
+                owner: "ACME".into(),
+                repo: "Rocket".into(),
+                issue_number: 17,
+            }),
+            "issue:acme/rocket#17"
+        );
+    }
+
+    #[test]
     fn cancellation_is_idempotent_for_unknown_and_completed_runs() {
         let registry = ReviewRunRegistry::default();
         registry.cancel("unknown");
@@ -1241,7 +1545,7 @@ mod tests {
         let now = Instant::now();
         registry.cancel_at("expired", now);
         let token = registry
-            .register_at("expired", now + PENDING_CANCELLATION_TTL)
+            .register_at("expired", "run:expired", now + PENDING_CANCELLATION_TTL)
             .unwrap();
         assert!(!token.is_cancelled());
         assert_eq!(registry.pending_count(), 0);
@@ -1360,14 +1664,18 @@ mod tests {
     struct FakeIssueModel;
 
     #[async_trait]
-    impl IssueTriageModel for FakeIssueModel {
-        async fn analyze(
+    impl review_agent::ModelProvider for FakeIssueModel {
+        fn descriptor(&self) -> review_agent::ProviderDescriptor {
+            fixture_descriptor(review_agent::ToolCallingSupport::None)
+        }
+
+        async fn respond(
             &self,
-            _: &str,
-            _: &str,
-        ) -> Result<review_agent::IssueTriageModelResponse, review_agent::ReviewError> {
-            Ok(review_agent::IssueTriageModelResponse {
-                proposal: review_agent::IssueTriageProposal {
+            request: &review_agent::ModelRequest,
+        ) -> Result<review_agent::ModelResponse, review_agent::ProviderError> {
+            assert!(request.tools.is_empty());
+            Ok(review_agent::ModelResponse::final_text(
+                serde_json::to_string(&review_agent::IssueTriageProposal {
                     summary: "Reproducible crash".into(),
                     category: "bug".into(),
                     priority: "high".into(),
@@ -1376,13 +1684,14 @@ mod tests {
                     suspected_duplicate_numbers: vec![3],
                     suggested_reply: "Please share the app version.".into(),
                     rationale: vec!["Steps are present.".into()],
-                },
-                usage: review_agent::ReviewUsage {
+                })
+                .unwrap(),
+                review_agent::ReviewUsage {
                     input_tokens: 20,
                     output_tokens: 10,
                     tool_calls: 0,
                 },
-            })
+            ))
         }
     }
 
@@ -1402,7 +1711,7 @@ mod tests {
             &self,
             _: &str,
             _: String,
-        ) -> Result<Box<dyn IssueTriageModel>, review_agent::ReviewError> {
+        ) -> Result<Box<dyn review_agent::ModelProvider>, review_agent::ReviewError> {
             Ok(Box::new(FakeIssueModel))
         }
 

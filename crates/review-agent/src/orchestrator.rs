@@ -7,144 +7,25 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
-pub enum TranscriptItem {
-    System(String),
-    User(String),
-    AssistantToolCalls(Vec<ToolCall>),
-    ToolResult {
-        name: String,
-        call_id: String,
-        content: String,
-        counts_toward_budget: bool,
-    },
+pub fn list_tree_call(call_id: impl Into<String>, prefix: impl Into<String>) -> ToolCall {
+    ToolCall::with_call_id(
+        "list_repository_tree",
+        call_id,
+        json!({"prefix": prefix.into()}),
+    )
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ToolCall {
-    pub name: String,
-    pub arguments: Value,
-}
-
-impl ToolCall {
-    pub fn list_tree(call_id: impl Into<String>, prefix: impl Into<String>) -> Self {
-        Self {
-            name: "list_repository_tree".into(),
-            arguments: json!({"_call_id": call_id.into(), "prefix": prefix.into()}),
-        }
-    }
-    pub fn read_file(
-        call_id: impl Into<String>,
-        path: impl Into<String>,
-        start_line: u32,
-        end_line: u32,
-    ) -> Self {
-        Self {
-            name: "read_file".into(),
-            arguments: json!({"_call_id": call_id.into(), "path": path.into(), "start_line": start_line, "end_line": end_line}),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ModelOutput {
-    ToolCalls {
-        calls: Vec<ToolCall>,
-    },
-    Final {
-        summary: String,
-        findings: Vec<ReviewFinding>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ModelResponse {
-    pub output: ModelOutput,
-    pub usage: ReviewUsage,
-}
-
-impl ModelResponse {
-    pub fn tool_calls(calls: Vec<ToolCall>, usage: ReviewUsage) -> Self {
-        Self {
-            output: ModelOutput::ToolCalls { calls },
-            usage,
-        }
-    }
-    pub fn final_findings(findings: Vec<ReviewFinding>, usage: ReviewUsage) -> Self {
-        let summary = if findings.is_empty() {
-            "No actionable issues found.".into()
-        } else {
-            format!("Review found {} actionable issue(s).", findings.len())
-        };
-        Self::final_review(summary, findings, usage)
-    }
-    pub fn final_review(
-        summary: impl Into<String>,
-        findings: Vec<ReviewFinding>,
-        usage: ReviewUsage,
-    ) -> Self {
-        Self {
-            output: ModelOutput::Final {
-                summary: summary.into(),
-                findings,
-            },
-            usage,
-        }
-    }
-}
-
-#[async_trait]
-pub trait ModelProvider: Send + Sync {
-    fn descriptor(&self) -> ProviderDescriptor {
-        ProviderDescriptor::unknown()
-    }
-
-    async fn respond(&self, transcript: &[TranscriptItem]) -> Result<ModelResponse, ReviewError>;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StructuredOutputSupport {
-    None,
-    JsonObject,
-    JsonSchema,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProviderCapabilities {
-    pub structured_output: StructuredOutputSupport,
-    pub can_disable_tools: bool,
-    pub parallel_tool_calls: bool,
-    pub requires_reasoning_replay: bool,
-}
-
-impl Default for ProviderCapabilities {
-    fn default() -> Self {
-        Self {
-            structured_output: StructuredOutputSupport::None,
-            can_disable_tools: false,
-            parallel_tool_calls: false,
-            requires_reasoning_replay: false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProviderDescriptor {
-    pub provider: String,
-    pub model: String,
-    pub capabilities: ProviderCapabilities,
-}
-
-impl ProviderDescriptor {
-    pub fn unknown() -> Self {
-        Self {
-            provider: "unknown".into(),
-            model: "unknown".into(),
-            capabilities: ProviderCapabilities::default(),
-        }
-    }
+pub fn read_file_call(
+    call_id: impl Into<String>,
+    path: impl Into<String>,
+    start_line: u32,
+    end_line: u32,
+) -> ToolCall {
+    ToolCall::with_call_id(
+        "read_file",
+        call_id,
+        json!({"path": path.into(), "start_line": start_line, "end_line": end_line}),
+    )
 }
 
 #[async_trait]
@@ -197,6 +78,10 @@ pub struct TraceEntry {
     pub timestamp: DateTime<Utc>,
     pub model: String,
     pub duration_ms: u64,
+    #[serde(default)]
+    pub diagnostic_id: String,
+    #[serde(default)]
+    pub provider_attempts: u32,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub tool_names: Vec<String>,
@@ -223,6 +108,7 @@ pub struct ReviewOrchestrator<'a> {
 struct RunTelemetry {
     usage: ReviewUsage,
     tool_names: Vec<String>,
+    provider_attempts: u32,
 }
 
 impl<'a> ReviewOrchestrator<'a> {
@@ -259,9 +145,20 @@ impl<'a> ReviewOrchestrator<'a> {
 
     pub async fn run(&self, input: ReviewRunInput) -> Result<ReviewRunResult, ReviewError> {
         let started = Instant::now();
+        let diagnostic_id = crate::diagnostic_id(&input.run_id);
         let provider = self.model.descriptor();
         let mut telemetry = RunTelemetry::default();
-        let result = self.run_inner(input, &mut telemetry).await;
+        let mut result = if provider.provider_id != "unknown"
+            && (provider.capabilities.structured_output == StructuredOutputSupport::None
+                || provider.capabilities.tool_calling == ToolCallingSupport::None
+                || !provider.capabilities.can_disable_tools)
+        {
+            Err(ReviewError::InvalidModelOutput(
+                "selected model does not support the PR review contract".into(),
+            ))
+        } else {
+            self.run_inner(input, &mut telemetry).await
+        };
         let (status, error_code, error_detail) = match &result {
             Ok(_) => ("completed", None, None),
             Err(ReviewError::Cancelled) => ("cancelled", Some("CANCELLED".to_owned()), None),
@@ -272,12 +169,20 @@ impl<'a> ReviewOrchestrator<'a> {
             ),
         };
         let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        if let Ok(run_result) = &mut result {
+            run_result.model_id.clone_from(&provider.model_id);
+            run_result.duration_ms = duration_ms;
+            run_result.diagnostic_id.clone_from(&diagnostic_id);
+            run_result.provider_attempts = telemetry.provider_attempts;
+        }
         let _ = self
             .trace
             .record(TraceEntry {
                 timestamp: Utc::now(),
-                model: provider.model,
+                model: provider.model_id,
                 duration_ms,
+                diagnostic_id,
+                provider_attempts: telemetry.provider_attempts,
                 input_tokens: telemetry.usage.input_tokens,
                 output_tokens: telemetry.usage.output_tokens,
                 tool_names: telemetry.tool_names,
@@ -344,11 +249,45 @@ impl<'a> ReviewOrchestrator<'a> {
         let mut tool_cache = HashMap::<String, String>::new();
         for _round in 0..MAX_MODEL_ROUNDS {
             self.check_cancelled()?;
-            let response = self.cancellable(self.model.respond(&transcript)).await?;
+            let tools_enabled = (telemetry.usage.tool_calls as usize) < MAX_TOOL_CALLS;
+            let mut request_transcript = transcript.clone();
+            if !tools_enabled {
+                request_transcript.push(TranscriptItem::System(
+                    "The tool budget is exhausted. Do not call any more tools. Return the final review JSON now using only the evidence already available."
+                        .into(),
+                ));
+            }
+            let request = ModelRequest {
+                transcript: request_transcript,
+                tools: if tools_enabled {
+                    review_tool_definitions()
+                } else {
+                    Vec::new()
+                },
+                response_format: ResponseFormat::JsonObject,
+                max_output_tokens: 8192,
+            };
+            let response = crate::provider_retry::respond_with_retry(
+                self.model,
+                &request,
+                self.cancel,
+                &input.run_id,
+                &mut telemetry.provider_attempts,
+            )
+            .await
+            .map_err(|error| match error {
+                crate::provider_retry::ProviderCallError::Cancelled => ReviewError::Cancelled,
+                crate::provider_retry::ProviderCallError::Provider(error) => {
+                    map_review_provider_error(error)
+                }
+            })?;
             telemetry.usage.input_tokens += response.usage.input_tokens;
             telemetry.usage.output_tokens += response.usage.output_tokens;
             match response.output {
-                ModelOutput::Final { summary, findings } => {
+                ModelOutput::FinalText { text } => {
+                    let decoded = ReviewOutputCodec::decode(&text)?;
+                    let summary = decoded.summary;
+                    let findings = decoded.findings;
                     let findings = validate_findings(findings, &selected_files);
                     return Ok(ReviewRunResult {
                         run_id: input.run_id,
@@ -360,6 +299,10 @@ impl<'a> ReviewOrchestrator<'a> {
                             .collect(),
                         findings,
                         usage: telemetry.usage.clone(),
+                        model_id: String::new(),
+                        duration_ms: 0,
+                        diagnostic_id: String::new(),
+                        provider_attempts: 0,
                     });
                 }
                 ModelOutput::ToolCalls { calls } => {
@@ -600,6 +543,45 @@ fn validate_call_ids(calls: &[ToolCall], seen: &mut HashSet<String>) -> Result<(
         }
     }
     Ok(())
+}
+
+fn review_tool_definitions() -> Vec<ToolDefinition> {
+    vec![
+        ToolDefinition {
+            name: "list_repository_tree".into(),
+            description: "List repository paths at the fixed PR head SHA".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"prefix": {"type": "string"}},
+                "additionalProperties": false
+            }),
+        },
+        ToolDefinition {
+            name: "read_file".into(),
+            description: "Read at most 400 UTF-8 lines at the fixed PR head SHA".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "start_line": {"type": "integer"},
+                    "end_line": {"type": "integer"}
+                },
+                "required": ["path", "start_line", "end_line"],
+                "additionalProperties": false
+            }),
+        },
+    ]
+}
+
+fn map_review_provider_error(error: ProviderError) -> ReviewError {
+    match error {
+        ProviderError::CredentialMissing => ReviewError::AiKeyMissing,
+        ProviderError::AuthFailed => ReviewError::AuthFailed,
+        ProviderError::RateLimited => ReviewError::RateLimited,
+        ProviderError::Network(message) => ReviewError::NetworkError(message),
+        ProviderError::OutputTruncated => ReviewError::ReviewBudgetExceeded,
+        ProviderError::InvalidResponse(message) => ReviewError::InvalidModelOutput(message),
+    }
 }
 
 fn validate_findings(findings: Vec<ReviewFinding>, files: &[ReviewFile]) -> Vec<ReviewFinding> {

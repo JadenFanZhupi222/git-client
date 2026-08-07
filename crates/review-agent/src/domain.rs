@@ -1,3 +1,4 @@
+use crate::ReviewUsage;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::{Component, Path};
@@ -110,13 +111,6 @@ pub struct ReviewFinding {
     pub draft_comment: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReviewUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub tool_calls: u32,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewRunResult {
     pub run_id: String,
@@ -125,6 +119,14 @@ pub struct ReviewRunResult {
     pub reviewed_files: Vec<String>,
     pub findings: Vec<ReviewFinding>,
     pub usage: ReviewUsage,
+    #[serde(default)]
+    pub model_id: String,
+    #[serde(default)]
+    pub duration_ms: u64,
+    #[serde(default)]
+    pub diagnostic_id: String,
+    #[serde(default)]
+    pub provider_attempts: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

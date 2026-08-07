@@ -88,6 +88,14 @@ fn sanitize(mut entry: TraceEntry) -> TraceEntry {
     if !is_safe_model_id(&entry.model) {
         entry.model = "unknown".into();
     }
+    if entry.diagnostic_id.len() != 21
+        || !entry.diagnostic_id.starts_with("diag-")
+        || !entry.diagnostic_id[5..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        entry.diagnostic_id = "diag-unknown".into();
+    }
     entry.tool_names = entry
         .tool_names
         .into_iter()
@@ -161,10 +169,14 @@ fn is_stable_error_code(code: &str) -> bool {
             | "RATE_LIMITED"
             | "NETWORK_ERROR"
             | "PR_UPDATED"
+            | "ISSUE_UPDATED"
+            | "ISSUE_NOT_FOUND"
+            | "ISSUE_TRIAGE_BUDGET_EXCEEDED"
             | "REVIEW_BUDGET_EXCEEDED"
             | "INVALID_MODEL_OUTPUT"
             | "CANCELLED"
             | "REVIEW_PUBLISH_FAILED"
+            | "ISSUE_PUBLISH_FAILED"
     )
 }
 
@@ -187,6 +199,8 @@ mod tests {
                     timestamp: Utc::now(),
                     model: "deepseek-v4-flash SECRET_KEY".into(),
                     duration_ms: n,
+                    diagnostic_id: "unsafe diagnostic SECRET_KEY".into(),
+                    provider_attempts: 1,
                     input_tokens: 1,
                     output_tokens: 2,
                     tool_names: vec!["read_file CODE_MARKER".into()],
@@ -203,6 +217,7 @@ mod tests {
         assert_eq!(entries[0].duration_ms, 5);
         assert_eq!(entries[0].error_code, None);
         assert_eq!(entries[0].error_detail, None);
+        assert_eq!(entries[0].diagnostic_id, "diag-unknown");
         assert!(!serialized.contains("SECRET_KEY"));
         assert!(!serialized.contains("CODE_MARKER"));
         assert!(!serialized.contains("prompt"));
@@ -291,6 +306,8 @@ mod tests {
             timestamp: Utc::now(),
             model: "deepseek-v4-flash".into(),
             duration_ms,
+            diagnostic_id: "diag-0123456789abcdef".into(),
+            provider_attempts: 1,
             input_tokens: 1,
             output_tokens: 2,
             tool_names: vec!["read_file".into()],

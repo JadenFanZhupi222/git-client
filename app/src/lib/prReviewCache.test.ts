@@ -10,6 +10,10 @@ const result: ReviewRunResultDto = {
   reviewed_files: ["src/a.ts"],
   findings: [],
   usage: { input_tokens: 12, output_tokens: 3, tool_calls: 0 },
+  model_id: "deepseek-v4-flash",
+  duration_ms: 840,
+  diagnostic_id: "diag-0123456789abcdef",
+  provider_attempts: 1,
 };
 
 describe("prReviewCache", () => {
@@ -40,6 +44,25 @@ describe("prReviewCache", () => {
 
     expect(loadCachedReview(target, "def456")).toBeNull();
     expect(loadCachedReview(target, "abc123")).toBeNull();
+  });
+
+  it("migrates a valid v1 result saved before diagnostics were added", () => {
+    const { model_id: _model, duration_ms: _duration, diagnostic_id: _diagnostic, provider_attempts: _attempts, ...legacyResult } = result;
+    localStorage.setItem("pr-review-result-v1:acme/rocket#17", JSON.stringify({
+      version: 1,
+      headSha: "abc123",
+      modelId: "deepseek-v4-flash",
+      outputLanguage: "english",
+      result: legacyResult,
+      drafts: [],
+    }));
+
+    expect(loadCachedReview(target, "abc123")?.result).toMatchObject({
+      duration_ms: 0,
+      diagnostic_id: "",
+      provider_attempts: 0,
+      model_id: "",
+    });
   });
 
   it("drops malformed storage and supports explicit cleanup", () => {

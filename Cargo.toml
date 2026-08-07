@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/agent-runtime",
     "crates/review-agent",
     "crates/git-core",
     "crates/git-engine",

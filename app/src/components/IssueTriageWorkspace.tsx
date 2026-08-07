@@ -18,23 +18,27 @@ import type {
   ReviewProgressEventDto,
 } from "../bindings";
 import { useLang, useT } from "../lib/i18n";
+import { estimatedRunCost, formatEstimatedCost } from "../lib/agentCost";
 import { CheckIcon, CloseIcon, SpinnerIcon } from "./icons";
 
 const CONSENT_KEY = "issue-triage-consent-v1";
 const CACHE_PREFIX = "issue-triage-result-v1";
 type CredentialKind = "deepseek" | "github";
 type Phase = "select" | "running" | "results" | "confirm" | "publishing" | "publish_result";
+type AgentUiError = IpcError & { diagnostic_id?: string };
 
 export function IssueTriageWorkspace({
   target,
   context,
   onClose,
   onConfigureCredential,
+  onPublished,
 }: {
   target: IssueTargetDto;
   context: IssueContextDto;
   onClose: () => void;
   onConfigureCredential: (kind: CredentialKind) => void;
+  onPublished?: () => void;
 }) {
   const t = useT();
   const lang = useLang();
@@ -52,7 +56,8 @@ export function IssueTriageWorkspace({
   const [initialCache] = useState(() => loadCachedResult(target, context));
   const [result, setResult] = useState<IssueTriageResultDto | null>(initialCache.result);
   const [cacheStale, setCacheStale] = useState(initialCache.stale);
-  const [error, setError] = useState<IpcError | null>(null);
+  const [error, setError] = useState<AgentUiError | null>(null);
+  const [cancelledRun, setCancelledRun] = useState<AgentUiError | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [replySelected, setReplySelected] = useState(false);
@@ -144,6 +149,7 @@ export function IssueTriageWorkspace({
   async function startTriage() {
     if (!consented || !selectedModelId || busy) return;
     setError(null);
+    setCancelledRun(null);
     setProgress(null);
     setCancelling(false);
     setPhase("running");
@@ -178,6 +184,7 @@ export function IssueTriageWorkspace({
       const nextError = asIpcError(reason);
       setCancelling(false);
       setError(nextError.code === "CANCELLED" ? null : nextError);
+      setCancelledRun(nextError.code === "CANCELLED" ? nextError : null);
       setPhase("select");
     } finally {
       if (runIdRef.current === runId) runIdRef.current = null;
@@ -202,6 +209,7 @@ export function IssueTriageWorkspace({
     setResult(null);
     setCacheStale(false);
     setError(null);
+    setCancelledRun(null);
     setPhase("select");
   }
 
@@ -237,6 +245,9 @@ export function IssueTriageWorkspace({
       if (next.snapshot) setPublishSnapshot(next.snapshot);
       clearCachedResult(target);
       setPhase("publish_result");
+      if (next.actions.some((action) => action.status === "applied" || action.status === "already_applied")) {
+        onPublished?.();
+      }
     } catch (reason) {
       if (!mountedRef.current) return;
       setError(asIpcError(reason));
@@ -324,6 +335,7 @@ export function IssueTriageWorkspace({
           {phase === "results" && result && (
             <TriageResults
               result={result}
+              models={models}
               currentLabels={context.issue.labels.map((label) => label.name)}
               selectedLabels={selectedLabels}
               onToggleLabel={toggleLabel}
@@ -344,7 +356,8 @@ export function IssueTriageWorkspace({
               </div>
             </section>
           )}
-          {phase === "publish_result" && publishResult && <PublishResults result={publishResult} />}
+          {phase === "publish_result" && publishResult && <PublishResults result={publishResult} onConfigureCredential={onConfigureCredential} />}
+          {cancelledRun && <CancellationNotice error={cancelledRun} />}
           {error && <ErrorNotice error={error} onConfigureCredential={onConfigureCredential} onRetry={error.code === "ISSUE_UPDATED" ? onClose : undefined} />}
         </main>
 
@@ -388,6 +401,7 @@ export function IssueTriageWorkspace({
 
 function TriageResults({
   result,
+  models,
   currentLabels,
   selectedLabels,
   onToggleLabel,
@@ -397,6 +411,7 @@ function TriageResults({
   onReplyDraft,
 }: {
   result: IssueTriageResultDto;
+  models: ReviewModelOptionDto[];
   currentLabels: string[];
   selectedLabels: string[];
   onToggleLabel: (label: string) => void;
@@ -406,7 +421,9 @@ function TriageResults({
   onReplyDraft: (value: string) => void;
 }) {
   const t = useT();
+  const lang = useLang();
   const proposal = result.proposal;
+  const cost = estimatedRunCost(result.usage, result.model_id, models);
   return (
     <section aria-labelledby="issue-triage-result">
       <div className="flex items-start gap-3">
@@ -474,6 +491,8 @@ function TriageResults({
         {result.comments_truncated ? ` · ${t("issueTriage.truncated")}` : ""}
       </p>
       <p className="mt-1 text-[11px] text-fg-subtle">{t("issueTriage.savedLocally")}</p>
+      {result.diagnostic_id && <p className="mt-1 font-mono text-[10px] text-fg-subtle">{t("issueTriage.diagnostics", { duration: result.duration_ms, attempts: result.provider_attempts, id: result.diagnostic_id })}</p>}
+      {cost && <p className="mt-1 text-[11px] text-fg-subtle">{t("issueTriage.estimatedCost", { cost: formatEstimatedCost(cost, lang === "zh" ? "zh-CN" : "en-US") })}</p>}
     </section>
   );
 }
@@ -503,9 +522,10 @@ function PublishConfirmation({ labels, reply }: { labels: string[]; reply: strin
   );
 }
 
-function PublishResults({ result }: { result: IssueTriagePublishResultDto }) {
+function PublishResults({ result, onConfigureCredential }: { result: IssueTriagePublishResultDto; onConfigureCredential: (kind: CredentialKind) => void }) {
   const t = useT();
   const failed = result.actions.some((action) => action.status === "failed");
+  const authFailed = result.actions.some((action) => action.status === "failed" && action.error_code === "AUTH_FAILED");
   return (
     <section aria-labelledby="issue-publish-result-title">
       <div className="flex items-start gap-3">
@@ -522,7 +542,7 @@ function PublishResults({ result }: { result: IssueTriagePublishResultDto }) {
           <li key={action.action_id} className="flex items-center gap-3 px-4 py-3 text-xs">
             <span className="min-w-0 flex-1 text-fg">
               <span className="block">{action.kind === "label" ? t("issueTriage.publish.addLabel", { label: action.label ?? "" }) : t("issueTriage.publish.postReply")}</span>
-              {action.error_code && <span className="mt-0.5 block text-[11px] text-fg-subtle">{errorMessage({ code: action.error_code, message: action.error_code, recoverable: true }, t)}</span>}
+              {action.error_code && <span className="mt-0.5 block max-w-[75ch] text-[11px] leading-4 text-fg-subtle">{publishErrorMessage(action.error_code, t)}</span>}
             </span>
             <span className={action.status === "failed" ? "text-danger" : action.status === "already_applied" ? "text-fg-subtle" : "text-success"}>
               {t(`issueTriage.publish.status.${action.status}` as Parameters<typeof t>[0])}
@@ -530,6 +550,11 @@ function PublishResults({ result }: { result: IssueTriagePublishResultDto }) {
           </li>
         ))}
       </ul>
+      {authFailed && (
+        <button onClick={() => onConfigureCredential("github")} className="mt-3 rounded-md border border-line-strong px-3 py-1.5 text-xs text-fg-muted hover:bg-overlay hover:text-fg">
+          {t("issueTriage.publish.openGithubSettings")}
+        </button>
+      )}
       {failed && !result.snapshot && <p className="mt-4 text-xs leading-5 text-danger">{t("issueTriage.publish.refreshRequired")}</p>}
     </section>
   );
@@ -543,12 +568,18 @@ function ResultSection({ title, empty, children }: { title: string; empty: strin
   return <section className="rounded-md border border-line p-3"><h4 className="text-xs font-semibold text-fg">{title}</h4><div className="mt-2">{children || <p className="text-xs text-fg-subtle">{empty}</p>}</div></section>;
 }
 
-function ErrorNotice({ error, onConfigureCredential, onRetry }: { error: IpcError; onConfigureCredential: (kind: CredentialKind) => void; onRetry?: () => void }) {
+function CancellationNotice({ error }: { error: AgentUiError }) {
+  const t = useT();
+  return <div role="status" className="mt-4 rounded-md border border-line-strong bg-elevated/60 p-3 text-xs text-fg-muted"><p>{t("issueTriage.cancelledNotice")}</p>{error.diagnostic_id && <p className="mt-1 font-mono text-[10px] text-fg-subtle">{t("issueTriage.errorDiagnostic", { id: error.diagnostic_id })}</p>}</div>;
+}
+
+function ErrorNotice({ error, onConfigureCredential, onRetry }: { error: AgentUiError; onConfigureCredential: (kind: CredentialKind) => void; onRetry?: () => void }) {
   const t = useT();
   const credential = error.code === "AI_KEY_MISSING" ? "deepseek" : error.code === "GITHUB_TOKEN_MISSING" ? "github" : null;
   return (
     <div role="alert" className="mt-4 rounded-md border border-danger/40 bg-danger/10 p-3 text-xs text-danger">
       <p>{errorMessage(error, t)}</p>
+      {error.diagnostic_id && <p className="mt-1 font-mono text-[10px]">{t("issueTriage.errorDiagnostic", { id: error.diagnostic_id })}</p>}
       <div className="mt-2 flex gap-2">
         {credential && <button onClick={() => onConfigureCredential(credential)} className="rounded border border-danger/50 px-2 py-1">{t("issueTriage.openSettings")}</button>}
         {onRetry && <button onClick={onRetry} className="rounded border border-danger/50 px-2 py-1">{t("issueTriage.refresh")}</button>}
@@ -565,14 +596,19 @@ function progressLabel(progress: ReviewProgressEventDto | null, t: ReturnType<ty
     : t("issueTriage.stage.analyzing_issue");
 }
 
-function errorMessage(error: IpcError, t: ReturnType<typeof useT>) {
-  const known = ["AI_KEY_MISSING", "GITHUB_TOKEN_MISSING", "ISSUE_UPDATED", "ISSUE_NOT_FOUND", "ISSUE_TRIAGE_BUDGET_EXCEEDED", "ISSUE_PUBLISH_FAILED", "NETWORK_ERROR", "RATE_LIMITED", "AUTH_FAILED", "INVALID_MODEL_OUTPUT", "INVALID_REVIEW_MODEL", "CANCELLED"];
+function errorMessage(error: AgentUiError, t: ReturnType<typeof useT>) {
+  const known = ["AI_KEY_MISSING", "GITHUB_TOKEN_MISSING", "ISSUE_UPDATED", "ISSUE_NOT_FOUND", "ISSUE_TRIAGE_BUDGET_EXCEEDED", "ISSUE_PUBLISH_FAILED", "NETWORK_ERROR", "RATE_LIMITED", "AUTH_FAILED", "INVALID_MODEL_OUTPUT", "INVALID_REVIEW_MODEL", "AGENT_RESOURCE_BUSY", "CANCELLED"];
   return known.includes(error.code) ? t(`issueTriage.error.${error.code}` as Parameters<typeof t>[0]) : error.message;
 }
 
-function asIpcError(reason: unknown): IpcError {
-  const candidate = reason as Partial<IpcError> | null;
-  return { code: candidate?.code ?? "UNKNOWN", message: candidate?.message ?? String(reason), recoverable: candidate?.recoverable ?? true };
+function publishErrorMessage(code: string, t: ReturnType<typeof useT>) {
+  if (code === "AUTH_FAILED") return t("issueTriage.publish.error.AUTH_FAILED");
+  return errorMessage({ code, message: code, recoverable: true }, t);
+}
+
+function asIpcError(reason: unknown): AgentUiError {
+  const candidate = reason as Partial<AgentUiError> | null;
+  return { code: candidate?.code ?? "UNKNOWN", message: candidate?.message ?? String(reason), recoverable: candidate?.recoverable ?? true, diagnostic_id: typeof candidate?.diagnostic_id === "string" ? candidate.diagnostic_id : undefined };
 }
 
 function createRunId() {
@@ -591,7 +627,14 @@ function loadCachedResult(target: IssueTargetDto, context: IssueContextDto): { r
   try {
     const value = localStorage.getItem(cacheKey(target));
     if (!value) return { result: null, stale: false };
-    const result = JSON.parse(value) as IssueTriageResultDto;
+    const cached = JSON.parse(value) as Partial<IssueTriageResultDto>;
+    const result = {
+      ...cached,
+      model_id: typeof cached.model_id === "string" ? cached.model_id : "",
+      duration_ms: typeof cached.duration_ms === "number" ? cached.duration_ms : 0,
+      diagnostic_id: typeof cached.diagnostic_id === "string" ? cached.diagnostic_id : "",
+      provider_attempts: typeof cached.provider_attempts === "number" ? cached.provider_attempts : 0,
+    } as IssueTriageResultDto;
     if (result.snapshot.updated_at !== context.snapshot.updated_at || result.snapshot.comments !== context.snapshot.comments) {
       localStorage.removeItem(cacheKey(target));
       return { result: null, stale: true };

@@ -30,7 +30,7 @@ export function loadCachedReview(
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
-    const value: unknown = JSON.parse(raw);
+    const value = migrateCachedReview(JSON.parse(raw));
     if (!isCachedReview(value) || value.headSha !== expectedHeadSha || value.result.head_sha !== expectedHeadSha) {
       localStorage.removeItem(key);
       return null;
@@ -40,6 +40,23 @@ export function loadCachedReview(
     localStorage.removeItem(key);
     return null;
   }
+}
+
+function migrateCachedReview(value: unknown): unknown {
+  if (!value || typeof value !== "object") return value;
+  const candidate = value as { result?: unknown };
+  if (!candidate.result || typeof candidate.result !== "object") return value;
+  const result = candidate.result as Partial<ReviewRunResultDto>;
+  return {
+    ...candidate,
+    result: {
+      ...result,
+      model_id: typeof result.model_id === "string" ? result.model_id : "",
+      duration_ms: typeof result.duration_ms === "number" ? result.duration_ms : 0,
+      diagnostic_id: typeof result.diagnostic_id === "string" ? result.diagnostic_id : "",
+      provider_attempts: typeof result.provider_attempts === "number" ? result.provider_attempts : 0,
+    },
+  };
 }
 
 export function saveCachedReview(target: ReviewTargetDto, value: CachedReview): void {
@@ -87,7 +104,11 @@ function isReviewResult(value: unknown): value is ReviewRunResultDto {
     && Boolean(candidate.usage)
     && typeof candidate.usage?.input_tokens === "number"
     && typeof candidate.usage?.output_tokens === "number"
-    && typeof candidate.usage?.tool_calls === "number";
+    && typeof candidate.usage?.tool_calls === "number"
+    && typeof candidate.model_id === "string"
+    && typeof candidate.duration_ms === "number"
+    && typeof candidate.diagnostic_id === "string"
+    && typeof candidate.provider_attempts === "number";
 }
 
 function isFindingDraft(value: unknown): value is CachedFindingDraft {

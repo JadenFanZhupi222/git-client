@@ -20,6 +20,7 @@ import type {
   ReviewTargetDto,
 } from "../bindings";
 import { useLang, useT } from "../lib/i18n";
+import { estimatedRunCost, formatEstimatedCost } from "../lib/agentCost";
 import {
   clearCachedReview,
   loadCachedReview,
@@ -33,6 +34,7 @@ const MAX_PATCH_BYTES = 200_000;
 
 type CredentialKind = "deepseek" | "github";
 type Phase = "preflight" | "select" | "running" | "results" | "published";
+type AgentUiError = IpcError & { diagnostic_id?: string };
 
 type FindingDraft = {
   finding: ReviewFindingDto;
@@ -68,7 +70,8 @@ export function PrReviewWorkspace({
     lang === "zh" ? "simplified_chinese" : "english",
   );
   const [consented, setConsented] = useState(() => localStorage.getItem(CONSENT_KEY) === "accepted");
-  const [error, setError] = useState<IpcError | null>(null);
+  const [error, setError] = useState<AgentUiError | null>(null);
+  const [cancelledRun, setCancelledRun] = useState<AgentUiError | null>(null);
   const [progress, setProgress] = useState<ReviewProgressEventDto | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [result, setResult] = useState<ReviewRunResultDto | null>(null);
@@ -137,6 +140,7 @@ export function PrReviewWorkspace({
     setPreflight(null);
     setSelectedFiles(new Set());
     setError(null);
+    setCancelledRun(null);
     setProgress(null);
     setResult(null);
     setDrafts([]);
@@ -254,6 +258,7 @@ export function PrReviewWorkspace({
   async function startReview() {
     if (!preflight || !consented || !selectedModelId || selectedFiles.size === 0 || selectionError) return;
     setError(null);
+    setCancelledRun(null);
     setCancelling(false);
     setPhase("running");
     const runId = createRunId();
@@ -288,6 +293,7 @@ export function PrReviewWorkspace({
       setCancelling(false);
       if (nextError.code === "CANCELLED") {
         setError(null);
+        setCancelledRun(nextError);
         setPhase("select");
       } else {
         setError(nextError);
@@ -342,6 +348,7 @@ export function PrReviewWorkspace({
     setDrafts([]);
     setPublished(null);
     setError(null);
+    setCancelledRun(null);
     setPhase("select");
   }
 
@@ -451,7 +458,7 @@ export function PrReviewWorkspace({
           )}
 
           {phase === "results" && result && (
-            <Results result={result} drafts={drafts} setDrafts={setDrafts} disabled={submitting} />
+            <Results result={result} models={models} drafts={drafts} setDrafts={setDrafts} disabled={submitting} />
           )}
 
           {phase === "published" && published && (
@@ -460,6 +467,7 @@ export function PrReviewWorkspace({
             </section>
           )}
 
+          {cancelledRun && <CancellationNotice error={cancelledRun} />}
           {error && <ErrorNotice error={error} onRetry={error.code === "PR_UPDATED" ? loadPreflight : phase === "preflight" ? loadPreflight : undefined} onConfigureCredential={onConfigureCredential} />}
         </main>
 
@@ -484,13 +492,17 @@ export function PrReviewWorkspace({
   );
 }
 
-function Results({ result, drafts, setDrafts, disabled }: { result: ReviewRunResultDto; drafts: FindingDraft[]; setDrafts: React.Dispatch<React.SetStateAction<FindingDraft[]>>; disabled: boolean }) {
+function Results({ result, models, drafts, setDrafts, disabled }: { result: ReviewRunResultDto; models: ReviewModelOptionDto[]; drafts: FindingDraft[]; setDrafts: React.Dispatch<React.SetStateAction<FindingDraft[]>>; disabled: boolean }) {
   const t = useT();
-  if (drafts.length === 0) return <NoFindingsResult result={result} />;
+  const lang = useLang();
+  const cost = estimatedRunCost(result.usage, result.model_id, models);
+  if (drafts.length === 0) return <NoFindingsResult result={result} models={models} />;
   return <section aria-labelledby="pr-review-findings">
     <h3 id="pr-review-findings" className="text-sm font-semibold text-fg">{t("prReview.findings")}</h3>
     <p className="mt-1 text-xs text-fg-subtle">{result.summary} · {t("prReview.usage", { input: result.usage.input_tokens, output: result.usage.output_tokens, tools: result.usage.tool_calls })}</p>
     <p className="mt-1 break-words text-xs text-fg-subtle">{t("prReview.reviewedFiles", { files: result.reviewed_files.join(", ") })}</p>
+    {result.diagnostic_id && <p className="mt-1 font-mono text-[10px] text-fg-subtle">{t("prReview.diagnostics", { duration: result.duration_ms, attempts: result.provider_attempts, id: result.diagnostic_id })}</p>}
+    {cost && <p className="mt-1 text-[11px] text-fg-subtle">{t("prReview.estimatedCost", { cost: formatEstimatedCost(cost, lang === "zh" ? "zh-CN" : "en-US") })}</p>}
     <p className="mt-1 text-[11px] text-fg-subtle">{t("prReview.savedLocally")}</p>
     <div className="mt-4 grid gap-3">{drafts.map((draft, index) => <article key={draft.finding.id} role="group" aria-label={`${severityLabel(draft.finding.severity, t)}: ${draft.finding.title}`} className="rounded-md border border-line bg-elevated/50 p-4">
       <div className="flex items-start gap-3"><input aria-label={t("prReview.includeFinding", { title: draft.finding.title })} type="checkbox" checked={draft.selected} disabled={disabled} onChange={(event) => { const selected = event.currentTarget.checked; setDrafts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, selected } : item)); }} /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="rounded bg-overlay px-1.5 py-0.5 text-[10px] font-semibold uppercase text-fg-muted">{severityLabel(draft.finding.severity, t)}</span><code className="text-[11px] text-fg-subtle">{draft.finding.path} · {draft.finding.side}:{draft.finding.line}</code></div><h4 className="mt-2 text-sm font-semibold text-fg">{draft.finding.title}</h4><p className="mt-2 text-xs text-fg"><strong>{t("prReview.failureScenario")}:</strong> {draft.finding.failure_scenario}</p><p className="mt-1 text-xs text-fg-muted">{draft.finding.explanation}</p><label className="mt-3 block text-[11px] font-medium text-fg-muted">{t("prReview.draftComment")}<textarea aria-label={t("prReview.draftComment")} rows={3} value={draft.comment} disabled={disabled} onChange={(event) => { const comment = event.currentTarget.value; setDrafts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, comment } : item)); }} className="mt-1 w-full resize-y rounded-md border border-line bg-canvas px-2 py-1.5 text-xs text-fg outline-none focus:border-accent disabled:opacity-60" /></label></div></div>
@@ -498,8 +510,10 @@ function Results({ result, drafts, setDrafts, disabled }: { result: ReviewRunRes
   </section>;
 }
 
-function NoFindingsResult({ result }: { result: ReviewRunResultDto }) {
+function NoFindingsResult({ result, models }: { result: ReviewRunResultDto; models: ReviewModelOptionDto[] }) {
   const t = useT();
+  const lang = useLang();
+  const cost = estimatedRunCost(result.usage, result.model_id, models);
   return <section aria-labelledby="pr-review-clear" className="py-5 text-center">
     <div className="mx-auto grid h-10 w-10 place-items-center rounded-full bg-success/12 text-success">
       <CheckIcon width={20} height={20} />
@@ -512,15 +526,22 @@ function NoFindingsResult({ result }: { result: ReviewRunResultDto }) {
       <p className="mt-3 max-h-36 overflow-y-auto whitespace-pre-wrap text-xs leading-5 text-fg-muted">{result.summary}</p>
     </details>
     <p className="mt-4 text-[11px] text-fg-subtle">{t("prReview.usage", { input: result.usage.input_tokens, output: result.usage.output_tokens, tools: result.usage.tool_calls })}</p>
+    {result.diagnostic_id && <p className="mt-1 font-mono text-[10px] text-fg-subtle">{t("prReview.diagnostics", { duration: result.duration_ms, attempts: result.provider_attempts, id: result.diagnostic_id })}</p>}
+    {cost && <p className="mt-1 text-[11px] text-fg-subtle">{t("prReview.estimatedCost", { cost: formatEstimatedCost(cost, lang === "zh" ? "zh-CN" : "en-US") })}</p>}
   </section>;
 }
 
 function StatusLine({ text }: { text: string }) { return <div className="flex items-center gap-2 py-10 text-sm text-fg-muted"><SpinnerIcon width={16} height={16} />{text}</div>; }
 
-function ErrorNotice({ error, onRetry, onConfigureCredential }: { error: IpcError; onRetry?: () => void; onConfigureCredential: (kind: CredentialKind) => void }) {
+function CancellationNotice({ error }: { error: AgentUiError }) {
+  const t = useT();
+  return <div role="status" className="mt-4 rounded-md border border-line-strong bg-elevated/60 p-3 text-xs text-fg-muted"><p>{t("prReview.cancelledNotice")}</p>{error.diagnostic_id && <p className="mt-1 font-mono text-[10px] text-fg-subtle">{t("prReview.errorDiagnostic", { id: error.diagnostic_id })}</p>}</div>;
+}
+
+function ErrorNotice({ error, onRetry, onConfigureCredential }: { error: AgentUiError; onRetry?: () => void; onConfigureCredential: (kind: CredentialKind) => void }) {
   const t = useT();
   const credential = error.code === "AI_KEY_MISSING" ? "deepseek" : error.code === "GITHUB_TOKEN_MISSING" ? "github" : null;
-  return <div role="alert" className="mt-4 rounded-md border border-danger/40 bg-danger/10 p-3 text-xs text-danger"><p>{errorMessage(error, t)}</p><div className="mt-2 flex gap-2">{credential && <button onClick={() => onConfigureCredential(credential)} className="rounded border border-danger/50 px-2 py-1">{t("prReview.openSettings")}</button>}{onRetry && <button onClick={onRetry} className="rounded border border-danger/50 px-2 py-1">{error.code === "PR_UPDATED" ? t("prReview.refreshPreflight") : t("prReview.retry")}</button>}</div></div>;
+  return <div role="alert" className="mt-4 rounded-md border border-danger/40 bg-danger/10 p-3 text-xs text-danger"><p>{errorMessage(error, t)}</p>{error.diagnostic_id && <p className="mt-1 font-mono text-[10px]">{t("prReview.errorDiagnostic", { id: error.diagnostic_id })}</p>}<div className="mt-2 flex gap-2">{credential && <button onClick={() => onConfigureCredential(credential)} className="rounded border border-danger/50 px-2 py-1">{t("prReview.openSettings")}</button>}{onRetry && <button onClick={onRetry} className="rounded border border-danger/50 px-2 py-1">{error.code === "PR_UPDATED" ? t("prReview.refreshPreflight") : t("prReview.retry")}</button>}</div></div>;
 }
 
 function progressLabel(progress: ReviewProgressEventDto | null, t: ReturnType<typeof useT>) {
@@ -540,14 +561,14 @@ function sortFindings(findings: ReviewFindingDto[]) {
   return findings.map((finding, index) => ({ finding, index })).sort((a, b) => (order[a.finding.severity] ?? 3) - (order[b.finding.severity] ?? 3) || a.index - b.index).map(({ finding }) => finding);
 }
 
-function errorMessage(error: IpcError, t: ReturnType<typeof useT>) {
-  const known = ["AI_KEY_MISSING", "GITHUB_TOKEN_MISSING", "PR_UPDATED", "REVIEW_BUDGET_EXCEEDED", "NETWORK_ERROR", "RATE_LIMITED", "AUTH_FAILED", "INVALID_MODEL_OUTPUT", "INVALID_REVIEW_MODEL", "REVIEW_PUBLISH_FAILED", "CANCELLED"];
+function errorMessage(error: AgentUiError, t: ReturnType<typeof useT>) {
+  const known = ["AI_KEY_MISSING", "GITHUB_TOKEN_MISSING", "PR_UPDATED", "REVIEW_BUDGET_EXCEEDED", "NETWORK_ERROR", "RATE_LIMITED", "AUTH_FAILED", "INVALID_MODEL_OUTPUT", "INVALID_REVIEW_MODEL", "REVIEW_PUBLISH_FAILED", "AGENT_RESOURCE_BUSY", "CANCELLED"];
   return known.includes(error.code) ? t(`prReview.error.${error.code}` as Parameters<typeof t>[0]) : error.message;
 }
 
-function asIpcError(reason: unknown): IpcError {
-  const candidate = reason as Partial<IpcError> | null;
-  return { code: candidate?.code ?? "UNKNOWN", message: candidate?.message ?? String(reason), recoverable: candidate?.recoverable ?? true };
+function asIpcError(reason: unknown): AgentUiError {
+  const candidate = reason as Partial<AgentUiError> | null;
+  return { code: candidate?.code ?? "UNKNOWN", message: candidate?.message ?? String(reason), recoverable: candidate?.recoverable ?? true, diagnostic_id: typeof candidate?.diagnostic_id === "string" ? candidate.diagnostic_id : undefined };
 }
 
 function createRunId() {

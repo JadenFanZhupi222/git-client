@@ -61,6 +61,36 @@ pub struct ReviewModelOptionDto {
     pub id: String,
     pub label: String,
     pub provider: String,
+    pub provider_id: String,
+    pub capabilities: ReviewModelCapabilitiesDto,
+    pub pricing: Option<ReviewModelPricingDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ReviewModelCapabilitiesDto {
+    pub supports_tool_calling: bool,
+    pub supports_structured_output: bool,
+    #[ts(type = "number")]
+    pub context_window_tokens: u64,
+    #[ts(type = "number")]
+    pub max_output_tokens: u64,
+    pub reports_usage: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ReviewModelPricingDto {
+    pub currency: String,
+    #[ts(type = "number")]
+    pub input_cache_hit_per_million_micros: u64,
+    #[ts(type = "number")]
+    pub input_cache_miss_per_million_micros: u64,
+    #[ts(type = "number")]
+    pub output_per_million_micros: u64,
+    pub source_url: String,
+    pub source_version: String,
+    pub checked_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -107,6 +137,11 @@ pub struct ReviewRunResultDto {
     pub reviewed_files: Vec<String>,
     pub findings: Vec<ReviewFindingDto>,
     pub usage: ReviewUsageDto,
+    pub model_id: String,
+    #[ts(type = "number")]
+    pub duration_ms: u64,
+    pub diagnostic_id: String,
+    pub provider_attempts: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -232,6 +267,11 @@ pub struct IssueTriageResultDto {
     pub comments_truncated: bool,
     pub proposal: IssueTriageProposalDto,
     pub usage: ReviewUsageDto,
+    pub model_id: String,
+    #[ts(type = "number")]
+    pub duration_ms: u64,
+    pub diagnostic_id: String,
+    pub provider_attempts: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -389,6 +429,10 @@ impl From<review_agent::IssueTriageResult> for IssueTriageResultDto {
             comments_truncated: value.comments_truncated,
             proposal: value.proposal.into(),
             usage: value.usage.into(),
+            model_id: value.model_id,
+            duration_ms: value.duration_ms,
+            diagnostic_id: value.diagnostic_id,
+            provider_attempts: value.provider_attempts,
         }
     }
 }
@@ -548,6 +592,10 @@ impl From<review_agent::ReviewRunResult> for ReviewRunResultDto {
             reviewed_files: v.reviewed_files,
             findings: v.findings.into_iter().map(Into::into).collect(),
             usage: v.usage.into(),
+            model_id: v.model_id,
+            duration_ms: v.duration_ms,
+            diagnostic_id: v.diagnostic_id,
+            provider_attempts: v.provider_attempts,
         }
     }
 }
@@ -784,6 +832,10 @@ mod review_dto_contract_tests {
             reviewed_files: vec!["src/lib.rs".into()],
             findings: vec![finding.clone()],
             usage,
+            model_id: "fixture-model".into(),
+            duration_ms: 1250,
+            diagnostic_id: "diag-0123456789abcdef".into(),
+            provider_attempts: 2,
         });
         assert_eq!(
             serde_json::to_value(&result_dto).unwrap(),
@@ -793,7 +845,11 @@ mod review_dto_contract_tests {
                 "summary":"One issue.",
                 "reviewed_files":["src/lib.rs"],
                 "findings":[{"id":"finding","severity":"high","path":"src/lib.rs","side":"RIGHT","line":2,"title":"Title","failure_scenario":"Scenario","explanation":"Explanation","draft_comment":"Draft"}],
-                "usage":{"input_tokens":10,"output_tokens":4,"tool_calls":1}
+                "usage":{"input_tokens":10,"output_tokens":4,"tool_calls":1},
+                "model_id":"fixture-model",
+                "duration_ms":1250,
+                "diagnostic_id":"diag-0123456789abcdef",
+                "provider_attempts":2
             })
         );
 
@@ -951,6 +1007,26 @@ pub struct IpcError {
     pub code: String,
     pub message: String,
     pub recoverable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct AgentIpcErrorDto {
+    pub code: String,
+    pub message: String,
+    pub recoverable: bool,
+    pub diagnostic_id: String,
+}
+
+impl AgentIpcErrorDto {
+    pub fn from_ipc(error: IpcError, diagnostic_id: impl Into<String>) -> Self {
+        Self {
+            code: error.code,
+            message: error.message,
+            recoverable: error.recoverable,
+            diagnostic_id: diagnostic_id.into(),
+        }
+    }
 }
 
 /// 工作区单个文件状态的 DTO。state 用字符串,前端直接渲染徽章。

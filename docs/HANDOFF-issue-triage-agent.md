@@ -2,10 +2,10 @@
 
 ## Status
 
-A3 read-only triage and A4 human-confirmed publication are implemented on
-`codex/issue-triage-agent`. The implementation is ready for review and manual
-credential-backed acceptance. GitHub writes are limited to adding existing
-labels and posting a comment after an explicit confirmation step.
+A3 read-only triage and A4 human-confirmed publication are implemented and
+merged. Automated verification and user-confirmed credential-backed desktop
+acceptance are complete. GitHub writes are limited to adding existing labels
+and posting a comment after an explicit confirmation step.
 
 The final hardening pass also makes the app re-read the issue immediately
 before opening triage. A locally cached result is accepted only when its
@@ -46,9 +46,13 @@ cache is deleted and the user is explicitly asked to run triage again.
 
 ## Main implementation locations
 
-- `crates/review-agent/src/issue.rs`: domain contract, orchestration, model
-  adapter, GitHub source, budgets, snapshot checks, publication validation,
-  per-action results, and comment idempotency.
+- `crates/agent-runtime`: normalized provider request/response, capability,
+  usage, error, and model-catalog contracts shared with PR Review.
+- `crates/review-agent/src/issue.rs`: domain contract, orchestration, GitHub
+  source, budgets, snapshot checks, publication validation, per-action results,
+  and comment idempotency.
+- `crates/review-agent/src/deepseek.rs`: the shared DeepSeek provider adapter
+  and backend-owned model capability/pricing catalog.
 - `app/src-tauri/src/review_commands.rs`: credential-owned IPC services,
   progress, cancellation, and production backend construction.
 - `crates/ipc-types/src/lib.rs`: stable DTO boundary and generated TypeScript
@@ -77,7 +81,10 @@ cache removal, zero writes without confirmation, zero writes for stale or
 tampered batches, per-action partial results, retry snapshot advancement, and
 duplicate-comment prevention.
 
-## Manual acceptance still required
+## Manual acceptance completed
+
+The following checklist was completed with a non-production test repository
+and test credentials on 2026-08-07:
 
 Use a non-production test repository and test credentials:
 
@@ -100,7 +107,13 @@ Use a non-production test repository and test credentials:
 
 ## Next decision
 
-After manual acceptance, merge A3/A4 or return to A1/A2 if provider diversity
-is the higher priority. Further mutation types must not be added to this
-contract. A5 should unify run concurrency, bounded transient retries,
-diagnostics, and the provider × workflow contract matrix.
+A3/A4 are merged and accepted. A1 now provides a shared `agent-runtime`
+contract and backend-owned capability/pricing catalog. Further mutation types
+must not be added to this contract. A5 now serializes runs per Issue resource,
+retries only transient model failures with a bounded jittered policy, and
+returns duration, provider attempts, usage, and a sanitized diagnostic ID while
+migrating older cached results. Estimated cost uses actual provider token usage and
+the catalog's conservative cache-miss input price. Errors and cancellations return
+the same diagnostic ID written to the shared sanitized trace, and cancellation has
+an explicit terminal UI state. A5 is complete for the currently installed provider
+matrix. A2 remains pending a second provider credential.

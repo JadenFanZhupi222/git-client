@@ -8,6 +8,7 @@ import { listen } from "@tauri-apps/api/event";
 // DTO 类型由 ts-rs 从 crates/ipc-types 自动生成(M6.4),统一从 bindings 出口再导出。
 // 后端改字段 → 重新生成 → 前端编译期报错。生成命令见 docs/HANDOFF.md。
 export type {
+  AgentIpcErrorDto,
   AheadBehindDto,
   BlameLineDto,
   BranchDeleteImpactDto,

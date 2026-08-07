@@ -1,7 +1,7 @@
 use crate::{
-    ModelOutput, ModelProvider, ModelResponse, ProviderCapabilities, ProviderDescriptor,
-    ReviewError, ReviewOutputCodec, ReviewUsage, StructuredOutputSupport, ToolCall, TranscriptItem,
-    MAX_TOOL_CALLS,
+    ModelCatalogEntry, ModelPricing, ModelProvider, ModelRequest, ModelResponse, ModelUsage,
+    ProviderCapabilities, ProviderDescriptor, ProviderError, ResponseFormat, ReviewError,
+    StructuredOutputSupport, ToolCall, ToolCallingSupport, TranscriptItem, UsageSupport,
 };
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode};
@@ -14,6 +14,54 @@ pub const DEEPSEEK_V4_FLASH_MODEL: &str = "deepseek-v4-flash";
 pub const DEEPSEEK_V4_PRO_MODEL: &str = "deepseek-v4-pro";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+const PRICING_SOURCE_URL: &str = "https://api-docs.deepseek.com/quick_start/pricing";
+const PRICING_SOURCE_VERSION: &str = "deepseek-v4-models-and-pricing";
+const PRICING_CHECKED_AT: &str = "2026-08-07";
+
+fn deepseek_capabilities() -> ProviderCapabilities {
+    ProviderCapabilities {
+        structured_output: StructuredOutputSupport::JsonObject,
+        tool_calling: ToolCallingSupport::Serial,
+        can_disable_tools: true,
+        requires_reasoning_replay: false,
+        context_window_tokens: 1_000_000,
+        max_output_tokens: 384_000,
+        usage: UsageSupport::InputOutputTokens,
+    }
+}
+
+fn pricing(cache_hit: u64, cache_miss: u64, output: u64) -> ModelPricing {
+    ModelPricing {
+        currency: "USD".into(),
+        input_cache_hit_per_million_micros: cache_hit,
+        input_cache_miss_per_million_micros: cache_miss,
+        output_per_million_micros: output,
+        source_url: PRICING_SOURCE_URL.into(),
+        source_version: PRICING_SOURCE_VERSION.into(),
+        checked_at: PRICING_CHECKED_AT.into(),
+    }
+}
+
+pub fn deepseek_model_catalog() -> Vec<ModelCatalogEntry> {
+    vec![
+        ModelCatalogEntry {
+            id: DEEPSEEK_V4_FLASH_MODEL.into(),
+            label: "DeepSeek V4 Flash".into(),
+            provider_id: "deepseek".into(),
+            provider_label: "DeepSeek".into(),
+            capabilities: deepseek_capabilities(),
+            pricing: Some(pricing(2_800, 140_000, 280_000)),
+        },
+        ModelCatalogEntry {
+            id: DEEPSEEK_V4_PRO_MODEL.into(),
+            label: "DeepSeek V4 Pro".into(),
+            provider_id: "deepseek".into(),
+            provider_label: "DeepSeek".into(),
+            capabilities: deepseek_capabilities(),
+            pricing: Some(pricing(3_625, 435_000, 870_000)),
+        },
+    ]
+}
 
 pub struct DeepSeekProvider {
     client: Client,
@@ -53,7 +101,7 @@ impl DeepSeekProvider {
     }
 
     #[cfg(test)]
-    fn new_with_base_for_test(api_key: impl Into<String>, base_url: String) -> Self {
+    pub(crate) fn new_with_base_for_test(api_key: impl Into<String>, base_url: String) -> Self {
         Self {
             client: build_client(Duration::from_millis(50), Duration::from_millis(100))
                 .expect("test HTTP client should build"),
@@ -63,26 +111,16 @@ impl DeepSeekProvider {
         }
     }
 
-    fn request_body(&self, transcript: &[TranscriptItem]) -> Result<Value, ReviewError> {
+    fn request_body(&self, request: &ModelRequest) -> Result<Value, ProviderError> {
         let mut messages = Vec::new();
-        let used_tool_calls = transcript
-            .iter()
-            .filter(|item| {
-                matches!(
-                    item,
-                    TranscriptItem::ToolResult {
-                        counts_toward_budget: true,
-                        ..
-                    }
-                )
-            })
-            .count();
-        for item in transcript {
+        for item in &request.transcript {
             match item {
                 TranscriptItem::System(text) => {
-                    messages.push(json!({"role":"system","content":text}))
+                    messages.push(json!({"role": "system", "content": text}));
                 }
-                TranscriptItem::User(text) => messages.push(json!({"role":"user","content":text})),
+                TranscriptItem::User(text) => {
+                    messages.push(json!({"role": "user", "content": text}));
+                }
                 TranscriptItem::AssistantToolCalls(calls) => {
                     let mut tool_calls = Vec::new();
                     for call in calls {
@@ -93,51 +131,73 @@ impl DeepSeekProvider {
                             .and_then(|value| value.as_str().map(str::to_owned))
                             .filter(|call_id| !call_id.is_empty())
                             .ok_or_else(|| {
-                                ReviewError::InvalidModelOutput("function call id missing".into())
+                                ProviderError::InvalidResponse("function call id missing".into())
                             })?;
-                        tool_calls.push(json!({"id":call_id,"type":"function","function":{"name":call.name,"arguments":arguments.to_string()}}));
+                        tool_calls.push(json!({
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": call.name,
+                                "arguments": arguments.to_string()
+                            }
+                        }));
                     }
-                    messages
-                        .push(json!({"role":"assistant","content":null,"tool_calls":tool_calls}));
+                    messages.push(json!({
+                        "role": "assistant",
+                        "content": null,
+                        "tool_calls": tool_calls
+                    }));
                 }
                 TranscriptItem::ToolResult {
                     call_id, content, ..
                 } => {
                     if call_id.is_empty() {
-                        return Err(ReviewError::InvalidModelOutput(
+                        return Err(ProviderError::InvalidResponse(
                             "function call id missing".into(),
                         ));
                     }
-                    messages.push(json!({"role":"tool","tool_call_id":call_id,"content":content}));
+                    messages.push(json!({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": content
+                    }));
                 }
             }
         }
+
         let mut body = json!({
             "model": self.model,
             "stream": false,
-            "thinking": {"type":"disabled"},
-            "max_tokens": 8192,
-            "messages": messages,
-            "response_format": {"type":"json_object"},
-            "tools": [
-                {"type":"function","function":{"name":"list_repository_tree","description":"List repository paths at the fixed PR head SHA","parameters":{"type":"object","properties":{"prefix":{"type":"string"}},"additionalProperties":false}}},
-                {"type":"function","function":{"name":"read_file","description":"Read at most 400 UTF-8 lines at the fixed PR head SHA","parameters":{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer"},"end_line":{"type":"integer"}},"required":["path","start_line","end_line"],"additionalProperties":false}}}
-            ]
+            "thinking": {"type": "disabled"},
+            "max_tokens": request.max_output_tokens,
+            "messages": messages
         });
-        if used_tool_calls >= MAX_TOOL_CALLS {
-            let object = body
-                .as_object_mut()
-                .expect("chat completion request body is an object");
-            object.remove("tools");
-            object.insert("tool_choice".into(), Value::String("none".into()));
-            object
-                .get_mut("messages")
-                .and_then(Value::as_array_mut)
-                .expect("messages is an array")
-                .push(json!({
-                    "role": "system",
-                    "content": "The tool budget is exhausted. Do not call any more tools. Return the final review JSON now using only the evidence already available."
-                }));
+        let object = body
+            .as_object_mut()
+            .expect("chat completion request body is an object");
+        if request.response_format == ResponseFormat::JsonObject {
+            object.insert("response_format".into(), json!({"type": "json_object"}));
+        }
+        if !request.tools.is_empty() {
+            object.insert(
+                "tools".into(),
+                Value::Array(
+                    request
+                        .tools
+                        .iter()
+                        .map(|tool| {
+                            json!({
+                                "type": "function",
+                                "function": {
+                                    "name": tool.name,
+                                    "description": tool.description,
+                                    "parameters": tool.input_schema
+                                }
+                            })
+                        })
+                        .collect(),
+                ),
+            );
         }
         Ok(body)
     }
@@ -158,51 +218,46 @@ fn build_client(
 impl ModelProvider for DeepSeekProvider {
     fn descriptor(&self) -> ProviderDescriptor {
         ProviderDescriptor {
-            provider: "deepseek".into(),
-            model: self.model.clone(),
-            capabilities: ProviderCapabilities {
-                structured_output: StructuredOutputSupport::JsonObject,
-                can_disable_tools: true,
-                parallel_tool_calls: false,
-                requires_reasoning_replay: false,
-            },
+            provider_id: "deepseek".into(),
+            model_id: self.model.clone(),
+            capabilities: deepseek_capabilities(),
         }
     }
 
-    async fn respond(&self, transcript: &[TranscriptItem]) -> Result<ModelResponse, ReviewError> {
-        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        let request_body = self.request_body(transcript)?;
+    async fn respond(&self, request: &ModelRequest) -> Result<ModelResponse, ProviderError> {
         let response = self
             .client
-            .post(&url)
+            .post(format!(
+                "{}/chat/completions",
+                self.base_url.trim_end_matches('/')
+            ))
             .bearer_auth(&self.api_key)
-            .json(&request_body)
+            .json(&self.request_body(request)?)
             .send()
             .await
-            .map_err(|_| ReviewError::NetworkError("request failed".into()))?;
+            .map_err(|_| ProviderError::Network("request failed".into()))?;
         match response.status() {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-                return Err(ReviewError::AuthFailed);
+                return Err(ProviderError::AuthFailed);
             }
-            StatusCode::TOO_MANY_REQUESTS => return Err(ReviewError::RateLimited),
+            StatusCode::TOO_MANY_REQUESTS => return Err(ProviderError::RateLimited),
             status if !status.is_success() => {
-                return Err(ReviewError::NetworkError("service request failed".into()));
+                return Err(ProviderError::Network("service request failed".into()));
             }
             _ => {}
         }
         let bytes = response
             .bytes()
             .await
-            .map_err(|_| ReviewError::NetworkError("response body could not be read".into()))?;
-        let body = serde_json::from_slice::<Value>(&bytes).map_err(|_| {
-            ReviewError::NetworkError("service returned an invalid response".into())
-        })?;
+            .map_err(|_| ProviderError::Network("response body could not be read".into()))?;
+        let body = serde_json::from_slice::<Value>(&bytes)
+            .map_err(|_| ProviderError::Network("service returned an invalid response".into()))?;
         parse_response(body)
     }
 }
 
-fn parse_response(body: Value) -> Result<ModelResponse, ReviewError> {
-    let usage = ReviewUsage {
+fn parse_response(body: Value) -> Result<ModelResponse, ProviderError> {
+    let usage = ModelUsage {
         input_tokens: body
             .pointer("/usage/prompt_tokens")
             .and_then(Value::as_u64)
@@ -216,18 +271,18 @@ fn parse_response(body: Value) -> Result<ModelResponse, ReviewError> {
     let choice = body
         .pointer("/choices/0")
         .and_then(Value::as_object)
-        .ok_or_else(|| ReviewError::InvalidModelOutput("missing response output".into()))?;
+        .ok_or_else(|| ProviderError::InvalidResponse("missing response output".into()))?;
     match choice.get("finish_reason").and_then(Value::as_str) {
-        Some("length") => return Err(ReviewError::ReviewBudgetExceeded),
+        Some("length") => return Err(ProviderError::OutputTruncated),
         Some("content_filter" | "insufficient_system_resource") => {
-            return Err(ReviewError::NetworkError("model response failed".into()));
+            return Err(ProviderError::Network("model response failed".into()));
         }
         _ => {}
     }
     let message = choice
         .get("message")
         .and_then(Value::as_object)
-        .ok_or_else(|| ReviewError::InvalidModelOutput("missing response output".into()))?;
+        .ok_or_else(|| ProviderError::InvalidResponse("missing response output".into()))?;
     let mut calls = Vec::new();
     let mut call_ids = HashSet::new();
     if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
@@ -235,20 +290,18 @@ fn parse_response(body: Value) -> Result<ModelResponse, ReviewError> {
             let function = item
                 .get("function")
                 .and_then(Value::as_object)
-                .ok_or_else(|| ReviewError::InvalidModelOutput("function name missing".into()))?;
+                .ok_or_else(|| ProviderError::InvalidResponse("function name missing".into()))?;
             let name = function
                 .get("name")
                 .and_then(Value::as_str)
-                .ok_or_else(|| ReviewError::InvalidModelOutput("function name missing".into()))?;
+                .ok_or_else(|| ProviderError::InvalidResponse("function name missing".into()))?;
             let call_id = item
                 .get("id")
                 .and_then(Value::as_str)
                 .filter(|call_id| !call_id.is_empty())
-                .ok_or_else(|| {
-                    ReviewError::InvalidModelOutput("function call id missing".into())
-                })?;
+                .ok_or_else(|| ProviderError::InvalidResponse("function call id missing".into()))?;
             if !call_ids.insert(call_id) {
-                return Err(ReviewError::InvalidModelOutput(
+                return Err(ProviderError::InvalidResponse(
                     "duplicate function call id".into(),
                 ));
             }
@@ -256,40 +309,28 @@ fn parse_response(body: Value) -> Result<ModelResponse, ReviewError> {
                 .get("arguments")
                 .and_then(Value::as_str)
                 .ok_or_else(|| {
-                    ReviewError::InvalidModelOutput("function arguments missing".into())
+                    ProviderError::InvalidResponse("function arguments missing".into())
                 })?;
-            let mut arguments: Value = serde_json::from_str(encoded).map_err(|_| {
-                ReviewError::InvalidModelOutput("invalid function arguments".into())
-            })?;
-            if let Some(object) = arguments.as_object_mut() {
-                object.insert("_call_id".into(), Value::String(call_id.into()));
+            let arguments = serde_json::from_str::<Value>(encoded)
+                .map_err(|_| ProviderError::InvalidResponse("invalid function arguments".into()))?;
+            if !arguments.is_object() {
+                return Err(ProviderError::InvalidResponse(
+                    "function arguments must be an object".into(),
+                ));
             }
-            calls.push(ToolCall {
-                name: name.into(),
-                arguments,
-            });
+            calls.push(ToolCall::with_call_id(name, call_id, arguments));
         }
     }
     if !calls.is_empty() {
-        Ok(ModelResponse {
-            output: ModelOutput::ToolCalls { calls },
-            usage,
-        })
-    } else if let Some(output_text) = message
+        Ok(ModelResponse::tool_calls(calls, usage))
+    } else if let Some(text) = message
         .get("content")
         .and_then(Value::as_str)
         .filter(|content| !content.trim().is_empty())
     {
-        let decoded = ReviewOutputCodec::decode(output_text)?;
-        Ok(ModelResponse {
-            output: ModelOutput::Final {
-                summary: decoded.summary,
-                findings: decoded.findings,
-            },
-            usage,
-        })
+        Ok(ModelResponse::final_text(text, usage))
     } else {
-        Err(ReviewError::InvalidModelOutput(
+        Err(ProviderError::InvalidResponse(
             "no tool calls or final output".into(),
         ))
     }
@@ -298,267 +339,176 @@ fn parse_response(body: Value) -> Result<ModelResponse, ReviewError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ModelOutput, ModelProvider, ReviewError, TranscriptItem};
-    use serde_json::json;
+    use crate::{ModelOutput, ToolDefinition};
     use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    #[test]
-    fn declares_deepseek_specific_capabilities_without_leaking_them_upward() {
-        let provider = DeepSeekProvider::new_with_base_for_test("k", "http://localhost".into());
-        let descriptor = provider.descriptor();
-        assert_eq!(descriptor.provider, "deepseek");
-        assert_eq!(descriptor.model, "deepseek-v4-flash");
-        assert_eq!(
-            descriptor.capabilities.structured_output,
-            StructuredOutputSupport::JsonObject
-        );
-        assert!(descriptor.capabilities.can_disable_tools);
-        assert!(!descriptor.capabilities.requires_reasoning_replay);
-    }
-
-    #[test]
-    fn selects_only_supported_deepseek_models() {
-        let provider = DeepSeekProvider::new_with_model("k", DEEPSEEK_V4_PRO_MODEL).unwrap();
-        assert_eq!(provider.descriptor().model, DEEPSEEK_V4_PRO_MODEL);
-        assert!(DeepSeekProvider::new_with_model("k", "retired-or-arbitrary-model").is_err());
-    }
-
-    #[tokio::test]
-    async fn parses_function_call_and_sends_fixed_model_contract() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST")).and(path("/chat/completions"))
-            .and(header("authorization", "Bearer test-key"))
-            .and(body_partial_json(json!({
-                "model":"deepseek-v4-flash",
-                "stream":false,
-                "thinking":{"type":"disabled"},
-                "max_tokens":8192,
-                "response_format":{"type":"json_object"}
-            })))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"src/lib.rs\",\"start_line\":1,\"end_line\":2}"}}]}}],
-                "usage":{"prompt_tokens":5,"completion_tokens":3}
-            }))).mount(&server).await;
-        let provider = DeepSeekProvider::new_with_base_for_test("test-key", server.uri());
-        let response = provider
-            .respond(&[TranscriptItem::System("safe".into())])
-            .await
-            .unwrap();
-        match response.output {
-            ModelOutput::ToolCalls { calls } => assert_eq!(calls[0].name, "read_file"),
-            _ => panic!("expected tool call"),
+    fn request(transcript: Vec<TranscriptItem>, with_tools: bool) -> ModelRequest {
+        ModelRequest {
+            transcript,
+            tools: if with_tools {
+                vec![ToolDefinition {
+                    name: "read_file".into(),
+                    description: "Read a file".into(),
+                    input_schema: json!({"type": "object"}),
+                }]
+            } else {
+                Vec::new()
+            },
+            response_format: ResponseFormat::JsonObject,
+            max_output_tokens: 8192,
         }
     }
 
     #[test]
-    fn maps_tool_history_to_chat_completion_messages() {
+    fn catalog_and_descriptor_expose_stable_capabilities_and_pricing() {
         let provider = DeepSeekProvider::new_with_base_for_test("k", "http://localhost".into());
+        let descriptor = provider.descriptor();
+        assert_eq!(descriptor.provider_id, "deepseek");
+        assert_eq!(descriptor.model_id, DEEPSEEK_V4_FLASH_MODEL);
+        assert_eq!(descriptor.capabilities.context_window_tokens, 1_000_000);
+        assert_eq!(
+            descriptor.capabilities.tool_calling,
+            ToolCallingSupport::Serial
+        );
+
+        let catalog = deepseek_model_catalog();
+        assert_eq!(catalog.len(), 2);
+        assert_eq!(
+            catalog[0]
+                .pricing
+                .as_ref()
+                .unwrap()
+                .input_cache_miss_per_million_micros,
+            140_000
+        );
+        assert_eq!(
+            catalog[0].pricing.as_ref().unwrap().checked_at,
+            "2026-08-07"
+        );
+    }
+
+    #[test]
+    fn selects_only_supported_models() {
+        let provider = DeepSeekProvider::new_with_model("k", DEEPSEEK_V4_PRO_MODEL).unwrap();
+        assert_eq!(provider.descriptor().model_id, DEEPSEEK_V4_PRO_MODEL);
+        assert!(DeepSeekProvider::new_with_model("k", "unknown").is_err());
+    }
+
+    #[test]
+    fn maps_generic_request_and_omits_tools_when_disabled() {
+        let provider = DeepSeekProvider::new_with_base_for_test("k", "http://localhost".into());
+        let history = vec![
+            TranscriptItem::AssistantToolCalls(vec![crate::read_file_call(
+                "call-1",
+                "src/lib.rs",
+                1,
+                2,
+            )]),
+            TranscriptItem::ToolResult {
+                name: "read_file".into(),
+                call_id: "call-1".into(),
+                content: "fn main() {}".into(),
+                counts_toward_budget: true,
+            },
+        ];
         let body = provider
-            .request_body(&[
-                TranscriptItem::AssistantToolCalls(vec![ToolCall::read_file(
-                    "call-1",
-                    "src/lib.rs",
-                    1,
-                    2,
-                )]),
-                TranscriptItem::ToolResult {
-                    name: "read_file".into(),
-                    call_id: "call-1".into(),
-                    content: "fn main() {}".into(),
-                    counts_toward_budget: true,
-                },
-            ])
+            .request_body(&request(history.clone(), true))
             .unwrap();
-        assert_eq!(body.pointer("/messages/0/role"), Some(&json!("assistant")));
         assert_eq!(
             body.pointer("/messages/0/tool_calls/0/id"),
             Some(&json!("call-1"))
         );
         assert_eq!(body.pointer("/messages/1/role"), Some(&json!("tool")));
-        assert_eq!(
-            body.pointer("/messages/1/tool_call_id"),
-            Some(&json!("call-1"))
-        );
-    }
-
-    #[test]
-    fn disables_tools_and_requests_final_output_after_tool_budget_is_used() {
-        let provider = DeepSeekProvider::new_with_base_for_test("k", "http://localhost".into());
-        let calls = (0..MAX_TOOL_CALLS)
-            .map(|index| ToolCall::list_tree(format!("call-{index}"), "src"))
-            .collect::<Vec<_>>();
-        let mut transcript = vec![TranscriptItem::AssistantToolCalls(calls)];
-        transcript.extend((0..MAX_TOOL_CALLS).map(|index| TranscriptItem::ToolResult {
-            name: "list_repository_tree".into(),
-            call_id: format!("call-{index}"),
-            content: "[]".into(),
-            counts_toward_budget: true,
-        }));
-        let body = provider.request_body(&transcript).unwrap();
-
-        assert!(body.get("tools").is_none());
-        assert_eq!(body.get("tool_choice"), Some(&json!("none")));
-        assert_eq!(
-            body.pointer(&format!("/messages/{}/content", MAX_TOOL_CALLS + 1)),
-            Some(&json!("The tool budget is exhausted. Do not call any more tools. Return the final review JSON now using only the evidence already available."))
-        );
-    }
-
-    #[test]
-    fn cached_tool_results_do_not_consume_the_unique_read_budget() {
-        let provider = DeepSeekProvider::new_with_base_for_test("k", "http://localhost".into());
-        let calls = (0..MAX_TOOL_CALLS)
-            .map(|index| ToolCall::list_tree(format!("call-{index}"), "src"))
-            .collect::<Vec<_>>();
-        let mut transcript = vec![TranscriptItem::AssistantToolCalls(calls)];
-        transcript.extend((0..MAX_TOOL_CALLS).map(|index| TranscriptItem::ToolResult {
-            name: "list_repository_tree".into(),
-            call_id: format!("call-{index}"),
-            content: "[]".into(),
-            counts_toward_budget: index == 0,
-        }));
-
-        let body = provider.request_body(&transcript).unwrap();
         assert!(body.get("tools").is_some());
-        assert!(body.get("tool_choice").is_none());
+
+        let body = provider.request_body(&request(history, false)).unwrap();
+        assert!(body.get("tools").is_none());
     }
 
     #[tokio::test]
-    async fn parses_final_structured_findings_and_ignores_reasoning() {
-        let server = MockServer::start().await;
-        let finding = json!({"id":"f","severity":"high","path":"src/lib.rs","side":"RIGHT","line":1,"title":"t","failure_scenario":"s","explanation":"e","draft_comment":"d"});
-        Mock::given(method("POST")).and(path("/chat/completions")).respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "choices":[{"finish_reason":"stop","message":{"role":"assistant","content":json!({"summary":"One correctness issue.","findings":[finding]}).to_string()}}],
-            "usage":{"prompt_tokens":1,"completion_tokens":2}
-        }))).mount(&server).await;
-        let response = DeepSeekProvider::new_with_base_for_test("k", server.uri())
-            .respond(&[])
-            .await
-            .unwrap();
-        match response.output {
-            ModelOutput::Final { summary, findings } => {
-                assert_eq!(summary, "One correctness issue.");
-                assert_eq!(findings.len(), 1);
-            }
-            _ => panic!("expected final"),
-        }
-    }
-
-    #[test]
-    fn parses_chat_completion_json_content() {
-        let body = json!({
-            "choices":[{"finish_reason":"stop","message":{"content":"{\"summary\":\"Complete\",\"findings\":[]}"}}]
-        });
-        let response = parse_response(body).unwrap();
-        assert!(matches!(
-            response.output,
-            ModelOutput::Final { ref summary, ref findings }
-                if summary == "Complete" && findings.is_empty()
-        ));
-    }
-
-    #[test]
-    fn keeps_review_when_one_finding_has_an_invalid_schema() {
-        let valid = json!({"id":"f","severity":"high","path":"src/lib.rs","side":"RIGHT","line":1,"title":"t","failure_scenario":"s","explanation":"e","draft_comment":"d"});
-        let body = json!({
-            "choices":[{"finish_reason":"stop","message":{"content":json!({
-                "summary":"Found one valid issue.",
-                "findings":[{"title":"incomplete"}, valid]
-            }).to_string()}}]
-        });
-
-        let response = parse_response(body).unwrap();
-        assert!(matches!(
-            response.output,
-            ModelOutput::Final { ref summary, ref findings }
-                if summary == "Found one valid issue." && findings.len() == 1
-        ));
-    }
-
-    #[test]
-    fn treats_null_findings_as_an_empty_review() {
-        let body = json!({
-            "choices":[{"finish_reason":"stop","message":{"content":"{\"summary\":\"No issue found.\",\"findings\":null}"}}]
-        });
-
-        let response = parse_response(body).unwrap();
-        assert!(matches!(
-            response.output,
-            ModelOutput::Final { ref findings, .. } if findings.is_empty()
-        ));
-    }
-
-    #[test]
-    fn preserves_nonempty_plain_text_as_an_unstructured_review() {
-        let body = json!({
-            "choices":[{"finish_reason":"stop","message":{"content":"I reviewed the selected patch. No actionable correctness issue was found."}}],
-            "usage":{"prompt_tokens":10,"completion_tokens":12}
-        });
-
-        let response = parse_response(body).unwrap();
-        assert!(matches!(
-            response.output,
-            ModelOutput::Final { ref summary, ref findings }
-                if summary.contains("No actionable") && findings.is_empty()
-        ));
-    }
-
-    #[test]
-    fn maps_chat_completion_terminal_reasons() {
-        assert!(matches!(
-            parse_response(
-                json!({"choices":[{"finish_reason":"insufficient_system_resource","message":{}}]})
-            ),
-            Err(ReviewError::NetworkError(_))
-        ));
-        assert_eq!(
-            parse_response(json!({"choices":[{"finish_reason":"length","message":{}}]}))
-                .unwrap_err(),
-            ReviewError::ReviewBudgetExceeded
-        );
-    }
-
-    #[tokio::test]
-    async fn rejects_final_output_without_a_summary() {
+    async fn parses_tool_calls_and_usage_through_the_shared_contract() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
+            .and(header("authorization", "Bearer test-key"))
+            .and(body_partial_json(json!({
+                "model": DEEPSEEK_V4_FLASH_MODEL,
+                "max_tokens": 8192,
+                "response_format": {"type": "json_object"}
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "choices":[{"finish_reason":"stop","message":{"content":json!({"findings":[]}).to_string()}}]
+                "choices": [{"finish_reason": "tool_calls", "message": {
+                    "tool_calls": [{"id": "c1", "function": {
+                        "name": "read_file",
+                        "arguments": "{\"path\":\"src/lib.rs\",\"start_line\":1,\"end_line\":2}"
+                    }}]
+                }}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 3}
             })))
             .mount(&server)
             .await;
 
-        let error = DeepSeekProvider::new_with_base_for_test("k", server.uri())
-            .respond(&[])
+        let response = DeepSeekProvider::new_with_base_for_test("test-key", server.uri())
+            .respond(&request(vec![TranscriptItem::System("safe".into())], true))
             .await
-            .unwrap_err();
-
-        assert_eq!(
-            error,
-            ReviewError::InvalidModelOutput("summary missing".into())
+            .unwrap();
+        assert_eq!(response.usage.input_tokens, 5);
+        assert!(
+            matches!(response.output, ModelOutput::ToolCalls { calls } if calls[0].name == "read_file")
         );
     }
 
+    #[test]
+    fn preserves_final_text_for_workflow_specific_decoding() {
+        let response = parse_response(json!({
+            "choices": [{"finish_reason": "stop", "message": {
+                "content": "{\"summary\":\"Complete\",\"findings\":[]}"
+            }}]
+        }))
+        .unwrap();
+        assert!(matches!(
+            response.output,
+            ModelOutput::FinalText { ref text } if text.contains("Complete")
+        ));
+    }
+
+    #[test]
+    fn maps_terminal_reasons_and_rejects_duplicate_call_ids() {
+        assert_eq!(
+            parse_response(json!({"choices": [{"finish_reason": "length", "message": {}}]}))
+                .unwrap_err(),
+            ProviderError::OutputTruncated
+        );
+        let error = parse_response(json!({
+            "choices": [{"finish_reason": "tool_calls", "message": {"tool_calls": [
+                {"id": "same", "function": {"name": "a", "arguments": "{}"}},
+                {"id": "same", "function": {"name": "b", "arguments": "{}"}}
+            ]}}]
+        }))
+        .unwrap_err();
+        assert!(matches!(error, ProviderError::InvalidResponse(_)));
+    }
+
     #[tokio::test]
-    async fn maps_http_statuses_and_invalid_json() {
+    async fn maps_http_statuses_invalid_json_and_timeout() {
         for (status, expected) in [
-            (401, ReviewError::AuthFailed),
-            (403, ReviewError::AuthFailed),
-            (429, ReviewError::RateLimited),
+            (401, ProviderError::AuthFailed),
+            (403, ProviderError::AuthFailed),
+            (429, ProviderError::RateLimited),
         ] {
             let server = MockServer::start().await;
             Mock::given(method("POST"))
                 .respond_with(ResponseTemplate::new(status))
                 .mount(&server)
                 .await;
-            let err = DeepSeekProvider::new_with_base_for_test("k", server.uri())
-                .respond(&[])
+            let error = DeepSeekProvider::new_with_base_for_test("k", server.uri())
+                .respond(&request(Vec::new(), false))
                 .await
                 .unwrap_err();
-            assert_eq!(err, expected);
+            assert_eq!(error, expected);
         }
+
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(200).set_body_string("not-json"))
@@ -566,53 +516,23 @@ mod tests {
             .await;
         assert!(matches!(
             DeepSeekProvider::new_with_base_for_test("k", server.uri())
-                .respond(&[])
+                .respond(&request(Vec::new(), false))
                 .await
                 .unwrap_err(),
-            ReviewError::NetworkError(_)
+            ProviderError::Network(_)
         ));
-        assert_eq!(server.received_requests().await.unwrap().len(), 1);
-    }
 
-    #[tokio::test]
-    async fn maps_hanging_response_timeout_to_network_error() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/responses"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .set_delay(std::time::Duration::from_millis(250))
-                    .set_body_json(json!({"output":[]})),
-            )
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(250)))
             .mount(&server)
             .await;
-        let error = DeepSeekProvider::new_with_base_for_test("k", server.uri())
-            .respond(&[])
-            .await
-            .unwrap_err();
-        assert!(matches!(error, ReviewError::NetworkError(_)));
-    }
-
-    #[test]
-    fn rejects_missing_empty_and_duplicate_function_call_ids() {
-        let function_call = |call_id: Option<&str>| {
-            let mut call = json!({
-                "type":"function_call",
-                "name":"list_repository_tree",
-                "arguments":"{}"
-            });
-            if let Some(call_id) = call_id {
-                call["call_id"] = json!(call_id);
-            }
-            call
-        };
-        for output in [
-            vec![function_call(None)],
-            vec![function_call(Some(""))],
-            vec![function_call(Some("same")), function_call(Some("same"))],
-        ] {
-            let error = parse_response(json!({"output":output})).unwrap_err();
-            assert!(matches!(error, ReviewError::InvalidModelOutput(_)));
-        }
+        assert!(matches!(
+            DeepSeekProvider::new_with_base_for_test("k", server.uri())
+                .respond(&request(Vec::new(), false))
+                .await
+                .unwrap_err(),
+            ProviderError::Network(_)
+        ));
     }
 }

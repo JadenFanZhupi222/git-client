@@ -40,6 +40,7 @@ export function IssuesView({
   const [detailError, setDetailError] = useState<IpcError | null>(null);
   const [triageOpen, setTriageOpen] = useState(false);
   const [compactDetailOpen, setCompactDetailOpen] = useState(false);
+  const [detailRevision, setDetailRevision] = useState(0);
   const selectedNumberRef = useRef<number | null>(null);
 
   const visibleIssues = useMemo(() => {
@@ -86,7 +87,7 @@ export function IssuesView({
       .catch((reason) => { if (alive) setDetailError(asIpcError(reason)); })
       .finally(() => { if (alive) setDetailLoading(false); });
     return () => { alive = false; };
-  }, [remote, selectedNumber]);
+  }, [remote, selectedNumber, detailRevision]);
 
   async function loadIssues(isAlive: () => boolean = () => true) {
     setLoading(true);
@@ -109,6 +110,11 @@ export function IssuesView({
     } finally {
       if (isAlive()) setLoading(false);
     }
+  }
+
+  function refreshIssuesAndDetail() {
+    setDetailRevision((current) => current + 1);
+    return loadIssues();
   }
 
   async function openTriage() {
@@ -149,7 +155,7 @@ export function IssuesView({
           </p>
         </div>
         <button
-          onClick={() => void loadIssues()}
+          onClick={() => void refreshIssuesAndDetail()}
           disabled={loading}
           className="ml-auto rounded-md border border-line-strong px-2.5 py-1.5 text-xs text-fg-muted hover:bg-overlay hover:text-fg disabled:opacity-50"
         >
@@ -302,6 +308,7 @@ export function IssuesView({
           context={context}
           onClose={() => setTriageOpen(false)}
           onConfigureCredential={(kind) => { setTriageOpen(false); onConfigureCredential(kind); }}
+          onPublished={() => { void refreshIssuesAndDetail(); }}
         />,
         document.body,
       )}

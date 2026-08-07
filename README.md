@@ -46,6 +46,7 @@ git-client/
     src/                  UI, hooks, IPC wrappers, generated bindings
     src-tauri/            Tauri commands and desktop app bootstrap
   crates/
+    agent-runtime/        Provider-neutral model requests, responses, capabilities, usage, and catalog metadata
     git-core/             Domain models, GitBackend trait, typed errors
     git-engine/           git2 / CLI backend implementations and routing
     app-service/          Use cases, repository context, cache, operation orchestration

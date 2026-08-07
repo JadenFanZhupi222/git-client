@@ -39,6 +39,10 @@ const result = {
     rationale: ["The report includes reproduction steps."],
   },
   usage: { input_tokens: 420, output_tokens: 90, tool_calls: 0 },
+  model_id: "deepseek-v4-flash",
+  duration_ms: 780,
+  diagnostic_id: "diag-fedcba9876543210",
+  provider_attempts: 1,
 };
 
 describe("IssueTriageWorkspace", () => {
@@ -96,6 +100,31 @@ describe("IssueTriageWorkspace", () => {
     expect(onConfigureCredential).toHaveBeenCalledWith("deepseek");
   });
 
+  it("shows cancellation as a terminal state with a diagnostic id", async () => {
+    let rejectRun!: (reason: unknown) => void;
+    ipc.startIssueTriage.mockReturnValue(new Promise((_, reject) => { rejectRun = reject; }));
+    const user = userEvent.setup();
+    localStorage.setItem("issue-triage-consent-v1", "accepted");
+    render(<IssueTriageWorkspace target={target} context={context} onClose={vi.fn()} onConfigureCredential={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Start triage" }));
+    await user.click(screen.getByRole("button", { name: "Cancel triage" }));
+    rejectRun({ code: "CANCELLED", message: "cancelled", recoverable: true, diagnostic_id: "diag-3333333333333333" });
+
+    expect(await screen.findByText("Triage was cancelled. No result was saved and no GitHub changes were made.")).toBeInTheDocument();
+    expect(screen.getByText("Diagnostic diag-3333333333333333")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start triage" })).toBeEnabled();
+  });
+
+  it("shows the diagnostic id returned with a triage failure", async () => {
+    ipc.startIssueTriage.mockRejectedValue({ code: "RATE_LIMITED", message: "limited", recoverable: true, diagnostic_id: "diag-4444444444444444" });
+    const user = userEvent.setup();
+    localStorage.setItem("issue-triage-consent-v1", "accepted");
+    render(<IssueTriageWorkspace target={target} context={context} onClose={vi.fn()} onConfigureCredential={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Start triage" }));
+
+    expect(await screen.findByText("Diagnostic diag-4444444444444444")).toBeInTheDocument();
+  });
+
   it("discards a cached result when the freshly loaded issue snapshot changed", async () => {
     localStorage.setItem("issue-triage-result-v1:acme/rocket#7", JSON.stringify({
       ...result,
@@ -111,10 +140,22 @@ describe("IssueTriageWorkspace", () => {
     expect(screen.getByRole("button", { name: "Start triage" })).toBeEnabled();
   });
 
+  it("restores a pre-diagnostics cache entry without showing invented metadata", async () => {
+    const { model_id: _model, duration_ms: _duration, diagnostic_id: _diagnostic, provider_attempts: _attempts, ...legacyResult } = result;
+    localStorage.setItem("issue-triage-result-v1:acme/rocket#7", JSON.stringify(legacyResult));
+
+    render(<IssueTriageWorkspace target={target} context={context} onClose={vi.fn()} onConfigureCredential={vi.fn()} />);
+
+    expect(await screen.findByText("A reproducible launch crash.")).toBeInTheDocument();
+    expect(screen.queryByText(/Diagnostic diag-/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Estimated cost/)).not.toBeInTheDocument();
+  });
+
   it("publishes only explicitly selected actions after an exact confirmation", async () => {
     const user = userEvent.setup();
+    const onPublished = vi.fn();
     localStorage.setItem("issue-triage-consent-v1", "accepted");
-    render(<IssueTriageWorkspace target={target} context={context} onClose={vi.fn()} onConfigureCredential={vi.fn()} />);
+    render(<IssueTriageWorkspace target={target} context={context} onClose={vi.fn()} onConfigureCredential={vi.fn()} onPublished={onPublished} />);
 
     await user.click(await screen.findByRole("button", { name: "Start triage" }));
     await screen.findByText("A reproducible launch crash.");
@@ -138,6 +179,7 @@ describe("IssueTriageWorkspace", () => {
       reply: result.proposal.suggested_reply,
       publish_id: expect.any(String),
     }));
+    expect(onPublished).toHaveBeenCalledTimes(1);
   });
 
   it("retries a partial result with the same batch id and returned snapshot", async () => {
@@ -147,7 +189,7 @@ describe("IssueTriageWorkspace", () => {
         publish_id: "ignored-by-client",
         snapshot: partialSnapshot,
         actions: [
-          { action_id: "label:priority:high", kind: "label", label: "priority:high", status: "failed", error_code: "NETWORK_ERROR" },
+          { action_id: "label:priority:high", kind: "label", label: "priority:high", status: "failed", error_code: "AUTH_FAILED" },
           { action_id: "comment", kind: "comment", label: null, status: "applied", error_code: null },
         ],
       })
@@ -160,8 +202,9 @@ describe("IssueTriageWorkspace", () => {
         ],
       });
     const user = userEvent.setup();
+    const onConfigureCredential = vi.fn();
     localStorage.setItem("issue-triage-consent-v1", "accepted");
-    render(<IssueTriageWorkspace target={target} context={context} onClose={vi.fn()} onConfigureCredential={vi.fn()} />);
+    render(<IssueTriageWorkspace target={target} context={context} onClose={vi.fn()} onConfigureCredential={onConfigureCredential} />);
 
     await user.click(await screen.findByRole("button", { name: "Start triage" }));
     await user.click(await screen.findByRole("checkbox", { name: "Add label: priority:high" }));
@@ -169,6 +212,9 @@ describe("IssueTriageWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Review selected actions" }));
     await user.click(screen.getByRole("button", { name: "Publish selected actions" }));
     await screen.findByRole("heading", { name: "Some actions need attention" });
+    expect(screen.getByText(/Issues is set to Read and write/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open GitHub settings" }));
+    expect(onConfigureCredential).toHaveBeenCalledWith("github");
 
     const firstInput = ipc.publishIssueTriage.mock.calls[0][0];
     await user.click(screen.getByRole("button", { name: "Retry failed actions" }));

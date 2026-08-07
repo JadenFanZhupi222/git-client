@@ -30,15 +30,18 @@ frontend workspace in `app/src/components/PrReviewWorkspace.tsx`.
 
 ## Provider boundary
 
-The agent loop is provider-neutral. `ModelProvider` returns canonical final-text or
-tool-call turns and exposes a descriptor with model capabilities. Provider adapters own
+The provider contract now lives in the shared `agent-runtime` crate. `ModelProvider`
+receives a normalized request and returns canonical final-text or tool-call turns plus
+usage. Its descriptor includes stable provider/model IDs, structured-output and tool
+capabilities, context/output limits, and usage support. Provider adapters own
 HTTP/message-format details only. Review JSON decoding and its fallback to plain-text
-summaries live in the shared `ReviewOutputCodec`. Tool execution, unique-read caching,
-budgets, patch-line validation, and traces remain in the orchestrator.
+summaries live in `ReviewOutputCodec`; Issue Triage uses its own domain codec over the
+same provider response. Tool execution, unique-read caching, budgets, patch-line
+validation, and traces remain in the PR orchestrator.
 
-The current production adapter is `DeepSeekProvider`. Future OpenAI, Anthropic, or local
-adapters should implement `ModelProvider` rather than adding provider branches to the
-orchestrator.
+The current production adapter is `DeepSeekProvider`, shared by PR Review and Issue
+Triage. Future OpenAI, Anthropic, or local adapters should implement `ModelProvider`
+rather than adding provider branches to either orchestrator.
 
 ## Security boundary
 
@@ -52,7 +55,16 @@ increase budgets. Credentials stay in the Rust backend and are never returned to
 The public workflow uses these codes: `AI_KEY_MISSING`, `GITHUB_TOKEN_MISSING`,
 `AUTH_FAILED`, `RATE_LIMITED`, `NETWORK_ERROR`, `PR_UPDATED`,
 `REVIEW_BUDGET_EXCEEDED`, `INVALID_MODEL_OUTPUT`, `CANCELLED`, and
-`REVIEW_PUBLISH_FAILED`.
+`REVIEW_PUBLISH_FAILED`. `AGENT_RESOURCE_BUSY` is returned when another run is
+already active for the same PR, even if the client generated a different run ID.
+
+Model requests retry only provider network and rate-limit failures, with three total
+attempts and bounded jittered exponential backoff. Authentication, truncated output,
+and invalid responses are not retried. Successful results expose actual usage, elapsed
+time, provider attempt count, and the same sanitized diagnostic ID stored in the trace.
+Agent failures and cancellations return that diagnostic ID through an Agent-specific
+IPC error contract; cancellation is shown as a terminal state rather than silently
+returning to file selection.
 
 ## Follow-up milestones
 

@@ -3,4 +3,4 @@ import type { IssueSnapshotDto } from "./IssueSnapshotDto";
 import type { IssueTriageProposalDto } from "./IssueTriageProposalDto";
 import type { ReviewUsageDto } from "./ReviewUsageDto";
 
-export type IssueTriageResultDto = { run_id: string, snapshot: IssueSnapshotDto, comments_analyzed: number, comments_truncated: boolean, proposal: IssueTriageProposalDto, usage: ReviewUsageDto, };
+export type IssueTriageResultDto = { run_id: string, snapshot: IssueSnapshotDto, comments_analyzed: number, comments_truncated: boolean, proposal: IssueTriageProposalDto, usage: ReviewUsageDto, model_id: string, duration_ms: number, diagnostic_id: string, provider_attempts: number, };

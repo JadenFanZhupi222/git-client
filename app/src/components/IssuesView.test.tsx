@@ -12,9 +12,10 @@ const ipc = vi.hoisted(() => ({
 vi.mock("../ipc", () => ipc);
 vi.mock("@tauri-apps/plugin-opener", () => ({ openUrl: vi.fn() }));
 vi.mock("./IssueTriageWorkspace", () => ({
-  IssueTriageWorkspace: (props: { onConfigureCredential: (kind: "deepseek") => void }) => (
+  IssueTriageWorkspace: (props: { onConfigureCredential: (kind: "deepseek") => void; onPublished?: () => void }) => (
     <div role="dialog" aria-label="AI Issue Triage test">
       <button onClick={() => props.onConfigureCredential("deepseek")}>Configure model</button>
+      <button onClick={() => props.onPublished?.()}>Simulate publish</button>
     </div>
   ),
 }));
@@ -70,5 +71,32 @@ describe("IssuesView", () => {
 
     await user.click(await screen.findByRole("button", { name: "Configure GitHub" }));
     expect(onConfigureCredential).toHaveBeenCalledWith("github");
+  });
+
+  it("refreshes the selected issue detail after triage publishes a comment", async () => {
+    const user = userEvent.setup();
+    render(<IssuesView remotes={[{ name: "origin", url: "https://github.com/acme/rocket.git" }]} preferredRemote="origin" onConfigureCredential={vi.fn()} />);
+
+    expect(await screen.findByText("Confirmed")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "AI Triage" }));
+    await screen.findByRole("dialog", { name: "AI Issue Triage test" });
+
+    ipc.getGithubIssueContext.mockResolvedValue({
+      issue: { ...issues[0], comments: 2 },
+      body: "Steps to reproduce",
+      comments: [
+        { author: "mei", body: "Confirmed", created_at: "2026-08-07T09:00:00Z", updated_at: "2026-08-07T09:00:00Z" },
+        { author: "lin", body: "Published by triage", created_at: "2026-08-07T10:00:00Z", updated_at: "2026-08-07T10:00:00Z" },
+      ],
+      comments_truncated: false,
+      available_labels: issues.flatMap((issue) => issue.labels),
+      similar_issues: [],
+      snapshot: { updated_at: "2026-08-07T10:00:00Z", comments: 2 },
+    });
+    await user.click(screen.getByRole("button", { name: "Simulate publish" }));
+
+    expect(await screen.findByText("Published by triage")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Comments (2)" })).toBeInTheDocument();
+    expect(ipc.listGithubIssues).toHaveBeenCalledTimes(2);
   });
 });
