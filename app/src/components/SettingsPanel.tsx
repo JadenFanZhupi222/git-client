@@ -383,7 +383,7 @@ export function SettingsPanel({
                         />
                         <PermissionDetail
                           label={t("settings.github.issuesPermission")}
-                          value={t("settings.github.readOnly")}
+                          value={t("settings.github.readWrite")}
                           description={t("settings.github.issuesReason")}
                         />
                       </dl>

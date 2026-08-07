@@ -234,6 +234,35 @@ pub struct IssueTriageResultDto {
     pub usage: ReviewUsageDto,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct IssueTriagePublishInputDto {
+    pub publish_id: String,
+    pub confirmed: bool,
+    pub target: IssueTargetDto,
+    pub expected_snapshot: IssueSnapshotDto,
+    pub labels: Vec<String>,
+    pub reply: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct IssueTriagePublishActionResultDto {
+    pub action_id: String,
+    pub kind: String,
+    pub label: Option<String>,
+    pub status: String,
+    pub error_code: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct IssueTriagePublishResultDto {
+    pub publish_id: String,
+    pub snapshot: Option<IssueSnapshotDto>,
+    pub actions: Vec<IssueTriagePublishActionResultDto>,
+}
+
 impl From<IssueRepositoryTargetDto> for review_agent::IssueRepositoryTarget {
     fn from(value: IssueRepositoryTargetDto) -> Self {
         Self {
@@ -296,6 +325,15 @@ impl From<review_agent::IssueSnapshot> for IssueSnapshotDto {
     }
 }
 
+impl From<IssueSnapshotDto> for review_agent::IssueSnapshot {
+    fn from(value: IssueSnapshotDto) -> Self {
+        Self {
+            updated_at: value.updated_at,
+            comments: value.comments,
+        }
+    }
+}
+
 impl From<review_agent::IssueContext> for IssueContextDto {
     fn from(value: review_agent::IssueContext) -> Self {
         Self {
@@ -351,6 +389,50 @@ impl From<review_agent::IssueTriageResult> for IssueTriageResultDto {
             comments_truncated: value.comments_truncated,
             proposal: value.proposal.into(),
             usage: value.usage.into(),
+        }
+    }
+}
+
+impl From<IssueTriagePublishInputDto> for review_agent::IssueTriagePublishInput {
+    fn from(value: IssueTriagePublishInputDto) -> Self {
+        Self {
+            publish_id: value.publish_id,
+            confirmed: value.confirmed,
+            target: value.target.into(),
+            expected_snapshot: value.expected_snapshot.into(),
+            labels: value.labels,
+            reply: value.reply,
+        }
+    }
+}
+
+impl From<review_agent::IssueTriagePublishActionResult> for IssueTriagePublishActionResultDto {
+    fn from(value: review_agent::IssueTriagePublishActionResult) -> Self {
+        Self {
+            action_id: value.action_id,
+            kind: match value.kind {
+                review_agent::IssueTriagePublishActionKind::Label => "label",
+                review_agent::IssueTriagePublishActionKind::Comment => "comment",
+            }
+            .into(),
+            label: value.label,
+            status: match value.status {
+                review_agent::IssueTriagePublishActionStatus::Applied => "applied",
+                review_agent::IssueTriagePublishActionStatus::AlreadyApplied => "already_applied",
+                review_agent::IssueTriagePublishActionStatus::Failed => "failed",
+            }
+            .into(),
+            error_code: value.error_code,
+        }
+    }
+}
+
+impl From<review_agent::IssueTriagePublishResult> for IssueTriagePublishResultDto {
+    fn from(value: review_agent::IssueTriagePublishResult) -> Self {
+        Self {
+            publish_id: value.publish_id,
+            snapshot: value.snapshot.map(Into::into),
+            actions: value.actions.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -570,6 +652,46 @@ mod review_dto_contract_tests {
         for forbidden in ["token", "key", "prompt", "content", "patch"] {
             assert!(!json.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn issue_publish_dtos_preserve_confirmation_and_stable_action_strings() {
+        let input = IssueTriagePublishInputDto {
+            publish_id: "batch-1".into(),
+            confirmed: true,
+            target: IssueTargetDto {
+                owner: "acme".into(),
+                repo: "rocket".into(),
+                issue_number: 7,
+            },
+            expected_snapshot: IssueSnapshotDto {
+                updated_at: "now".into(),
+                comments: 1,
+            },
+            labels: vec!["bug".into()],
+            reply: Some("Thanks".into()),
+        };
+        let domain = review_agent::IssueTriagePublishInput::from(input);
+        assert!(domain.confirmed);
+        assert_eq!(domain.labels, ["bug"]);
+
+        let result = IssueTriagePublishResultDto::from(review_agent::IssueTriagePublishResult {
+            publish_id: "batch-1".into(),
+            snapshot: Some(review_agent::IssueSnapshot {
+                updated_at: "later".into(),
+                comments: 2,
+            }),
+            actions: vec![review_agent::IssueTriagePublishActionResult {
+                action_id: "comment".into(),
+                kind: review_agent::IssueTriagePublishActionKind::Comment,
+                label: None,
+                status: review_agent::IssueTriagePublishActionStatus::AlreadyApplied,
+                error_code: None,
+            }],
+        });
+        assert_eq!(result.actions[0].kind, "comment");
+        assert_eq!(result.actions[0].status, "already_applied");
+        assert_public_shape_has_no_sensitive_fields(&serde_json::to_value(result).unwrap());
     }
 
     #[test]

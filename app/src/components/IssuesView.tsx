@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -40,6 +40,7 @@ export function IssuesView({
   const [detailError, setDetailError] = useState<IpcError | null>(null);
   const [triageOpen, setTriageOpen] = useState(false);
   const [compactDetailOpen, setCompactDetailOpen] = useState(false);
+  const selectedNumberRef = useRef<number | null>(null);
 
   const visibleIssues = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
@@ -62,6 +63,10 @@ export function IssuesView({
       setSelectedNumber(visibleIssues[0]?.number ?? null);
     }
   }, [selectedNumber, visibleIssues]);
+
+  useEffect(() => {
+    selectedNumberRef.current = selectedNumber;
+  }, [selectedNumber]);
 
   useEffect(() => {
     let alive = true;
@@ -103,6 +108,30 @@ export function IssuesView({
       if (isAlive()) setError(asIpcError(reason));
     } finally {
       if (isAlive()) setLoading(false);
+    }
+  }
+
+  async function openTriage() {
+    if (!remote || !context || detailLoading) return;
+    const issueNumber = context.issue.number;
+    setDetailLoading(true);
+    setDetailError(null);
+    try {
+      // Re-read the issue before accepting a cached triage result. The detail
+      // view may have been open for a while, so its snapshot is not sufficient
+      // to prove that a local result is still current.
+      const next = await getGithubIssueContext({
+        owner: remote.owner,
+        repo: remote.repo,
+        issue_number: issueNumber,
+      });
+      if (selectedNumberRef.current !== issueNumber) return;
+      setContext(next);
+      setTriageOpen(true);
+    } catch (reason) {
+      if (selectedNumberRef.current === issueNumber) setDetailError(asIpcError(reason));
+    } finally {
+      if (selectedNumberRef.current === issueNumber) setDetailLoading(false);
     }
   }
 
@@ -165,7 +194,7 @@ export function IssuesView({
                   return (
                     <li key={issue.number}>
                       <button
-                        onClick={() => { setSelectedNumber(issue.number); setCompactDetailOpen(true); }}
+                        onClick={() => { selectedNumberRef.current = issue.number; setSelectedNumber(issue.number); setCompactDetailOpen(true); }}
                         className={`w-full rounded-md px-3 py-2.5 text-left transition-colors ${selected ? "bg-accent/12 text-fg" : "text-fg-muted hover:bg-overlay hover:text-fg"}`}
                       >
                         <span className="flex items-start gap-2">
@@ -222,7 +251,7 @@ export function IssuesView({
                   <button onClick={() => void openUrl(context.issue.url)} className="rounded-md border border-line-strong px-2.5 py-1.5 text-xs text-fg-muted hover:bg-overlay hover:text-fg">
                     {t("issueWorkspace.openGithub")}
                   </button>
-                  <button onClick={() => setTriageOpen(true)} className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent">
+                  <button onClick={() => void openTriage()} className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent">
                     {t("issueWorkspace.aiTriage")}
                   </button>
                 </div>

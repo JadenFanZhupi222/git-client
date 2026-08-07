@@ -168,6 +168,8 @@ pub enum ReviewError {
     IssueNotFound,
     #[error("issue triage exceeded its input or output budget")]
     IssueTriageBudgetExceeded,
+    #[error("issue publication failed: {0}")]
+    IssuePublishFailed(String),
 }
 
 impl ReviewError {
@@ -186,6 +188,7 @@ impl ReviewError {
             Self::IssueUpdated => "ISSUE_UPDATED",
             Self::IssueNotFound => "ISSUE_NOT_FOUND",
             Self::IssueTriageBudgetExceeded => "ISSUE_TRIAGE_BUDGET_EXCEEDED",
+            Self::IssuePublishFailed(_) => "ISSUE_PUBLISH_FAILED",
         }
     }
 }

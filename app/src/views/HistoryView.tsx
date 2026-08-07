@@ -584,11 +584,11 @@ function MidColumn({
   return (
     <>
       <div className={`flex shrink-0 flex-col overflow-hidden ${focused ? "ring-1 ring-inset ring-accent/50" : ""}`} style={{ width: col.w }}>
-        <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
-          <CommitIcon width={13} height={13} />
-          <span>{t("history.commitDetail")}</span>
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-line px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
+          <CommitIcon width={13} height={13} className="shrink-0" />
+          <span className="whitespace-nowrap">{t("history.commitDetail")}</span>
           {commit && (
-            <div className="ml-auto flex items-center gap-1">
+            <div className="ml-auto flex shrink-0 items-center gap-1">
               <ResetMenu repo={repo} commitId={commit.id} label={commit.short_id} onDone={onResetDone} />
               {onCherryPick && (
                 <Button
@@ -597,7 +597,7 @@ function MidColumn({
                   onClick={onCherryPick}
                   disabled={busy}
                   title={t("history.cherryPickTitle")}
-                  className="normal-case tracking-normal"
+                  className="shrink-0 whitespace-nowrap normal-case tracking-normal"
                 >
                   Cherry-pick
                 </Button>
@@ -609,7 +609,7 @@ function MidColumn({
                   onClick={onRevert}
                   disabled={busy}
                   title={t("history.revertTitle")}
-                  className="normal-case tracking-normal"
+                  className="shrink-0 whitespace-nowrap normal-case tracking-normal"
                 >
                   Revert
                 </Button>
@@ -621,7 +621,7 @@ function MidColumn({
                   onClick={onRebase}
                   disabled={busy}
                   title={t("history.rebaseTitle")}
-                  className="normal-case tracking-normal"
+                  className="shrink-0 whitespace-nowrap normal-case tracking-normal"
                 >
                   {t("history.rebase")}
                 </Button>

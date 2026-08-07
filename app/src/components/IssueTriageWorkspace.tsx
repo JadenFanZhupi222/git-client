@@ -3,12 +3,15 @@ import {
   cancelIssueTriage,
   listReviewModels,
   onReviewProgress,
+  publishIssueTriage,
   startIssueTriage,
   type IpcError,
 } from "../ipc";
 import type {
   IssueContextDto,
+  IssueSnapshotDto,
   IssueTargetDto,
+  IssueTriagePublishResultDto,
   IssueTriageResultDto,
   ReviewLanguageDto,
   ReviewModelOptionDto,
@@ -20,7 +23,7 @@ import { CheckIcon, CloseIcon, SpinnerIcon } from "./icons";
 const CONSENT_KEY = "issue-triage-consent-v1";
 const CACHE_PREFIX = "issue-triage-result-v1";
 type CredentialKind = "deepseek" | "github";
-type Phase = "select" | "running" | "results";
+type Phase = "select" | "running" | "results" | "confirm" | "publishing" | "publish_result";
 
 export function IssueTriageWorkspace({
   target,
@@ -46,11 +49,19 @@ export function IssueTriageWorkspace({
   const [outputLanguage, setOutputLanguage] = useState<ReviewLanguageDto>(lang === "zh" ? "simplified_chinese" : "english");
   const [consented, setConsented] = useState(() => localStorage.getItem(CONSENT_KEY) === "accepted");
   const [progress, setProgress] = useState<ReviewProgressEventDto | null>(null);
-  const [result, setResult] = useState<IssueTriageResultDto | null>(() => loadCachedResult(target, context));
+  const [initialCache] = useState(() => loadCachedResult(target, context));
+  const [result, setResult] = useState<IssueTriageResultDto | null>(initialCache.result);
+  const [cacheStale, setCacheStale] = useState(initialCache.stale);
   const [error, setError] = useState<IpcError | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
+  const [replySelected, setReplySelected] = useState(false);
+  const [replyDraft, setReplyDraft] = useState("");
+  const [publishId, setPublishId] = useState<string | null>(null);
+  const [publishSnapshot, setPublishSnapshot] = useState<IssueSnapshotDto | null>(null);
+  const [publishResult, setPublishResult] = useState<IssueTriagePublishResultDto | null>(null);
 
-  const busy = phase === "running";
+  const busy = phase === "running" || phase === "publishing";
   const estimatedTokens = useMemo(() => {
     const bytes = new TextEncoder().encode(JSON.stringify(context)).length;
     return Math.ceil(bytes / 3) + 900;
@@ -80,6 +91,16 @@ export function IssueTriageWorkspace({
       })
       .catch((reason) => { if (mountedRef.current) setError(asIpcError(reason)); });
   }, []);
+
+  useEffect(() => {
+    if (!result) return;
+    setSelectedLabels([]);
+    setReplySelected(false);
+    setReplyDraft(result.proposal.suggested_reply);
+    setPublishId(null);
+    setPublishSnapshot(result.snapshot);
+    setPublishResult(null);
+  }, [result?.run_id]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -148,6 +169,7 @@ export function IssueTriageWorkspace({
       cleanupListener();
       if (!mountedRef.current) return;
       setResult(next);
+      setCacheStale(false);
       saveCachedResult(target, next);
       setPhase("results");
     } catch (reason) {
@@ -178,8 +200,48 @@ export function IssueTriageWorkspace({
   function analyzeAgain() {
     clearCachedResult(target);
     setResult(null);
+    setCacheStale(false);
     setError(null);
     setPhase("select");
+  }
+
+  function toggleLabel(label: string) {
+    setSelectedLabels((current) => current.includes(label)
+      ? current.filter((item) => item !== label)
+      : [...current, label]);
+  }
+
+  function reviewPublication() {
+    if (selectedLabels.length === 0 && (!replySelected || !replyDraft.trim())) return;
+    setError(null);
+    setPhase("confirm");
+  }
+
+  async function publishSelection() {
+    if (!result || !publishSnapshot || busy) return;
+    const nextPublishId = publishId ?? createPublishId();
+    setPublishId(nextPublishId);
+    setError(null);
+    setPhase("publishing");
+    try {
+      const next = await publishIssueTriage({
+        publish_id: nextPublishId,
+        confirmed: true,
+        target,
+        expected_snapshot: publishSnapshot,
+        labels: selectedLabels,
+        reply: replySelected && replyDraft.trim() ? replyDraft.trim() : null,
+      });
+      if (!mountedRef.current) return;
+      setPublishResult(next);
+      if (next.snapshot) setPublishSnapshot(next.snapshot);
+      clearCachedResult(target);
+      setPhase("publish_result");
+    } catch (reason) {
+      if (!mountedRef.current) return;
+      setError(asIpcError(reason));
+      setPhase("confirm");
+    }
   }
 
   return (
@@ -236,6 +298,11 @@ export function IssueTriageWorkspace({
                 <h3 className="text-sm font-semibold text-fg">{context.issue.title}</h3>
                 <p className="mt-2 text-xs leading-5 text-fg-muted">{t("issueTriage.readOnly")}</p>
               </div>
+              {cacheStale && (
+                <p role="status" className="mt-4 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs text-warning">
+                  {t("issueTriage.cacheStale")}
+                </p>
+              )}
               {!consented && (
                 <label className="mt-4 flex items-start gap-2 rounded-md border border-accent/40 bg-accent/10 p-3 text-xs text-fg">
                   <input type="checkbox" className="mt-0.5" checked={false} onChange={acceptConsent} />
@@ -254,7 +321,30 @@ export function IssueTriageWorkspace({
             </section>
           )}
 
-          {phase === "results" && result && <TriageResults result={result} />}
+          {phase === "results" && result && (
+            <TriageResults
+              result={result}
+              currentLabels={context.issue.labels.map((label) => label.name)}
+              selectedLabels={selectedLabels}
+              onToggleLabel={toggleLabel}
+              replySelected={replySelected}
+              onReplySelected={setReplySelected}
+              replyDraft={replyDraft}
+              onReplyDraft={setReplyDraft}
+            />
+          )}
+          {phase === "confirm" && result && (
+            <PublishConfirmation labels={selectedLabels} reply={replySelected ? replyDraft.trim() : ""} />
+          )}
+          {phase === "publishing" && (
+            <section className="grid min-h-56 place-items-center text-center" aria-live="polite">
+              <div className="flex flex-col items-center">
+                <SpinnerIcon width={24} height={24} />
+                <p className="mt-3 text-sm text-fg">{t("issueTriage.publish.running")}</p>
+              </div>
+            </section>
+          )}
+          {phase === "publish_result" && publishResult && <PublishResults result={publishResult} />}
           {error && <ErrorNotice error={error} onConfigureCredential={onConfigureCredential} onRetry={error.code === "ISSUE_UPDATED" ? onClose : undefined} />}
         </main>
 
@@ -263,9 +353,30 @@ export function IssueTriageWorkspace({
             <button disabled={cancelling} onClick={cancelTriage} className="rounded-md border border-danger/50 px-3 py-1.5 text-xs text-danger disabled:opacity-50">{cancelling ? t("issueTriage.cancelling") : t("issueTriage.cancel")}</button>
           ) : phase === "results" ? (
             <>
+              <button onClick={onClose} className="mr-auto rounded-md px-3 py-1.5 text-xs text-fg-muted hover:bg-overlay hover:text-fg">{t("issueTriage.done")}</button>
               <button onClick={analyzeAgain} className="rounded-md border border-line-strong px-3 py-1.5 text-xs text-fg-muted hover:bg-overlay hover:text-fg">{t("issueTriage.again")}</button>
-              <button onClick={onClose} className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent">{t("issueTriage.done")}</button>
+              <button
+                disabled={selectedLabels.length === 0 && (!replySelected || !replyDraft.trim())}
+                onClick={reviewPublication}
+                className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-40"
+              >{t("issueTriage.publish.review")}</button>
             </>
+          ) : phase === "confirm" ? (
+            <>
+              <button onClick={() => setPhase("results")} className="rounded-md border border-line-strong px-3 py-1.5 text-xs text-fg-muted hover:bg-overlay hover:text-fg">{t("issueTriage.publish.back")}</button>
+              <button disabled={error?.code === "ISSUE_UPDATED"} onClick={() => void publishSelection()} className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-40">{t("issueTriage.publish.confirm")}</button>
+            </>
+          ) : phase === "publishing" ? (
+            <button disabled className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent opacity-50">{t("issueTriage.publish.running")}</button>
+          ) : phase === "publish_result" && publishResult ? (
+            publishResult.actions.some((action) => action.status === "failed") ? (
+              <>
+                <button onClick={onClose} className="rounded-md border border-line-strong px-3 py-1.5 text-xs text-fg-muted hover:bg-overlay hover:text-fg">{t("issueTriage.done")}</button>
+                <button disabled={!publishResult.snapshot} onClick={() => void publishSelection()} className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-40">{t("issueTriage.publish.retry")}</button>
+              </>
+            ) : (
+              <button onClick={onClose} className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent">{t("issueTriage.done")}</button>
+            )
           ) : (
             <button disabled={!consented || !selectedModelId} onClick={startTriage} className="rounded-md bg-accent px-4 py-1.5 text-xs font-semibold text-on-accent disabled:opacity-40">{t("issueTriage.start")}</button>
           )}
@@ -275,7 +386,25 @@ export function IssueTriageWorkspace({
   );
 }
 
-function TriageResults({ result }: { result: IssueTriageResultDto }) {
+function TriageResults({
+  result,
+  currentLabels,
+  selectedLabels,
+  onToggleLabel,
+  replySelected,
+  onReplySelected,
+  replyDraft,
+  onReplyDraft,
+}: {
+  result: IssueTriageResultDto;
+  currentLabels: string[];
+  selectedLabels: string[];
+  onToggleLabel: (label: string) => void;
+  replySelected: boolean;
+  onReplySelected: (selected: boolean) => void;
+  replyDraft: string;
+  onReplyDraft: (value: string) => void;
+}) {
   const t = useT();
   const proposal = result.proposal;
   return (
@@ -296,13 +425,44 @@ function TriageResults({ result }: { result: IssueTriageResultDto }) {
 
       <div className="mt-4 grid gap-3">
         <ResultSection title={t("issueTriage.suggestedLabels")} empty={t("issueTriage.none")}>
-          {proposal.suggested_labels.length > 0 && <div className="flex flex-wrap gap-1.5">{proposal.suggested_labels.map((label) => <span key={label} className="rounded-full border border-line-strong px-2 py-0.5 text-[11px] text-fg-muted">{label}</span>)}</div>}
+          {proposal.suggested_labels.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {proposal.suggested_labels.map((label) => {
+                const present = currentLabels.includes(label);
+                return present ? (
+                  <span key={label} className="rounded-full border border-line px-2 py-1 text-[11px] text-fg-subtle">
+                    {label} · {t("issueTriage.publish.alreadyPresent")}
+                  </span>
+                ) : (
+                  <label key={label} className="flex cursor-pointer items-center gap-2 rounded-md border border-line-strong px-2.5 py-1.5 text-xs text-fg-muted hover:bg-overlay">
+                    <input type="checkbox" checked={selectedLabels.includes(label)} onChange={() => onToggleLabel(label)} />
+                    <span>{t("issueTriage.publish.addLabel", { label })}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </ResultSection>
         <ResultSection title={t("issueTriage.duplicates")} empty={t("issueTriage.none")}>
           {proposal.suspected_duplicate_numbers.length > 0 && <p className="font-mono text-xs text-fg">{proposal.suspected_duplicate_numbers.map((number) => `#${number}`).join(", ")}</p>}
         </ResultSection>
         <ResultSection title={t("issueTriage.reply")} empty={t("issueTriage.none")}>
-          {proposal.suggested_reply && <p className="whitespace-pre-wrap text-xs leading-5 text-fg-muted">{proposal.suggested_reply}</p>}
+          {proposal.suggested_reply && (
+            <div>
+              <label className="flex items-center gap-2 text-xs font-medium text-fg">
+                <input type="checkbox" checked={replySelected} onChange={(event) => onReplySelected(event.currentTarget.checked)} />
+                <span>{t("issueTriage.publish.postReply")}</span>
+              </label>
+              <textarea
+                aria-label={t("issueTriage.publish.replyDraft")}
+                value={replyDraft}
+                maxLength={20_000}
+                onChange={(event) => onReplyDraft(event.currentTarget.value)}
+                className="field mt-2 min-h-28 w-full resize-y rounded-md border border-line-strong bg-canvas px-3 py-2 text-xs leading-5 text-fg"
+              />
+              <p className="mt-1 text-right font-mono text-[10px] text-fg-subtle">{replyDraft.length.toLocaleString()} / 20,000</p>
+            </div>
+          )}
         </ResultSection>
         <ResultSection title={t("issueTriage.rationale")} empty={t("issueTriage.none")}>
           {proposal.rationale.length > 0 && <ul className="grid gap-1 pl-4 text-xs leading-5 text-fg-muted">{proposal.rationale.map((item, index) => <li key={`${index}-${item}`} className="list-disc">{item}</li>)}</ul>}
@@ -314,6 +474,63 @@ function TriageResults({ result }: { result: IssueTriageResultDto }) {
         {result.comments_truncated ? ` · ${t("issueTriage.truncated")}` : ""}
       </p>
       <p className="mt-1 text-[11px] text-fg-subtle">{t("issueTriage.savedLocally")}</p>
+    </section>
+  );
+}
+
+function PublishConfirmation({ labels, reply }: { labels: string[]; reply: string }) {
+  const t = useT();
+  return (
+    <section aria-labelledby="issue-publish-confirm-title">
+      <h3 id="issue-publish-confirm-title" className="text-base font-semibold text-fg">{t("issueTriage.publish.confirmTitle")}</h3>
+      <p className="mt-1 max-w-2xl text-xs leading-5 text-fg-muted">{t("issueTriage.publish.confirmDetail")}</p>
+      <div className="mt-5 divide-y divide-line rounded-md border border-line-strong">
+        {labels.map((label) => (
+          <div key={label} className="flex items-center justify-between gap-4 px-4 py-3 text-xs">
+            <span className="text-fg-muted">{t("issueTriage.publish.labelAction")}</span>
+            <span className="rounded-full border border-line-strong px-2 py-0.5 font-medium text-fg">{label}</span>
+          </div>
+        ))}
+        {reply && (
+          <div className="px-4 py-3">
+            <p className="text-xs text-fg-muted">{t("issueTriage.publish.commentAction")}</p>
+            <p className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5 text-fg">{reply}</p>
+          </div>
+        )}
+      </div>
+      <p className="mt-4 rounded-md border border-warning/40 bg-warning/10 p-3 text-xs leading-5 text-warning">{t("issueTriage.publish.irreversible")}</p>
+    </section>
+  );
+}
+
+function PublishResults({ result }: { result: IssueTriagePublishResultDto }) {
+  const t = useT();
+  const failed = result.actions.some((action) => action.status === "failed");
+  return (
+    <section aria-labelledby="issue-publish-result-title">
+      <div className="flex items-start gap-3">
+        <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${failed ? "bg-warning/12 text-warning" : "bg-success/12 text-success"}`}>
+          <CheckIcon width={18} height={18} />
+        </div>
+        <div>
+          <h3 id="issue-publish-result-title" className="text-base font-semibold text-fg">{failed ? t("issueTriage.publish.partialTitle") : t("issueTriage.publish.successTitle")}</h3>
+          <p className="mt-1 text-xs leading-5 text-fg-muted">{failed ? t("issueTriage.publish.partialDetail") : t("issueTriage.publish.successDetail")}</p>
+        </div>
+      </div>
+      <ul className="mt-5 divide-y divide-line rounded-md border border-line-strong">
+        {result.actions.map((action) => (
+          <li key={action.action_id} className="flex items-center gap-3 px-4 py-3 text-xs">
+            <span className="min-w-0 flex-1 text-fg">
+              <span className="block">{action.kind === "label" ? t("issueTriage.publish.addLabel", { label: action.label ?? "" }) : t("issueTriage.publish.postReply")}</span>
+              {action.error_code && <span className="mt-0.5 block text-[11px] text-fg-subtle">{errorMessage({ code: action.error_code, message: action.error_code, recoverable: true }, t)}</span>}
+            </span>
+            <span className={action.status === "failed" ? "text-danger" : action.status === "already_applied" ? "text-fg-subtle" : "text-success"}>
+              {t(`issueTriage.publish.status.${action.status}` as Parameters<typeof t>[0])}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {failed && !result.snapshot && <p className="mt-4 text-xs leading-5 text-danger">{t("issueTriage.publish.refreshRequired")}</p>}
     </section>
   );
 }
@@ -349,7 +566,7 @@ function progressLabel(progress: ReviewProgressEventDto | null, t: ReturnType<ty
 }
 
 function errorMessage(error: IpcError, t: ReturnType<typeof useT>) {
-  const known = ["AI_KEY_MISSING", "GITHUB_TOKEN_MISSING", "ISSUE_UPDATED", "ISSUE_NOT_FOUND", "ISSUE_TRIAGE_BUDGET_EXCEEDED", "NETWORK_ERROR", "RATE_LIMITED", "AUTH_FAILED", "INVALID_MODEL_OUTPUT", "INVALID_REVIEW_MODEL", "CANCELLED"];
+  const known = ["AI_KEY_MISSING", "GITHUB_TOKEN_MISSING", "ISSUE_UPDATED", "ISSUE_NOT_FOUND", "ISSUE_TRIAGE_BUDGET_EXCEEDED", "ISSUE_PUBLISH_FAILED", "NETWORK_ERROR", "RATE_LIMITED", "AUTH_FAILED", "INVALID_MODEL_OUTPUT", "INVALID_REVIEW_MODEL", "CANCELLED"];
   return known.includes(error.code) ? t(`issueTriage.error.${error.code}` as Parameters<typeof t>[0]) : error.message;
 }
 
@@ -362,23 +579,27 @@ function createRunId() {
   return globalThis.crypto?.randomUUID?.() ?? `issue-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function createPublishId() {
+  return globalThis.crypto?.randomUUID?.() ?? `publish-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function cacheKey(target: IssueTargetDto) {
   return `${CACHE_PREFIX}:${target.owner}/${target.repo}#${target.issue_number}`;
 }
 
-function loadCachedResult(target: IssueTargetDto, context: IssueContextDto): IssueTriageResultDto | null {
+function loadCachedResult(target: IssueTargetDto, context: IssueContextDto): { result: IssueTriageResultDto | null; stale: boolean } {
   try {
     const value = localStorage.getItem(cacheKey(target));
-    if (!value) return null;
+    if (!value) return { result: null, stale: false };
     const result = JSON.parse(value) as IssueTriageResultDto;
     if (result.snapshot.updated_at !== context.snapshot.updated_at || result.snapshot.comments !== context.snapshot.comments) {
       localStorage.removeItem(cacheKey(target));
-      return null;
+      return { result: null, stale: true };
     }
-    return result;
+    return { result, stale: false };
   } catch {
     localStorage.removeItem(cacheKey(target));
-    return null;
+    return { result: null, stale: false };
   }
 }
 

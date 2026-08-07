@@ -54,7 +54,9 @@ describe("IssuesView", () => {
     expect(screen.getAllByText("Document setup").length).toBeGreaterThan(0);
 
     await user.clear(screen.getByPlaceholderText("Search open issues"));
+    const contextReadsBeforeTriage = ipc.getGithubIssueContext.mock.calls.length;
     await user.click(await screen.findByRole("button", { name: "AI Triage" }));
+    expect(ipc.getGithubIssueContext).toHaveBeenCalledTimes(contextReadsBeforeTriage + 1);
     await user.click(screen.getByRole("button", { name: "Configure model" }));
     expect(onConfigureCredential).toHaveBeenCalledWith("deepseek");
     expect(screen.queryByRole("dialog", { name: "AI Issue Triage test" })).not.toBeInTheDocument();

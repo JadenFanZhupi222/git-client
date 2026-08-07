@@ -207,6 +207,7 @@ The current repository still contains older Chinese handoff notes and some Chine
 
 - `docs/HANDOFF.md` records the latest implementation state and next-step context.
 - `docs/HANDOFF-pr-review-agent.md` records the AI Review implementation and follow-up roadmap.
+- `docs/HANDOFF-issue-triage-agent.md` records Issue Triage, human-confirmed publishing, safety boundaries, and the manual acceptance checklist.
 - `ARCHITECTURE.md` contains the original full architecture write-up. Parts of it are older than the current codebase.
 - `PRODUCT.md` describes product direction.
 - `docs/superpowers/specs/` and `docs/superpowers/plans/` contain feature-level design and implementation notes.

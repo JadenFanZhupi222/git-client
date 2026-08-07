@@ -2,14 +2,16 @@ use crate::credentials::read_credential;
 use async_trait::async_trait;
 use ipc_types::{
     CredentialKindDto, IpcError, IssueContextDto, IssueRepositoryTargetDto, IssueSummaryDto,
-    IssueTargetDto, IssueTriageInputDto, IssueTriageResultDto, PublishedReviewDto,
-    ReviewModelOptionDto, ReviewPreflightDto, ReviewProgressEventDto, ReviewRunInputDto,
-    ReviewRunResultDto, ReviewTargetDto, SubmitReviewDto,
+    IssueTargetDto, IssueTriageInputDto, IssueTriagePublishInputDto, IssueTriagePublishResultDto,
+    IssueTriageResultDto, PublishedReviewDto, ReviewModelOptionDto, ReviewPreflightDto,
+    ReviewProgressEventDto, ReviewRunInputDto, ReviewRunResultDto, ReviewTargetDto,
+    SubmitReviewDto,
 };
 use review_agent::{
     CancelSignal, DeepSeekIssueTriageModel, DeepSeekProvider, GithubIssueSource,
-    GithubReviewSource, IssueSource, IssueTriageModel, IssueTriageOrchestrator, ProgressSink,
-    ProgressUpdate, ReviewOrchestrator, ReviewSource, SanitizedTraceStore,
+    GithubReviewSource, IssuePublicationSource, IssueSource, IssueTriageModel,
+    IssueTriageOrchestrator, IssueTriagePublisher, ProgressSink, ProgressUpdate,
+    ReviewOrchestrator, ReviewSource, SanitizedTraceStore,
 };
 use std::collections::{HashMap, VecDeque};
 use std::sync::{
@@ -202,6 +204,10 @@ trait IssueBackendFactory: Send + Sync {
         model_id: &str,
         key: String,
     ) -> Result<Box<dyn IssueTriageModel>, review_agent::ReviewError>;
+    fn issue_publisher(
+        &self,
+        token: String,
+    ) -> Result<Box<dyn IssuePublicationSource>, review_agent::ReviewError>;
 }
 
 struct IssueCommandService<'a> {
@@ -307,6 +313,23 @@ impl<'a> IssueCommandService<'a> {
             Err(_) => self.progress(&run_id, "failed"),
         }
         result
+    }
+
+    async fn publish(
+        &self,
+        input: IssueTriagePublishInputDto,
+    ) -> Result<IssueTriagePublishResultDto, IpcError> {
+        let token = self
+            .credentials
+            .read(CredentialKindDto::Github)
+            .await
+            .map_err(|error| map_review_credential_error(CredentialKindDto::Github, error))?;
+        let source = self.factory.issue_publisher(token).map_err(review_error)?;
+        Ok(IssueTriagePublisher::new(source.as_ref())
+            .publish(input.into())
+            .await
+            .map_err(review_error)?
+            .into())
     }
 
     fn cancel(&self, run_id: &str) {
@@ -428,8 +451,10 @@ pub(crate) fn review_error(error: review_agent::ReviewError) -> IpcError {
         review_agent::ReviewError::RateLimited
             | review_agent::ReviewError::NetworkError(_)
             | review_agent::ReviewError::PrUpdated
+            | review_agent::ReviewError::IssueUpdated
             | review_agent::ReviewError::Cancelled
             | review_agent::ReviewError::ReviewPublishFailed(_)
+            | review_agent::ReviewError::IssuePublishFailed(_)
     );
     IpcError {
         code: error.code().into(),
@@ -439,6 +464,7 @@ pub(crate) fn review_error(error: review_agent::ReviewError) -> IpcError {
                 "The model returned invalid review data".into()
             }
             review_agent::ReviewError::ReviewPublishFailed(_) => "Review publication failed".into(),
+            review_agent::ReviewError::IssuePublishFailed(_) => "Issue publication failed".into(),
             other => other.to_string(),
         },
         recoverable,
@@ -525,6 +551,13 @@ impl IssueBackendFactory for ProductionBackendFactory {
         Ok(Box::new(DeepSeekIssueTriageModel::new_with_model(
             key, model_id,
         )?))
+    }
+
+    fn issue_publisher(
+        &self,
+        token: String,
+    ) -> Result<Box<dyn IssuePublicationSource>, review_agent::ReviewError> {
+        Ok(Box::new(GithubIssueSource::new(token)?))
     }
 }
 
@@ -675,6 +708,20 @@ pub(crate) fn cancel_issue_triage(state: tauri::State<'_, ReviewRunRegistry>, ru
         &state,
     )
     .cancel(&run_id);
+}
+
+#[tauri::command]
+pub(crate) async fn publish_issue_triage(
+    input: IssueTriagePublishInputDto,
+) -> Result<IssueTriagePublishResultDto, IpcError> {
+    IssueCommandService::new(
+        &KeyringCredentialReader,
+        &ProductionBackendFactory,
+        &NoopProgressEmitter,
+        &ReviewRunRegistry::default(),
+    )
+    .publish(input)
+    .await
 }
 
 #[cfg(test)]
@@ -1283,6 +1330,33 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl IssuePublicationSource for FakeIssueSource {
+        async fn current_snapshot(
+            &self,
+            _: &review_agent::IssueTarget,
+        ) -> Result<review_agent::IssueSnapshot, review_agent::ReviewError> {
+            Ok(self.context.snapshot.clone())
+        }
+
+        async fn add_label(
+            &self,
+            _: &review_agent::IssueTarget,
+            _: &str,
+        ) -> Result<(), review_agent::ReviewError> {
+            Ok(())
+        }
+
+        async fn ensure_comment(
+            &self,
+            _: &review_agent::IssueTarget,
+            _: &str,
+            _: &str,
+        ) -> Result<review_agent::IssueMutationOutcome, review_agent::ReviewError> {
+            Ok(review_agent::IssueMutationOutcome::Applied)
+        }
+    }
+
     struct FakeIssueModel;
 
     #[async_trait]
@@ -1330,6 +1404,13 @@ mod tests {
             _: String,
         ) -> Result<Box<dyn IssueTriageModel>, review_agent::ReviewError> {
             Ok(Box::new(FakeIssueModel))
+        }
+
+        fn issue_publisher(
+            &self,
+            _: String,
+        ) -> Result<Box<dyn IssuePublicationSource>, review_agent::ReviewError> {
+            Ok(Box::new(self.source.clone()))
         }
     }
 
@@ -1411,6 +1492,34 @@ mod tests {
             ["loading_issue", "analyzing_issue", "completed"]
         );
         assert!(registry.register("issue-success").is_ok());
+    }
+
+    #[tokio::test]
+    async fn issue_service_publishes_only_an_explicit_confirmed_batch() {
+        let factory = fake_issue_factory();
+        let registry = ReviewRunRegistry::default();
+        let service =
+            IssueCommandService::new(&FakeCredentials, &factory, &NoopProgressEmitter, &registry);
+        let result = service
+            .publish(IssueTriagePublishInputDto {
+                publish_id: "batch-1".into(),
+                confirmed: true,
+                target: IssueTargetDto {
+                    owner: "acme".into(),
+                    repo: "rocket".into(),
+                    issue_number: 7,
+                },
+                expected_snapshot: factory.source.context.snapshot.clone().into(),
+                labels: vec![],
+                reply: Some("Thanks for the report.".into()),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.publish_id, "batch-1");
+        assert_eq!(result.actions.len(), 1);
+        assert_eq!(result.actions[0].kind, "comment");
+        assert_eq!(result.actions[0].status, "applied");
     }
 
     #[test]

@@ -7,6 +7,7 @@ import { IssueTriageWorkspace } from "./IssueTriageWorkspace";
 const ipc = vi.hoisted(() => ({
   listReviewModels: vi.fn(),
   onReviewProgress: vi.fn(),
+  publishIssueTriage: vi.fn(),
   startIssueTriage: vi.fn(),
   cancelIssueTriage: vi.fn(),
 }));
@@ -49,6 +50,14 @@ describe("IssueTriageWorkspace", () => {
     ipc.onReviewProgress.mockResolvedValue(vi.fn());
     ipc.startIssueTriage.mockResolvedValue(result);
     ipc.cancelIssueTriage.mockResolvedValue(undefined);
+    ipc.publishIssueTriage.mockResolvedValue({
+      publish_id: "publish-1",
+      snapshot: { updated_at: "2026-08-07T10:00:00Z", comments: 2 },
+      actions: [
+        { action_id: "label:priority:high", kind: "label", label: "priority:high", status: "applied", error_code: null },
+        { action_id: "comment", kind: "comment", label: null, status: "applied", error_code: null },
+      ],
+    });
   });
 
   it("requires consent, pins the issue snapshot, and renders suggestions without a write action", async () => {
@@ -85,5 +94,87 @@ describe("IssueTriageWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Start triage" }));
     await user.click(await screen.findByRole("button", { name: "Open settings" }));
     expect(onConfigureCredential).toHaveBeenCalledWith("deepseek");
+  });
+
+  it("discards a cached result when the freshly loaded issue snapshot changed", async () => {
+    localStorage.setItem("issue-triage-result-v1:acme/rocket#7", JSON.stringify({
+      ...result,
+      snapshot: { updated_at: "2026-08-06T08:00:00Z", comments: 0 },
+    }));
+    localStorage.setItem("issue-triage-consent-v1", "accepted");
+
+    render(<IssueTriageWorkspace target={target} context={context} onClose={vi.fn()} onConfigureCredential={vi.fn()} />);
+
+    expect(await screen.findByText("The issue changed since the saved result was created. The old result was discarded; run triage again.")).toBeInTheDocument();
+    expect(screen.queryByText("A reproducible launch crash.")).not.toBeInTheDocument();
+    expect(localStorage.getItem("issue-triage-result-v1:acme/rocket#7")).toBeNull();
+    expect(screen.getByRole("button", { name: "Start triage" })).toBeEnabled();
+  });
+
+  it("publishes only explicitly selected actions after an exact confirmation", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("issue-triage-consent-v1", "accepted");
+    render(<IssueTriageWorkspace target={target} context={context} onClose={vi.fn()} onConfigureCredential={vi.fn()} />);
+
+    await user.click(await screen.findByRole("button", { name: "Start triage" }));
+    await screen.findByText("A reproducible launch crash.");
+    const review = screen.getByRole("button", { name: "Review selected actions" });
+    expect(review).toBeDisabled();
+
+    await user.click(screen.getByRole("checkbox", { name: "Add label: priority:high" }));
+    await user.click(screen.getByRole("checkbox", { name: "Post the reply draft" }));
+    await user.click(review);
+
+    expect(screen.getByRole("heading", { name: "Confirm GitHub changes" })).toBeInTheDocument();
+    expect(ipc.publishIssueTriage).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Publish selected actions" }));
+
+    expect(await screen.findByRole("heading", { name: "Selected actions published" })).toBeInTheDocument();
+    expect(ipc.publishIssueTriage).toHaveBeenCalledWith(expect.objectContaining({
+      confirmed: true,
+      target,
+      expected_snapshot: result.snapshot,
+      labels: ["priority:high"],
+      reply: result.proposal.suggested_reply,
+      publish_id: expect.any(String),
+    }));
+  });
+
+  it("retries a partial result with the same batch id and returned snapshot", async () => {
+    const partialSnapshot = { updated_at: "2026-08-07T10:00:00Z", comments: 2 };
+    ipc.publishIssueTriage
+      .mockResolvedValueOnce({
+        publish_id: "ignored-by-client",
+        snapshot: partialSnapshot,
+        actions: [
+          { action_id: "label:priority:high", kind: "label", label: "priority:high", status: "failed", error_code: "NETWORK_ERROR" },
+          { action_id: "comment", kind: "comment", label: null, status: "applied", error_code: null },
+        ],
+      })
+      .mockResolvedValueOnce({
+        publish_id: "ignored-by-client",
+        snapshot: { updated_at: "2026-08-07T11:00:00Z", comments: 2 },
+        actions: [
+          { action_id: "label:priority:high", kind: "label", label: "priority:high", status: "applied", error_code: null },
+          { action_id: "comment", kind: "comment", label: null, status: "already_applied", error_code: null },
+        ],
+      });
+    const user = userEvent.setup();
+    localStorage.setItem("issue-triage-consent-v1", "accepted");
+    render(<IssueTriageWorkspace target={target} context={context} onClose={vi.fn()} onConfigureCredential={vi.fn()} />);
+
+    await user.click(await screen.findByRole("button", { name: "Start triage" }));
+    await user.click(await screen.findByRole("checkbox", { name: "Add label: priority:high" }));
+    await user.click(screen.getByRole("checkbox", { name: "Post the reply draft" }));
+    await user.click(screen.getByRole("button", { name: "Review selected actions" }));
+    await user.click(screen.getByRole("button", { name: "Publish selected actions" }));
+    await screen.findByRole("heading", { name: "Some actions need attention" });
+
+    const firstInput = ipc.publishIssueTriage.mock.calls[0][0];
+    await user.click(screen.getByRole("button", { name: "Retry failed actions" }));
+    await screen.findByRole("heading", { name: "Selected actions published" });
+    const secondInput = ipc.publishIssueTriage.mock.calls[1][0];
+    expect(secondInput.publish_id).toBe(firstInput.publish_id);
+    expect(secondInput.expected_snapshot).toEqual(partialSnapshot);
   });
 });

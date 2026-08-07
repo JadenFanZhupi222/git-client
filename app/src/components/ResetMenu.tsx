@@ -52,14 +52,14 @@ export function ResetMenu({
   }
 
   return (
-    <div className="relative">
+    <div className="relative shrink-0">
       <Button
         variant="secondary"
         size="chip"
         onClick={() => (open ? close() : setOpen(true))}
         disabled={busy}
         title={t("reset.btnTitle")}
-        className="normal-case tracking-normal"
+        className="whitespace-nowrap normal-case tracking-normal"
       >
         {t("reset.label")}
       </Button>

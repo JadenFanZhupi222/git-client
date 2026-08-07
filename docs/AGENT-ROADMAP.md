@@ -1,6 +1,6 @@
 # Agent 下一阶段计划
 
-> 进度更新（2026-08-07）：由于暂时没有第二个模型凭据，A2 延后；A3「GitHub Issue 分诊（只读）」已在 `codex/issue-triage-agent` 实现。它复用当前模型目录与 DeepSeek 凭据，但工作流只依赖 `IssueTriageModel` 接口，后续可接入其他 provider。下一刀应先做真实环境验收，再决定进入 A4 人工确认发布，或回到 A1/A2 完善 provider 能力目录。
+> 进度更新（2026-08-07）：由于暂时没有第二个模型凭据，A2 延后；A3「GitHub Issue 分诊（只读）」与 A4「人工确认发布」已在 `codex/issue-triage-agent` 完成实现与自动化收尾。发布仅允许添加已有标签和发表评论，默认不选择动作，后端再次校验快照，并以稳定批次 ID、逐项结果和评论标记保证安全重试；不支持移除/创建标签、指派、关闭或锁定。完整交接见 `HANDOFF-issue-triage-agent.md`。合并前只剩测试仓库中的真实凭据/桌面交互验收，随后可进入 A5，或回到 A1/A2 完善 provider 能力目录。
 
 > 基线：`main` 已具备可用的 GitHub PR AI 评审，包括 DeepSeek 模型选择、语言选择、
 > token 预估、文件全选、受预算约束的只读工具调用、结果缓存、人工编辑与确认发布。

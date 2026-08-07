@@ -12,6 +12,8 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 pub const MAX_ISSUE_CONTEXT_BYTES: usize = 120_000;
 pub const MAX_ISSUE_COMMENTS: usize = 100;
 pub const MAX_SIMILAR_ISSUES: usize = 5;
+pub const MAX_ISSUE_PUBLISH_LABELS: usize = 20;
+pub const MAX_ISSUE_REPLY_BYTES: usize = 20_000;
 
 pub const ISSUE_TRIAGE_OUTPUT_CONTRACT: &str = r#"Return only one JSON object with exactly this shape: {"summary":"...","category":"bug|feature|question|docs|maintenance|security|other","priority":"critical|high|medium|low","confidence":0.0,"suggested_labels":["existing-label"],"suspected_duplicate_numbers":[123],"suggested_reply":"...","rationale":["..."]}. Use only labels and duplicate issue numbers supplied in the input. Empty arrays and an empty suggested_reply are valid."#;
 
@@ -110,6 +112,53 @@ pub struct IssueTriageResult {
     pub usage: ReviewUsage,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueTriagePublishInput {
+    pub publish_id: String,
+    pub confirmed: bool,
+    pub target: IssueTarget,
+    pub expected_snapshot: IssueSnapshot,
+    pub labels: Vec<String>,
+    pub reply: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IssueTriagePublishActionKind {
+    Label,
+    Comment,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IssueTriagePublishActionStatus {
+    Applied,
+    AlreadyApplied,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueTriagePublishActionResult {
+    pub action_id: String,
+    pub kind: IssueTriagePublishActionKind,
+    pub label: Option<String>,
+    pub status: IssueTriagePublishActionStatus,
+    pub error_code: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueTriagePublishResult {
+    pub publish_id: String,
+    pub snapshot: Option<IssueSnapshot>,
+    pub actions: Vec<IssueTriagePublishActionResult>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IssueMutationOutcome {
+    Applied,
+    AlreadyApplied,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct IssueTriageModelResponse {
     pub proposal: IssueTriageProposal,
@@ -124,6 +173,20 @@ pub trait IssueSource: Send + Sync {
     ) -> Result<Vec<IssueSummary>, ReviewError>;
 
     async fn issue_context(&self, target: &IssueTarget) -> Result<IssueContext, ReviewError>;
+}
+
+#[async_trait]
+pub trait IssuePublicationSource: IssueSource {
+    async fn current_snapshot(&self, target: &IssueTarget) -> Result<IssueSnapshot, ReviewError>;
+
+    async fn add_label(&self, target: &IssueTarget, label: &str) -> Result<(), ReviewError>;
+
+    async fn ensure_comment(
+        &self,
+        target: &IssueTarget,
+        publish_id: &str,
+        body: &str,
+    ) -> Result<IssueMutationOutcome, ReviewError>;
 }
 
 #[async_trait]
@@ -209,6 +272,201 @@ impl<'a> IssueTriageOrchestrator<'a> {
             result = future => result,
             _ = self.cancel.cancelled() => Err(ReviewError::Cancelled),
         }
+    }
+}
+
+pub struct IssueTriagePublisher<'a> {
+    source: &'a dyn IssuePublicationSource,
+}
+
+impl<'a> IssueTriagePublisher<'a> {
+    pub fn new(source: &'a dyn IssuePublicationSource) -> Self {
+        Self { source }
+    }
+
+    pub async fn publish(
+        &self,
+        mut input: IssueTriagePublishInput,
+    ) -> Result<IssueTriagePublishResult, ReviewError> {
+        validate_repository_path(&input.target.owner)?;
+        validate_repository_path(&input.target.repo)?;
+        validate_publish_id(&input.publish_id)?;
+        if !input.confirmed {
+            return Err(ReviewError::InvalidModelOutput(
+                "issue publication was not confirmed".into(),
+            ));
+        }
+        if input.expected_snapshot.updated_at.trim().is_empty() {
+            return Err(ReviewError::InvalidModelOutput(
+                "issue publish snapshot is incomplete".into(),
+            ));
+        }
+        if input.labels.len() > MAX_ISSUE_PUBLISH_LABELS {
+            return Err(ReviewError::InvalidModelOutput(
+                "too many issue labels selected".into(),
+            ));
+        }
+        input.labels.sort();
+        input.labels.dedup();
+        let reply = input
+            .reply
+            .take()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        if input.labels.is_empty() && reply.is_none() {
+            return Err(ReviewError::InvalidModelOutput(
+                "no issue publication action selected".into(),
+            ));
+        }
+        if reply
+            .as_ref()
+            .is_some_and(|value| value.len() > MAX_ISSUE_REPLY_BYTES)
+        {
+            return Err(ReviewError::InvalidModelOutput(
+                "issue reply exceeds the publication budget".into(),
+            ));
+        }
+
+        let context = self.source.issue_context(&input.target).await?;
+        if context.snapshot != input.expected_snapshot {
+            return Err(ReviewError::IssueUpdated);
+        }
+        let available_labels: HashSet<&str> = context
+            .available_labels
+            .iter()
+            .map(|label| label.name.as_str())
+            .collect();
+        if input
+            .labels
+            .iter()
+            .any(|label| !available_labels.contains(label.as_str()))
+        {
+            return Err(ReviewError::InvalidModelOutput(
+                "issue publish selected an unavailable label".into(),
+            ));
+        }
+
+        let mut current_labels: HashSet<String> = context
+            .issue
+            .labels
+            .into_iter()
+            .map(|label| label.name)
+            .collect();
+        let mut actions = Vec::with_capacity(input.labels.len() + usize::from(reply.is_some()));
+        for label in input.labels {
+            let action_id = format!("label:{label}");
+            if current_labels.contains(&label) {
+                actions.push(publish_action(
+                    action_id,
+                    IssueTriagePublishActionKind::Label,
+                    Some(label),
+                    IssueTriagePublishActionStatus::AlreadyApplied,
+                    None,
+                ));
+                continue;
+            }
+            match self.source.add_label(&input.target, &label).await {
+                Ok(()) => {
+                    current_labels.insert(label.clone());
+                    actions.push(publish_action(
+                        action_id,
+                        IssueTriagePublishActionKind::Label,
+                        Some(label),
+                        IssueTriagePublishActionStatus::Applied,
+                        None,
+                    ));
+                }
+                Err(error) => {
+                    let recovered = self
+                        .source
+                        .issue_context(&input.target)
+                        .await
+                        .ok()
+                        .is_some_and(|fresh| {
+                            fresh.issue.labels.iter().any(|item| item.name == label)
+                        });
+                    if recovered {
+                        current_labels.insert(label.clone());
+                    }
+                    actions.push(publish_action(
+                        action_id,
+                        IssueTriagePublishActionKind::Label,
+                        Some(label),
+                        if recovered {
+                            IssueTriagePublishActionStatus::AlreadyApplied
+                        } else {
+                            IssueTriagePublishActionStatus::Failed
+                        },
+                        (!recovered).then(|| error.code().to_owned()),
+                    ));
+                }
+            }
+        }
+
+        if let Some(reply) = reply {
+            match self
+                .source
+                .ensure_comment(&input.target, &input.publish_id, &reply)
+                .await
+            {
+                Ok(outcome) => actions.push(publish_action(
+                    "comment".into(),
+                    IssueTriagePublishActionKind::Comment,
+                    None,
+                    match outcome {
+                        IssueMutationOutcome::Applied => IssueTriagePublishActionStatus::Applied,
+                        IssueMutationOutcome::AlreadyApplied => {
+                            IssueTriagePublishActionStatus::AlreadyApplied
+                        }
+                    },
+                    None,
+                )),
+                Err(error) => actions.push(publish_action(
+                    "comment".into(),
+                    IssueTriagePublishActionKind::Comment,
+                    None,
+                    IssueTriagePublishActionStatus::Failed,
+                    Some(error.code().to_owned()),
+                )),
+            }
+        }
+
+        Ok(IssueTriagePublishResult {
+            publish_id: input.publish_id,
+            snapshot: self.source.current_snapshot(&input.target).await.ok(),
+            actions,
+        })
+    }
+}
+
+fn validate_publish_id(value: &str) -> Result<(), ReviewError> {
+    if value.is_empty()
+        || value.len() > 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        Err(ReviewError::InvalidModelOutput(
+            "issue publish id is invalid".into(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn publish_action(
+    action_id: String,
+    kind: IssueTriagePublishActionKind,
+    label: Option<String>,
+    status: IssueTriagePublishActionStatus,
+    error_code: Option<String>,
+) -> IssueTriagePublishActionResult {
+    IssueTriagePublishActionResult {
+        action_id,
+        kind,
+        label,
+        status,
+        error_code,
     }
 }
 
@@ -509,6 +767,56 @@ impl GithubIssueSource {
         parse_labels(&checked_json(response).await?)
     }
 
+    async fn issue_value(&self, target: &IssueTarget) -> Result<Value, ReviewError> {
+        let repository = target.repository();
+        let issue_number = target.issue_number.to_string();
+        let response = self
+            .request(self.repo_endpoint(&repository, ["issues", issue_number.as_str()])?)
+            .send()
+            .await
+            .map_err(network_error)?;
+        let body = checked_json(response).await?;
+        if body.get("pull_request").is_some() {
+            return Err(ReviewError::IssueNotFound);
+        }
+        Ok(body)
+    }
+
+    async fn comment_marker_exists(
+        &self,
+        target: &IssueTarget,
+        marker: &str,
+    ) -> Result<bool, ReviewError> {
+        let issue = parse_issue_summary(&self.issue_value(target).await?)?;
+        if issue.comments == 0 {
+            return Ok(false);
+        }
+        let repository = target.repository();
+        let issue_number = target.issue_number.to_string();
+        let page = ((issue.comments - 1) / MAX_ISSUE_COMMENTS as u32) + 1;
+        let response = self
+            .request(
+                self.repo_endpoint(&repository, ["issues", issue_number.as_str(), "comments"])?,
+            )
+            .query(&[
+                ("per_page", MAX_ISSUE_COMMENTS.to_string()),
+                ("page", page.to_string()),
+            ])
+            .send()
+            .await
+            .map_err(network_error)?;
+        let body = checked_json(response).await?;
+        let comments = body.as_array().ok_or_else(|| {
+            ReviewError::InvalidModelOutput("GitHub comments response invalid".into())
+        })?;
+        Ok(comments.iter().any(|comment| {
+            comment
+                .get("body")
+                .and_then(Value::as_str)
+                .is_some_and(|body| body.contains(marker))
+        }))
+    }
+
     async fn similar_issues(
         &self,
         target: &IssueTarget,
@@ -581,15 +889,7 @@ impl IssueSource for GithubIssueSource {
     async fn issue_context(&self, target: &IssueTarget) -> Result<IssueContext, ReviewError> {
         let repository = target.repository();
         let issue_number = target.issue_number.to_string();
-        let response = self
-            .request(self.repo_endpoint(&repository, ["issues", issue_number.as_str()])?)
-            .send()
-            .await
-            .map_err(network_error)?;
-        let body = checked_json(response).await?;
-        if body.get("pull_request").is_some() {
-            return Err(ReviewError::IssueNotFound);
-        }
+        let body = self.issue_value(target).await?;
         let issue = parse_issue_summary(&body)?;
         let body_text = body
             .get("body")
@@ -630,6 +930,75 @@ impl IssueSource for GithubIssueSource {
             similar_issues,
             snapshot,
         })
+    }
+}
+
+#[async_trait]
+impl IssuePublicationSource for GithubIssueSource {
+    async fn current_snapshot(&self, target: &IssueTarget) -> Result<IssueSnapshot, ReviewError> {
+        let issue = parse_issue_summary(&self.issue_value(target).await?)?;
+        Ok(IssueSnapshot {
+            updated_at: issue.updated_at,
+            comments: issue.comments,
+        })
+    }
+
+    async fn add_label(&self, target: &IssueTarget, label: &str) -> Result<(), ReviewError> {
+        let repository = target.repository();
+        let issue_number = target.issue_number.to_string();
+        let response = self
+            .client
+            .post(self.repo_endpoint(&repository, ["issues", issue_number.as_str(), "labels"])?)
+            .bearer_auth(&self.token)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .json(&json!({"labels":[label]}))
+            .send()
+            .await
+            .map_err(network_error)?;
+        checked_issue_mutation(response).await?;
+        Ok(())
+    }
+
+    async fn ensure_comment(
+        &self,
+        target: &IssueTarget,
+        publish_id: &str,
+        body: &str,
+    ) -> Result<IssueMutationOutcome, ReviewError> {
+        let marker = format!("<!-- git-client-issue-triage:{publish_id} -->");
+        if self.comment_marker_exists(target, &marker).await? {
+            return Ok(IssueMutationOutcome::AlreadyApplied);
+        }
+        let repository = target.repository();
+        let issue_number = target.issue_number.to_string();
+        let response = self
+            .client
+            .post(self.repo_endpoint(&repository, ["issues", issue_number.as_str(), "comments"])?)
+            .bearer_auth(&self.token)
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .json(&json!({"body":format!("{}\n\n{}", body.trim(), marker)}))
+            .send()
+            .await;
+        let result = match response {
+            Ok(response) => checked_issue_mutation(response).await.map(|_| ()),
+            Err(error) => Err(network_error(error)),
+        };
+        match result {
+            Ok(()) => Ok(IssueMutationOutcome::Applied),
+            Err(error) => {
+                if self
+                    .comment_marker_exists(target, &marker)
+                    .await
+                    .unwrap_or(false)
+                {
+                    Ok(IssueMutationOutcome::AlreadyApplied)
+                } else {
+                    Err(error)
+                }
+            }
+        }
     }
 }
 
@@ -742,11 +1111,167 @@ async fn checked_json(response: Response) -> Result<Value, ReviewError> {
         .map_err(|_| ReviewError::InvalidModelOutput("service response was invalid".into()))
 }
 
+async fn checked_issue_mutation(response: Response) -> Result<Value, ReviewError> {
+    match response.status() {
+        StatusCode::UNAUTHORIZED => return Err(ReviewError::AuthFailed),
+        StatusCode::FORBIDDEN
+            if response
+                .headers()
+                .get("x-ratelimit-remaining")
+                .and_then(|value| value.to_str().ok())
+                == Some("0") =>
+        {
+            return Err(ReviewError::RateLimited);
+        }
+        StatusCode::FORBIDDEN => return Err(ReviewError::AuthFailed),
+        StatusCode::NOT_FOUND => return Err(ReviewError::IssueNotFound),
+        StatusCode::TOO_MANY_REQUESTS => return Err(ReviewError::RateLimited),
+        status if !status.is_success() => {
+            return Err(ReviewError::IssuePublishFailed(
+                "GitHub rejected issue update".into(),
+            ));
+        }
+        _ => {}
+    }
+    response.json().await.map_err(|_| {
+        ReviewError::IssuePublishFailed("GitHub issue update response was invalid".into())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
     use wiremock::matchers::{body_partial_json, header, method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    struct StaticIssueSource(IssueContext);
+
+    #[async_trait]
+    impl IssueSource for StaticIssueSource {
+        async fn list_open_issues(
+            &self,
+            _: &IssueRepositoryTarget,
+        ) -> Result<Vec<IssueSummary>, ReviewError> {
+            Ok(vec![self.0.issue.clone()])
+        }
+
+        async fn issue_context(&self, _: &IssueTarget) -> Result<IssueContext, ReviewError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    #[derive(Default)]
+    struct CountingIssueModel(AtomicUsize);
+
+    #[async_trait]
+    impl IssueTriageModel for CountingIssueModel {
+        async fn analyze(&self, _: &str, _: &str) -> Result<IssueTriageModelResponse, ReviewError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(IssueTriageModelResponse {
+                proposal: proposal(),
+                usage: ReviewUsage {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                    tool_calls: 0,
+                },
+            })
+        }
+    }
+
+    struct NeverCancel;
+
+    impl CancelSignal for NeverCancel {
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+    }
+
+    struct PublishingState {
+        context: IssueContext,
+        reads: usize,
+        label_writes: usize,
+        comment_writes: usize,
+        fail_label: bool,
+        published_comments: HashSet<String>,
+    }
+
+    struct PublishingIssueSource(Mutex<PublishingState>);
+
+    impl PublishingIssueSource {
+        fn new() -> Self {
+            let mut context = context();
+            context.available_labels.push(IssueLabel {
+                name: "priority:high".into(),
+                color: "b60205".into(),
+            });
+            Self(Mutex::new(PublishingState {
+                context,
+                reads: 0,
+                label_writes: 0,
+                comment_writes: 0,
+                fail_label: false,
+                published_comments: HashSet::new(),
+            }))
+        }
+    }
+
+    #[async_trait]
+    impl IssueSource for PublishingIssueSource {
+        async fn list_open_issues(
+            &self,
+            _: &IssueRepositoryTarget,
+        ) -> Result<Vec<IssueSummary>, ReviewError> {
+            Ok(vec![self.0.lock().unwrap().context.issue.clone()])
+        }
+
+        async fn issue_context(&self, _: &IssueTarget) -> Result<IssueContext, ReviewError> {
+            let mut state = self.0.lock().unwrap();
+            state.reads += 1;
+            Ok(state.context.clone())
+        }
+    }
+
+    #[async_trait]
+    impl IssuePublicationSource for PublishingIssueSource {
+        async fn current_snapshot(&self, _: &IssueTarget) -> Result<IssueSnapshot, ReviewError> {
+            Ok(self.0.lock().unwrap().context.snapshot.clone())
+        }
+
+        async fn add_label(&self, _: &IssueTarget, label: &str) -> Result<(), ReviewError> {
+            let mut state = self.0.lock().unwrap();
+            if state.fail_label {
+                return Err(ReviewError::NetworkError("label failed".into()));
+            }
+            state.label_writes += 1;
+            state.context.issue.labels.push(IssueLabel {
+                name: label.into(),
+                color: "b60205".into(),
+            });
+            state.context.snapshot.updated_at = "after-label".into();
+            state.context.issue.updated_at = "after-label".into();
+            Ok(())
+        }
+
+        async fn ensure_comment(
+            &self,
+            _: &IssueTarget,
+            publish_id: &str,
+            _: &str,
+        ) -> Result<IssueMutationOutcome, ReviewError> {
+            let mut state = self.0.lock().unwrap();
+            if !state.published_comments.insert(publish_id.into()) {
+                return Ok(IssueMutationOutcome::AlreadyApplied);
+            }
+            state.comment_writes += 1;
+            state.context.snapshot.updated_at = "after-comment".into();
+            state.context.issue.updated_at = "after-comment".into();
+            state.context.snapshot.comments += 1;
+            state.context.issue.comments += 1;
+            Ok(IssueMutationOutcome::Applied)
+        }
+    }
 
     fn proposal() -> IssueTriageProposal {
         IssueTriageProposal {
@@ -758,6 +1283,60 @@ mod tests {
             suspected_duplicate_numbers: vec![2, 999],
             suggested_reply: "Thanks".into(),
             rationale: vec!["Repro included".into()],
+        }
+    }
+
+    fn context() -> IssueContext {
+        IssueContext {
+            issue: IssueSummary {
+                number: 1,
+                title: "Crash".into(),
+                url: String::new(),
+                author: None,
+                updated_at: "now".into(),
+                comments: 1,
+                labels: Vec::new(),
+            },
+            body: String::new(),
+            comments: vec![IssueComment {
+                author: None,
+                body: "Confirmed".into(),
+                created_at: "now".into(),
+                updated_at: "now".into(),
+            }],
+            comments_truncated: false,
+            available_labels: vec![IssueLabel {
+                name: "bug".into(),
+                color: "fff".into(),
+            }],
+            similar_issues: vec![IssueSummary {
+                number: 2,
+                title: "Same".into(),
+                url: String::new(),
+                author: None,
+                updated_at: "now".into(),
+                comments: 0,
+                labels: Vec::new(),
+            }],
+            snapshot: IssueSnapshot {
+                updated_at: "now".into(),
+                comments: 1,
+            },
+        }
+    }
+
+    fn publish_input() -> IssueTriagePublishInput {
+        IssueTriagePublishInput {
+            publish_id: "batch-1".into(),
+            confirmed: true,
+            target: IssueTarget {
+                owner: "acme".into(),
+                repo: "rocket".into(),
+                issue_number: 1,
+            },
+            expected_snapshot: context().snapshot,
+            labels: vec!["priority:high".into()],
+            reply: Some("Thanks for the report.".into()),
         }
     }
 
@@ -778,40 +1357,117 @@ mod tests {
     #[test]
     fn validation_drops_hallucinated_actions() {
         let mut value = proposal();
-        let context = IssueContext {
-            issue: IssueSummary {
-                number: 1,
-                title: "Crash".into(),
-                url: String::new(),
-                author: None,
-                updated_at: "now".into(),
-                comments: 0,
-                labels: Vec::new(),
-            },
-            body: String::new(),
-            comments: Vec::new(),
-            comments_truncated: false,
-            available_labels: vec![IssueLabel {
-                name: "bug".into(),
-                color: "fff".into(),
-            }],
-            similar_issues: vec![IssueSummary {
-                number: 2,
-                title: "Same".into(),
-                url: String::new(),
-                author: None,
-                updated_at: "now".into(),
-                comments: 0,
-                labels: Vec::new(),
-            }],
-            snapshot: IssueSnapshot {
-                updated_at: "now".into(),
-                comments: 0,
-            },
-        };
+        let context = context();
         validate_proposal(&mut value, &context, 1).unwrap();
         assert_eq!(value.suggested_labels, vec!["bug"]);
         assert_eq!(value.suspected_duplicate_numbers, vec![2]);
+    }
+
+    #[tokio::test]
+    async fn stale_snapshot_stops_before_spending_model_tokens() {
+        let source = StaticIssueSource(context());
+        let model = CountingIssueModel::default();
+        let error = IssueTriageOrchestrator::new(&model, &source, &NeverCancel)
+            .run(IssueTriageInput {
+                run_id: "stale".into(),
+                target: IssueTarget {
+                    owner: "acme".into(),
+                    repo: "rocket".into(),
+                    issue_number: 1,
+                },
+                expected_updated_at: "older".into(),
+                expected_comments: 0,
+                output_language: ReviewLanguage::English,
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(error, ReviewError::IssueUpdated);
+        assert_eq!(model.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_publish_performs_zero_source_reads_or_writes() {
+        let source = PublishingIssueSource::new();
+        let mut input = publish_input();
+        input.confirmed = false;
+
+        let error = IssueTriagePublisher::new(&source)
+            .publish(input)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, ReviewError::InvalidModelOutput(_)));
+        let state = source.0.lock().unwrap();
+        assert_eq!(state.reads, 0);
+        assert_eq!(state.label_writes, 0);
+        assert_eq!(state.comment_writes, 0);
+    }
+
+    #[tokio::test]
+    async fn stale_or_unavailable_publish_actions_perform_zero_writes() {
+        let source = PublishingIssueSource::new();
+        let mut stale = publish_input();
+        stale.expected_snapshot.updated_at = "older".into();
+        assert_eq!(
+            IssueTriagePublisher::new(&source)
+                .publish(stale)
+                .await
+                .unwrap_err(),
+            ReviewError::IssueUpdated
+        );
+
+        let mut unavailable = publish_input();
+        unavailable.labels = vec!["invented".into()];
+        assert!(matches!(
+            IssueTriagePublisher::new(&source)
+                .publish(unavailable)
+                .await
+                .unwrap_err(),
+            ReviewError::InvalidModelOutput(_)
+        ));
+        let state = source.0.lock().unwrap();
+        assert_eq!(state.label_writes, 0);
+        assert_eq!(state.comment_writes, 0);
+    }
+
+    #[tokio::test]
+    async fn partial_publish_returns_per_action_results_and_retry_is_idempotent() {
+        let source = PublishingIssueSource::new();
+        source.0.lock().unwrap().fail_label = true;
+
+        let first = IssueTriagePublisher::new(&source)
+            .publish(publish_input())
+            .await
+            .unwrap();
+        assert_eq!(
+            first.actions[0].status,
+            IssueTriagePublishActionStatus::Failed
+        );
+        assert_eq!(
+            first.actions[1].status,
+            IssueTriagePublishActionStatus::Applied
+        );
+        assert!(first.snapshot.is_some());
+
+        source.0.lock().unwrap().fail_label = false;
+        let mut retry = publish_input();
+        retry.expected_snapshot = first.snapshot.unwrap();
+        let second = IssueTriagePublisher::new(&source)
+            .publish(retry)
+            .await
+            .unwrap();
+        assert_eq!(
+            second.actions[0].status,
+            IssueTriagePublishActionStatus::Applied
+        );
+        assert_eq!(
+            second.actions[1].status,
+            IssueTriagePublishActionStatus::AlreadyApplied
+        );
+        let state = source.0.lock().unwrap();
+        assert_eq!(state.label_writes, 1);
+        assert_eq!(state.comment_writes, 1);
     }
 
     #[tokio::test]
@@ -877,5 +1533,54 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].number, 7);
         assert_eq!(issues[0].labels[0].name, "bug");
+    }
+
+    #[tokio::test]
+    async fn github_comment_marker_makes_retry_skip_duplicate_post() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/acme/rocket/issues/7"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "number":7,
+                "title":"Crash",
+                "html_url":"https://github.com/acme/rocket/issues/7",
+                "updated_at":"2026-08-07T08:00:00Z",
+                "comments":1,
+                "labels":[]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/acme/rocket/issues/7/comments"))
+            .and(query_param("per_page", "100"))
+            .and(query_param("page", "1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                "body":"Thanks\n\n<!-- git-client-issue-triage:batch-1 -->"
+            }])))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/repos/acme/rocket/issues/7/comments"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({"id":1})))
+            .expect(0)
+            .mount(&server)
+            .await;
+
+        let outcome = GithubIssueSource::new_with_base_for_test("token", server.uri())
+            .ensure_comment(
+                &IssueTarget {
+                    owner: "acme".into(),
+                    repo: "rocket".into(),
+                    issue_number: 7,
+                },
+                "batch-1",
+                "Thanks",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(outcome, IssueMutationOutcome::AlreadyApplied);
     }
 }

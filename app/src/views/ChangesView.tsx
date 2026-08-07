@@ -5,7 +5,7 @@ import {
   getHeadCommit, refreshStatus, resolveOurs, resolveTheirs,
   type FileEntryDto, type IpcError,
 } from "../ipc";
-import { useStatus, useWorkingDiff, useRepoState, useCurrentBranch, invalidateWorktree, invalidateHistory, qk } from "../lib/queries";
+import { useStatus, useWorkingDiff, useRepoState, invalidateWorktree, invalidateHistory, qk } from "../lib/queries";
 import { useListKeyboardNav, isTypingTarget } from "../lib/listNav";
 import { RefreshIcon, CheckIcon, FileDiffIcon } from "../components/icons";
 import { DiffView } from "../components/DiffView";
@@ -62,7 +62,6 @@ export function ChangesView({ repo }: { repo: string }) {
   const statusQ = useStatus(repo);
   const status = statusQ.data;
   const repoState = useRepoState(repo).data ?? "clean";
-  const branch = useCurrentBranch(repo).data ?? "main";
   const [message, setMessage] = useState("");
   const [amend, setAmend] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -367,7 +366,7 @@ export function ChangesView({ repo }: { repo: string }) {
               </label>
               <span className="font-mono text-[10.5px] tabular-nums text-fg-subtle">{t("changes.stagedCount", { n: staged.length })}</span>
               <Button data-testid="commit-action" variant="commit" size="md" disabled={!canCommit} onClick={doCommit} className="ml-auto">
-                <CheckIcon width={13} height={13} /> {amend ? t("changes.amendCommit") : t("changes.commitTo", { branch })}
+                <CheckIcon width={13} height={13} /> {amend ? t("changes.amendCommit") : t("changes.commit")}
               </Button>
             </div>
           </div>

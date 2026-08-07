@@ -55,5 +55,8 @@ export type { IssueSnapshotDto } from "./IssueSnapshotDto";
 export type { IssueSummaryDto } from "./IssueSummaryDto";
 export type { IssueTargetDto } from "./IssueTargetDto";
 export type { IssueTriageInputDto } from "./IssueTriageInputDto";
+export type { IssueTriagePublishActionResultDto } from "./IssueTriagePublishActionResultDto";
+export type { IssueTriagePublishInputDto } from "./IssueTriagePublishInputDto";
+export type { IssueTriagePublishResultDto } from "./IssueTriagePublishResultDto";
 export type { IssueTriageProposalDto } from "./IssueTriageProposalDto";
 export type { IssueTriageResultDto } from "./IssueTriageResultDto";

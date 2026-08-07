@@ -1,6 +1,6 @@
 use review_agent::{
     map_patch_lines, validate_repository_path, ReviewError, ReviewFile, MAX_AUTO_FILES,
-    MAX_PATCH_BYTES, MAX_READ_LINES,
+    MAX_ISSUE_PUBLISH_LABELS, MAX_ISSUE_REPLY_BYTES, MAX_PATCH_BYTES, MAX_READ_LINES,
 };
 
 #[test]
@@ -30,6 +30,11 @@ fn stable_error_codes_are_exposed() {
         ReviewError::ReviewPublishFailed("nope".into()).code(),
         "REVIEW_PUBLISH_FAILED"
     );
+    assert_eq!(ReviewError::IssueUpdated.code(), "ISSUE_UPDATED");
+    assert_eq!(
+        ReviewError::IssuePublishFailed("nope".into()).code(),
+        "ISSUE_PUBLISH_FAILED"
+    );
 }
 
 #[test]
@@ -37,6 +42,8 @@ fn limits_are_stable() {
     assert_eq!(MAX_AUTO_FILES, 30);
     assert_eq!(MAX_PATCH_BYTES, 200_000);
     assert_eq!(MAX_READ_LINES, 400);
+    assert_eq!(MAX_ISSUE_PUBLISH_LABELS, 20);
+    assert_eq!(MAX_ISSUE_REPLY_BYTES, 20_000);
 }
 
 #[test]

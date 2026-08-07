@@ -49,6 +49,9 @@ export type {
   IssueSummaryDto,
   IssueTargetDto,
   IssueTriageInputDto,
+  IssueTriagePublishActionResultDto,
+  IssueTriagePublishInputDto,
+  IssueTriagePublishResultDto,
   IssueTriageProposalDto,
   IssueTriageResultDto,
 } from "./bindings";
@@ -84,6 +87,8 @@ import type {
   IssueSummaryDto,
   IssueTargetDto,
   IssueTriageInputDto,
+  IssueTriagePublishInputDto,
+  IssueTriagePublishResultDto,
   IssueTriageResultDto,
 } from "./bindings";
 
@@ -847,4 +852,10 @@ export async function startIssueTriage(
 
 export async function cancelIssueTriage(runId: string): Promise<void> {
   await invoke("cancel_issue_triage", { runId });
+}
+
+export async function publishIssueTriage(
+  input: IssueTriagePublishInputDto,
+): Promise<IssueTriagePublishResultDto> {
+  return await invoke<IssueTriagePublishResultDto>("publish_issue_triage", { input });
 }
