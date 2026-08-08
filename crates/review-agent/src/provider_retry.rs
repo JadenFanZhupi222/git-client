@@ -80,6 +80,7 @@ mod tests {
             transcript: vec![TranscriptItem::User("fixture".into())],
             tools: Vec::new(),
             response_format: ResponseFormat::JsonObject,
+            response_schema: None,
             max_output_tokens: 10,
         }
     }

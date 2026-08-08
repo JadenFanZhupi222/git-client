@@ -1,7 +1,37 @@
 use crate::{ReviewError, ReviewFinding};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 pub const REVIEW_OUTPUT_CONTRACT: &str = r#"Return only one JSON object with exactly this shape: {"summary":"...","findings":[{"id":"unique-id","severity":"high|medium|low","path":"repository/relative/path","side":"LEFT|RIGHT","line":123,"title":"...","failure_scenario":"...","explanation":"...","draft_comment":"..."}]}. Use an empty findings array when there are no actionable issues. Every finding must include all nine fields and must be tied to a selected patch line."#;
+
+pub(crate) fn review_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+                        "path": {"type": "string"},
+                        "side": {"type": "string", "enum": ["LEFT", "RIGHT"]},
+                        "line": {"type": "integer", "minimum": 1},
+                        "title": {"type": "string"},
+                        "failure_scenario": {"type": "string"},
+                        "explanation": {"type": "string"},
+                        "draft_comment": {"type": "string"}
+                    },
+                    "required": ["id", "severity", "path", "side", "line", "title", "failure_scenario", "explanation", "draft_comment"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        "required": ["summary", "findings"],
+        "additionalProperties": false
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedReviewOutput {

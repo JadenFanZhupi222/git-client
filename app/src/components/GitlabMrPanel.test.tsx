@@ -8,6 +8,7 @@ import { ToastProvider } from "./Toast";
 const { openUrl } = vi.hoisted(() => ({
   openUrl: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
 }));
+const reviewWorkspace = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl,
@@ -16,6 +17,13 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 vi.mock("../ipc", () => ({
   hasGitlabToken: vi.fn().mockResolvedValue(true),
   getGitlabToken: vi.fn().mockResolvedValue("glpat_secret"),
+}));
+
+vi.mock("./PrReviewWorkspace", () => ({
+  PrReviewWorkspace: (props: Record<string, unknown>) => {
+    reviewWorkspace.props = props;
+    return <div data-testid="gitlab-ai-review-workspace" />;
+  },
 }));
 
 const remotes = [
@@ -29,6 +37,7 @@ describe("GitlabMrPanel", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    reviewWorkspace.props = null;
     localStorage.clear();
     setLang("en");
   });
@@ -390,6 +399,13 @@ describe("GitlabMrPanel", () => {
     });
     expect(await screen.findByText("1/2 approved")).toBeInTheDocument();
     expect(screen.getAllByText("reviewer-a").length).toBeGreaterThanOrEqual(1);
+
+    await userEvent.click(screen.getByRole("button", { name: "AI review" }));
+    expect(screen.getByTestId("gitlab-ai-review-workspace")).toBeInTheDocument();
+    expect(reviewWorkspace.props).toMatchObject({
+      platform: "gitlab",
+      target: { owner: "team", repo: "project", pull_number: 7 },
+    });
   });
 
   it("refreshes merge request results", async () => {

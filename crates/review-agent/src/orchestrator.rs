@@ -265,6 +265,7 @@ impl<'a> ReviewOrchestrator<'a> {
                     Vec::new()
                 },
                 response_format: ResponseFormat::JsonObject,
+                response_schema: Some(crate::review_output::review_output_schema()),
                 max_output_tokens: 8192,
             };
             let response = crate::provider_retry::respond_with_retry(

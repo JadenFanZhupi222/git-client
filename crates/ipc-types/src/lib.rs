@@ -17,6 +17,8 @@ use ts_rs::TS;
 #[ts(export, export_to = "../../../app/src/bindings/")]
 pub enum CredentialKindDto {
     Deepseek,
+    Openai,
+    Anthropic,
     Github,
     Gitlab,
 }
@@ -671,6 +673,14 @@ mod review_dto_contract_tests {
         assert_eq!(
             serde_json::to_string(&CredentialKindDto::Deepseek).unwrap(),
             "\"deepseek\""
+        );
+        assert_eq!(
+            serde_json::to_string(&CredentialKindDto::Openai).unwrap(),
+            "\"openai\""
+        );
+        assert_eq!(
+            serde_json::to_string(&CredentialKindDto::Anthropic).unwrap(),
+            "\"anthropic\""
         );
         assert_eq!(
             serde_json::to_string(&CredentialKindDto::Github).unwrap(),

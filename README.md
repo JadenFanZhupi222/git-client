@@ -18,8 +18,9 @@ The app already covers the core daily Git workflow and several advanced workflow
 - Conflict handling with a three-pane CodeMirror merge editor
 - Word-level diff, side-by-side diff, syntax highlighting, image diff, Git LFS pointer handling, submodule/worktree/sparse-checkout awareness
 - GitHub and GitLab collaboration panels for tokens, PR/MR creation, and PR/MR review details
-- GitHub PR AI Review workspace with fixed-SHA analysis, editable line comments, and one-review publishing
-- Unified credential settings for DeepSeek, GitHub, and GitLab secrets stored by the Rust backend
+- GitHub PR and GitLab MR AI Review workspaces, plus GitHub Issue Triage, with snapshot-pinned analysis and human-confirmed publishing
+- Provider-neutral agent runtime with DeepSeek, OpenAI Responses, and Anthropic Messages adapters and seven allowlisted models
+- Unified credential settings for DeepSeek, OpenAI, Anthropic, GitHub, and GitLab secrets stored by the Rust backend
 - Frontend test coverage for the major UI slices added during development
 
 The 0.1.4 line now has release-candidate hardening: Linux/macOS/Windows CI,
@@ -51,7 +52,7 @@ git-client/
     git-engine/           git2 / CLI backend implementations and routing
     app-service/          Use cases, repository context, cache, operation orchestration
     ipc-types/            DTOs shared across Rust and TypeScript
-    review-agent/         Sandboxed PR review orchestration, providers, validation, and traces
+    review-agent/         Sandboxed PR review and Issue Triage workflows, provider adapters, validation, and traces
   docs/                   Handoff notes, feature plans, implementation specs
   Cargo.toml              Rust workspace
 ```
@@ -201,14 +202,16 @@ The current repository still contains older Chinese handoff notes and some Chine
   be completed on real Windows, Linux, Intel Mac, and Apple Silicon machines.
 - GitHub PR detail API-provided statuses and some collaboration strings remain
   candidates for further localization.
-- AI Review currently supports GitHub pull requests only. GitLab merge-request review,
-  issue triage, and local code-editing agents are planned as separate milestones.
+- AI Review supports GitHub pull requests and GitLab merge requests, while AI Issue
+  Triage currently supports GitHub issues. Local code-editing agents remain a separate
+  future security milestone.
 
 ## Useful Project Docs
 
 - `docs/HANDOFF.md` records the latest implementation state and next-step context.
 - `docs/HANDOFF-pr-review-agent.md` records the AI Review implementation and follow-up roadmap.
 - `docs/HANDOFF-issue-triage-agent.md` records Issue Triage, human-confirmed publishing, safety boundaries, and the manual acceptance checklist.
+- `docs/superpowers/plans/2026-08-08-multi-provider-agent-runtime.md` records the multi-provider runtime design, implementation decisions, and verification evidence.
 - `ARCHITECTURE.md` contains the original full architecture write-up. Parts of it are older than the current codebase.
 - `PRODUCT.md` describes product direction.
 - `docs/superpowers/specs/` and `docs/superpowers/plans/` contain feature-level design and implementation notes.

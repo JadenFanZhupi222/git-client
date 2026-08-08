@@ -22,6 +22,24 @@ pub const MAX_ISSUE_REPLY_BYTES: usize = 20_000;
 
 pub const ISSUE_TRIAGE_OUTPUT_CONTRACT: &str = r#"Return only one JSON object with exactly this shape: {"summary":"...","category":"bug|feature|question|docs|maintenance|security|other","priority":"critical|high|medium|low","confidence":0.0,"suggested_labels":["existing-label"],"suspected_duplicate_numbers":[123],"suggested_reply":"...","rationale":["..."]}. Use only labels and duplicate issue numbers supplied in the input. Empty arrays and an empty suggested_reply are valid."#;
 
+fn issue_triage_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "category": {"type": "string", "enum": ["bug", "feature", "question", "docs", "maintenance", "security", "other"]},
+            "priority": {"type": "string", "enum": ["critical", "high", "medium", "low"]},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "suggested_labels": {"type": "array", "items": {"type": "string"}},
+            "suspected_duplicate_numbers": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+            "suggested_reply": {"type": "string"},
+            "rationale": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["summary", "category", "priority", "confidence", "suggested_labels", "suspected_duplicate_numbers", "suggested_reply", "rationale"],
+        "additionalProperties": false
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IssueRepositoryTarget {
     pub owner: String,
@@ -326,6 +344,7 @@ impl<'a> IssueTriageOrchestrator<'a> {
             ],
             tools: Vec::new(),
             response_format: ResponseFormat::JsonObject,
+            response_schema: Some(issue_triage_output_schema()),
             max_output_tokens: 4096,
         };
         let response = crate::provider_retry::respond_with_retry(

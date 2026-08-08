@@ -375,7 +375,7 @@ export default function App() {
     title: t("cmd.settings"),
     subtitle: t("cmd.settings.sub"),
     group: t("group.panel"),
-    keywords: "settings preferences credentials deepseek github gitlab",
+    keywords: "settings preferences credentials deepseek openai gpt anthropic claude github gitlab",
     run: () => setSettingsSection("deepseek"),
   });
   commands.push({
@@ -885,6 +885,10 @@ export default function App() {
           onConfigureToken={() => {
             setGitlabMrOpen(false);
             openSettingsFor(APP_SETTINGS_ENTRY_POINTS.gitlabMrPanel);
+          }}
+          onConfigureCredential={(kind) => {
+            setGitlabMrOpen(false);
+            setSettingsSection(kind);
           }}
         />
       )}

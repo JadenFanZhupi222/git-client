@@ -1,18 +1,26 @@
+mod anthropic;
 mod deepseek;
 mod domain;
 mod github;
+mod gitlab;
 mod issue;
+mod openai;
 mod orchestrator;
 mod provider_retry;
+mod providers;
 mod review_output;
 mod trace;
 
 pub use agent_runtime::*;
+pub use anthropic::*;
 pub use deepseek::*;
 pub use domain::*;
 pub use github::*;
+pub use gitlab::*;
 pub use issue::*;
+pub use openai::*;
 pub use orchestrator::*;
+pub use providers::*;
 pub use review_output::*;
 pub use trace::*;
 

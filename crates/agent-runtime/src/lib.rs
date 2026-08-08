@@ -152,6 +152,9 @@ pub struct ModelRequest {
     pub transcript: Vec<TranscriptItem>,
     pub tools: Vec<ToolDefinition>,
     pub response_format: ResponseFormat,
+    /// Optional provider-neutral JSON Schema for structured final output.
+    /// Providers that only support a generic JSON-object mode may ignore it.
+    pub response_schema: Option<Value>,
     pub max_output_tokens: u32,
 }
 

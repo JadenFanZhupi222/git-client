@@ -201,6 +201,7 @@ async fn one_provider_contract_drives_both_workflows_without_provider_branches()
     let requests = provider.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].response_format, ResponseFormat::JsonObject);
+    assert!(requests[0].response_schema.is_some());
     assert_eq!(requests[0].tools.len(), 2);
     assert!(requests[1].tools.is_empty());
     assert!(matches!(
@@ -211,10 +212,15 @@ async fn one_provider_contract_drives_both_workflows_without_provider_branches()
 
 #[test]
 fn installed_provider_model_matrix_satisfies_both_workflow_contracts() {
-    let catalog = deepseek_model_catalog();
+    let catalog = model_catalog();
     assert!(!catalog.is_empty());
     for model in catalog {
-        assert_eq!(model.provider_id, "deepseek", "{} provider", model.id);
+        assert_eq!(
+            model_provider_id(&model.id),
+            Some(model.provider_id.as_str()),
+            "{} provider",
+            model.id
+        );
         assert_ne!(
             model.capabilities.structured_output,
             StructuredOutputSupport::None,

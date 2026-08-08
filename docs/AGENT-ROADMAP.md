@@ -1,8 +1,8 @@
 # Agent 下一阶段计划
 
-> 进度更新（2026-08-07）：A1、A3、A4、A5 已完成。PR Review 与 Issue Triage 共用 `agent-runtime` Provider 契约和后端模型目录；运行服务按 PR/Issue 资源互斥，只对网络/限流错误做三次上限的抖动退避，无效输出不重试。成功、失败和取消都使用可分享的脱敏诊断 ID，并写入统一 trace；UI 展示实际 usage、保守费用估算、耗时、请求次数和明确取消终态，旧缓存可无损迁移。当前 DeepSeek 模型目录已通过两条工作流的能力矩阵和共享契约测试。由于暂时没有第二个模型凭据，只有 A2 仍延后。
+> 进度更新（2026-08-08）：A1-A5 已完成。PR Review 与 Issue Triage 共用 `agent-runtime` Provider 契约、后端模型目录和结构化输出契约；当前已安装 DeepSeek、OpenAI Responses 与 Anthropic Messages 三个 Provider、七个 allowlisted 模型。运行服务按 PR/Issue 资源互斥，只对网络/限流错误做三次上限的抖动退避，无效输出不重试。成功、失败和取消都使用可分享的脱敏诊断 ID，并写入统一 trace；UI 展示实际 usage、保守费用估算、耗时、请求次数和明确取消终态，旧缓存可无损迁移。三个 Provider 已通过两条工作流的能力矩阵、共享契约、fixture、IPC 与前端路由测试；自动化验证不依赖真实凭据。
 
-> 基线：`main` 已具备可用的 GitHub PR AI 评审，包括 DeepSeek 模型选择、语言选择、
+> 起始基线：`main` 已具备可用的 GitHub PR AI 评审，包括 DeepSeek 模型选择、语言选择、
 > token 预估、文件全选、受预算约束的只读工具调用、结果缓存、人工编辑与确认发布。
 > 当前实现说明见 `HANDOFF-pr-review-agent.md`。
 
@@ -27,9 +27,9 @@
 
 ## 架构方向
 
-现有 `ModelProvider`、规范化 turn、工具循环、预算、取消和脱敏 trace 已证明了 provider
-边界。下一阶段先在 `review-agent` 内固化契约；只有当 Issue Agent 成为第二个消费者时，
-再把已经被两个工作流共同使用的部分提取为 `agent-runtime` crate，避免提前设计一个空泛框架。
+`ModelProvider`、规范化 turn、工具循环、预算、取消和脱敏 trace 已证明 provider
+边界。契约先在 `review-agent` 内固化，并在 Issue Agent 成为第二个消费者后，将被两个
+工作流共同使用的部分提取为 `agent-runtime` crate，避免提前设计一个空泛框架。
 
 目标依赖关系：
 
@@ -38,7 +38,7 @@ PR Review workflow ─┐
                     ├─> agent-runtime ─> ModelProvider ─> provider adapter
 Issue Triage workflow┘
 
-provider adapter: DeepSeek / 第二 provider / 后续本地模型
+provider adapter: DeepSeek / OpenAI Responses / Anthropic Messages / 后续本地模型
 ```
 
 `agent-runtime` 的目标边界只包括：
@@ -68,15 +68,15 @@ A1 已先抽出被两个工作流共同消费的模型请求/响应、能力、u
 
 验收：PR 评审现有测试全部通过；UI 仍可选择当前两个 DeepSeek 模型；无 provider 判断进入 orchestrator。
 
-### A2 · 第二 Provider 适配
+### A2 · 多 Provider 适配（已完成）
 
-- 默认候选为 OpenAI，实施前按当时官方 API 文档重新确认接口；选择不得写死到通用运行时。
+- 按官方 API 文档接入 OpenAI Responses 与 Anthropic Messages；选择不写死到通用运行时。
 - adapter 只处理鉴权、请求/响应格式、工具调用编码和 usage 映射。
 - 使用 HTTP fixture 覆盖：普通最终输出、连续工具调用、拒绝/限流、截断、无效结构和取消。
 - Settings 增加对应凭据状态；凭据仍由 Rust/keyring 管理。
 - 模型不可用或能力不匹配时在发送前阻止，不在运行中静默降级或偷换模型。
 
-验收：至少两个 provider 能通过同一套 orchestrator 合约测试；切换 provider 不改变 PR 发布结果结构。
+已完成：OpenAI adapter 映射 Responses function calling、`function_call_output`、JSON Schema structured output 与 usage；Anthropic adapter 映射 Messages `tool_use`/`tool_result`、JSON Schema structured output 与 usage。两个 adapter 都显式关闭 Provider 特有的 reasoning/thinking 重放，保持规范化、无状态的工作流 transcript。Settings 与 keyring 增加独立凭据，缺失凭据错误能从 PR/Issue 工作流直达对应设置页。DeepSeek、OpenAI、Anthropic 共七个模型通过同一套 PR Review 与 Issue Triage 契约矩阵，切换 Provider 不改变领域结果或发布规则。
 
 ### A3 · GitHub Issue 分诊（只读）
 
@@ -105,15 +105,15 @@ A1 已先抽出被两个工作流共同消费的模型请求/响应、能力、u
 - 增加 provider × workflow 契约矩阵、竞态测试、缓存迁移测试和 Tauri 命令集成测试。
 - 更新隐私披露：不同工作流分别说明会发送哪些数据，不复用模糊的一次性同意。
 
-已完成：资源级互斥与服务级竞态保护、取消时释放资源、瞬态模型请求的有限抖动重试、无效输出不重试、成功/错误/取消共享的脱敏诊断 ID、PR/Issue 统一 trace、明确取消终态、耗时/实际 usage/服务商请求次数展示、按目录价格和实际 token 估算费用、PR/Issue 旧缓存迁移，以及当前已安装 Provider × 两工作流的能力矩阵和共享契约测试。第二 Provider 的矩阵扩展归属 A2，在取得凭据后继续。
+已完成：资源级互斥与服务级竞态保护、取消时释放资源、瞬态模型请求的有限抖动重试、无效输出不重试、成功/错误/取消共享的脱敏诊断 ID、PR/Issue 统一 trace、明确取消终态、耗时/实际 usage/服务商请求次数展示、按目录价格和实际 token 估算费用、PR/Issue 旧缓存迁移，以及 DeepSeek、OpenAI、Anthropic × 两条工作流的能力矩阵和共享契约测试。
 
-## 推荐执行顺序
+## 已执行顺序
 
-1. 先做 **A1**，这是下一刀；它只重构契约和模型目录，不增加外部权限。
-2. 完成 **A2**，用第二 provider 证明抽象真实可用。
-3. 竖切 **A3**，到只读结果可用为止。
-4. 单独评审安全与交互后实施 **A4**。
-5. 最后用 **A5** 收紧可靠性与可观测性。
+1. 以 **A1** 重构契约和模型目录，不增加外部权限。
+2. 以 **A3** 竖切只读 Issue 分诊，证明第二条工作流可以复用契约。
+3. 单独评审安全与交互后实施 **A4** 人工确认发布。
+4. 以 **A5** 收紧可靠性与可观测性。
+5. 以 **A2** 接入 OpenAI 与 Anthropic，证明多 Provider 抽象真实可用。
 
 每刀都使用独立 `codex/agent-*` 分支，测试通过后 `--no-ff` 合回 `main`；不要让 A3/A4
 与 provider 重构同时改同一批核心文件。

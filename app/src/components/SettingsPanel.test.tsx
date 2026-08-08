@@ -7,11 +7,45 @@ import { SettingsPanel } from "./SettingsPanel";
 
 const ipc = vi.hoisted(() => ({
   credentialStatus: vi.fn(),
+  listReviewModels: vi.fn(),
   saveCredential: vi.fn(),
   testCredential: vi.fn(),
   clearCredential: vi.fn(),
 }));
 const opener = vi.hoisted(() => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
+
+const model = (id: string, label: string, provider: string, provider_id: string) => ({
+  id,
+  label,
+  provider,
+  provider_id,
+  capabilities: {
+    supports_tool_calling: true,
+    supports_structured_output: true,
+    context_window_tokens: 128_000,
+    max_output_tokens: 32_000,
+    reports_usage: true,
+  },
+  pricing: {
+    currency: "USD",
+    input_cache_hit_per_million_micros: 100_000,
+    input_cache_miss_per_million_micros: 1_000_000,
+    output_per_million_micros: 5_000_000,
+    source_url: "https://example.test/pricing",
+    source_version: "test",
+    checked_at: "2026-08-08",
+  },
+});
+
+const modelCatalog = [
+  model("deepseek-v4-flash", "DeepSeek V4 Flash", "DeepSeek", "deepseek"),
+  model("deepseek-v4-pro", "DeepSeek V4 Pro", "DeepSeek", "deepseek"),
+  model("gpt-5.6-terra", "GPT-5.6 Terra", "OpenAI", "openai"),
+  model("gpt-5.6-luna", "GPT-5.6 Luna", "OpenAI", "openai"),
+  model("gpt-5.6-sol", "GPT-5.6 Sol", "OpenAI", "openai"),
+  model("claude-sonnet-5", "Claude Sonnet 5", "Anthropic", "anthropic"),
+  model("claude-opus-5", "Claude Opus 5", "Anthropic", "anthropic"),
+];
 
 vi.mock("../ipc", () => ipc);
 vi.mock("@tauri-apps/plugin-opener", () => opener);
@@ -32,6 +66,7 @@ describe("SettingsPanel", () => {
   beforeEach(() => {
     setLang("en");
     ipc.credentialStatus.mockImplementation(async (kind: string) => kind === "github");
+    ipc.listReviewModels.mockResolvedValue(modelCatalog);
     ipc.saveCredential.mockResolvedValue(undefined);
     ipc.testCredential.mockResolvedValue(undefined);
     ipc.clearCredential.mockResolvedValue(undefined);
@@ -170,9 +205,9 @@ describe("SettingsPanel", () => {
     renderPanel({ initialSection: "deepseek" });
     await screen.findByText("Configured");
 
-    expect(screen.getByText("Powers AI-assisted pull request reviews.")).toBeInTheDocument();
+    expect(screen.getByText("Provides models for pull request review and issue triage.")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Enter a new credential to replace the saved credential")).toBeInTheDocument();
-    expect(screen.getByText("When AI Review runs, selected PR patches and code excerpts read during analysis are sent to DeepSeek.")).toBeInTheDocument();
+    expect(screen.getByText("When this provider runs, the PR patch or issue snapshot and requested code excerpts are sent to DeepSeek.")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "GitHub" }));
     expect(screen.getByText("Authenticates private repositories, pull requests, review publishing, issue triage, and confirmed issue updates.")).toBeInTheDocument();
@@ -183,7 +218,7 @@ describe("SettingsPanel", () => {
     expect(screen.getByPlaceholderText("Enter a new credential to replace the saved credential")).toBeInTheDocument();
   });
 
-  it("renders flat DeepSeek-only service details, sentence-case label, and credential helper", async () => {
+  it("renders flat service details and the compatible DeepSeek model catalog", async () => {
     const user = userEvent.setup();
     renderPanel({ initialSection: "deepseek" });
     await screen.findByText("Not configured");
@@ -192,15 +227,19 @@ describe("SettingsPanel", () => {
     const details = heading.parentElement!;
     expect(details.querySelector("dl")).toBeInTheDocument();
     expect(within(details).getByText("Endpoint").tagName).toBe("DT");
-    expect(within(details).getByText("Model").tagName).toBe("DT");
     expect(within(details).getByText("https://api.deepseek.com").tagName).toBe("DD");
-    expect(within(details).getByText("When AI Review runs, selected PR patches and code excerpts read during analysis are sent to DeepSeek.")).toHaveClass("text-fg-muted");
+    expect(within(details).getByRole("heading", { name: "Compatible agent models" })).toBeInTheDocument();
+    expect(within(details).getByText("deepseek-v4-flash")).toBeInTheDocument();
+    expect(within(details).getByText("deepseek-v4-pro")).toBeInTheDocument();
+    expect(within(details).queryByText("gpt-5.6-terra")).not.toBeInTheDocument();
+    expect(within(details).getByText("The API key is shared across models. Only models verified for these agent workflows are listed.")).toBeInTheDocument();
+    expect(within(details).getByText("When this provider runs, the PR patch or issue snapshot and requested code excerpts are sent to DeepSeek.")).toHaveClass("text-fg-muted");
     expect(details).not.toHaveClass("rounded-md", "border", "bg-elevated");
     const label = screen.getByText("DeepSeek API key");
     expect(label).toHaveClass("text-xs");
     expect(label).not.toHaveClass("uppercase", "tracking-wide");
     expect(screen.getByLabelText("DeepSeek API key")).toHaveClass("h-9", "field");
-    expect(screen.getByText("Powers AI-assisted pull request reviews.")).toBeInTheDocument();
+    expect(screen.getByText("Provides models for pull request review and issue triage.")).toBeInTheDocument();
     expect(screen.getByText("Stored securely in the system credential store.")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "GitHub" }));
@@ -219,7 +258,7 @@ describe("SettingsPanel", () => {
       "Stored securely in the system credential store.",
     );
     expect(document.getElementById(deepseekDescriptions[1])).toHaveTextContent(
-      "When AI Review runs, selected PR patches and code excerpts read during analysis are sent to DeepSeek.",
+      "When this provider runs, the PR patch or issue snapshot and requested code excerpts are sent to DeepSeek.",
     );
 
     await user.click(screen.getByRole("tab", { name: "GitHub" }));
@@ -271,9 +310,9 @@ describe("SettingsPanel", () => {
     expect(screen.getByRole("button", { name: "移除凭据" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "DeepSeek" }));
-    expect(screen.getByText("为 AI 拉取请求评审提供模型服务。")).toBeInTheDocument();
+    expect(screen.getByText("为拉取请求评审和议题分诊提供模型。")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("输入新凭据以替换已保存的凭据")).toBeInTheDocument();
-    expect(screen.getByText("运行 AI 评审时，所选 PR 补丁及分析过程中读取的代码摘录会发送至 DeepSeek。")).toBeInTheDocument();
+    expect(screen.getByText("运行该服务时，PR 补丁或议题快照及按需读取的代码摘录会发送至 DeepSeek。")).toBeInTheDocument();
 
     await user.click(screen.getByRole("tab", { name: "GitLab" }));
     expect(screen.getByText("用于私有仓库、合并请求与评审操作的身份验证。")).toBeInTheDocument();
@@ -336,16 +375,20 @@ describe("SettingsPanel", () => {
     setLang("en");
   });
 
-  it("renders every provider and the fixed DeepSeek service details", async () => {
+  it("renders every provider and its compatible model catalog", async () => {
+    const user = userEvent.setup();
     renderPanel();
+    await screen.findByText("Not configured");
 
     expect(screen.getByRole("dialog", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "DeepSeek" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "OpenAI" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Anthropic" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "GitHub" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "GitLab" })).toBeInTheDocument();
     const tabs = screen.getAllByRole("tab");
     const panels = screen.getAllByRole("tabpanel", { hidden: true });
-    expect(panels).toHaveLength(3);
+    expect(panels).toHaveLength(5);
     for (const tab of tabs) {
       const panelId = tab.getAttribute("aria-controls");
       expect(panelId).toBeTruthy();
@@ -353,6 +396,8 @@ describe("SettingsPanel", () => {
       expect(document.getElementById(panelId!)).toHaveAttribute("aria-labelledby", tab.id);
     }
     expect(document.getElementById("settings-panel-deepseek")).not.toHaveAttribute("hidden");
+    expect(document.getElementById("settings-panel-openai")).toHaveAttribute("hidden");
+    expect(document.getElementById("settings-panel-anthropic")).toHaveAttribute("hidden");
     expect(document.getElementById("settings-panel-github")).toHaveAttribute("hidden");
     expect(document.getElementById("settings-panel-gitlab")).toHaveAttribute("hidden");
     expect(screen.getByRole("tab", { name: "DeepSeek" })).toHaveAttribute("aria-selected", "true");
@@ -360,10 +405,23 @@ describe("SettingsPanel", () => {
     expect(screen.getByRole("tab", { name: "GitLab" })).toHaveAttribute("aria-selected", "false");
     expect(screen.getByText("https://api.deepseek.com")).toBeInTheDocument();
     expect(screen.getByText("deepseek-v4-flash")).toBeInTheDocument();
-    expect(screen.getByText("When AI Review runs, selected PR patches and code excerpts read during analysis are sent to DeepSeek.")).toBeInTheDocument();
+    expect(screen.getByText("When this provider runs, the PR patch or issue snapshot and requested code excerpts are sent to DeepSeek.")).toBeInTheDocument();
 
-    await waitFor(() => expect(ipc.credentialStatus).toHaveBeenCalledTimes(3));
+    await user.click(screen.getByRole("tab", { name: "OpenAI" }));
+    expect(screen.getByText("https://api.openai.com/v1")).toBeInTheDocument();
+    expect(screen.getByText("gpt-5.6-terra")).toBeInTheDocument();
+    expect(screen.getByLabelText("OpenAI API key")).toHaveAttribute("type", "password");
+
+    await user.click(screen.getByRole("tab", { name: "Anthropic" }));
+    expect(screen.getByText("https://api.anthropic.com/v1")).toBeInTheDocument();
+    expect(screen.getByText("claude-sonnet-5")).toBeInTheDocument();
+    expect(screen.getByLabelText("Anthropic API key")).toHaveAttribute("type", "password");
+
+    await waitFor(() => expect(ipc.credentialStatus).toHaveBeenCalledTimes(5));
+    expect(ipc.listReviewModels).toHaveBeenCalledTimes(1);
     expect(ipc.credentialStatus).toHaveBeenCalledWith("deepseek");
+    expect(ipc.credentialStatus).toHaveBeenCalledWith("openai");
+    expect(ipc.credentialStatus).toHaveBeenCalledWith("anthropic");
     expect(ipc.credentialStatus).toHaveBeenCalledWith("github");
     expect(ipc.credentialStatus).toHaveBeenCalledWith("gitlab");
   });

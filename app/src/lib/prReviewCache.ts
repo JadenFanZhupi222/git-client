@@ -6,6 +6,9 @@ import type {
 } from "../bindings";
 
 const CACHE_PREFIX = "pr-review-result-v1";
+const GITLAB_CACHE_PREFIX = "gitlab-mr-review-result-v1";
+
+export type ReviewPlatform = "github" | "gitlab";
 
 export type CachedFindingDraft = {
   finding: ReviewFindingDto;
@@ -25,8 +28,9 @@ export type CachedReview = {
 export function loadCachedReview(
   target: ReviewTargetDto,
   expectedHeadSha: string,
+  platform: ReviewPlatform = "github",
 ): CachedReview | null {
-  const key = cacheKey(target);
+  const key = cacheKey(target, platform);
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
@@ -59,24 +63,32 @@ function migrateCachedReview(value: unknown): unknown {
   };
 }
 
-export function saveCachedReview(target: ReviewTargetDto, value: CachedReview): void {
+export function saveCachedReview(
+  target: ReviewTargetDto,
+  value: CachedReview,
+  platform: ReviewPlatform = "github",
+): void {
   try {
-    localStorage.setItem(cacheKey(target), JSON.stringify(value));
+    localStorage.setItem(cacheKey(target, platform), JSON.stringify(value));
   } catch {
     // Review remains usable in memory if storage is unavailable or full.
   }
 }
 
-export function clearCachedReview(target: ReviewTargetDto): void {
+export function clearCachedReview(
+  target: ReviewTargetDto,
+  platform: ReviewPlatform = "github",
+): void {
   try {
-    localStorage.removeItem(cacheKey(target));
+    localStorage.removeItem(cacheKey(target, platform));
   } catch {
     // Storage cleanup is best-effort.
   }
 }
 
-function cacheKey(target: ReviewTargetDto): string {
-  return `${CACHE_PREFIX}:${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}#${target.pull_number}`;
+function cacheKey(target: ReviewTargetDto, platform: ReviewPlatform): string {
+  const prefix = platform === "gitlab" ? GITLAB_CACHE_PREFIX : CACHE_PREFIX;
+  return `${prefix}:${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}#${target.pull_number}`;
 }
 
 function isCachedReview(value: unknown): value is CachedReview {

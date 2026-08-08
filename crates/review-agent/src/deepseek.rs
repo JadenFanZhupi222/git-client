@@ -356,6 +356,7 @@ mod tests {
                 Vec::new()
             },
             response_format: ResponseFormat::JsonObject,
+            response_schema: None,
             max_output_tokens: 8192,
         }
     }

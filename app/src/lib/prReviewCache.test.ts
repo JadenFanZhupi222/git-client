@@ -71,4 +71,21 @@ describe("prReviewCache", () => {
     clearCachedReview(target);
     expect(localStorage.length).toBe(0);
   });
+
+  it("isolates GitHub pull request and GitLab merge request caches", () => {
+    const cached = {
+      version: 1 as const,
+      headSha: "abc123",
+      modelId: "deepseek-v4-flash",
+      outputLanguage: "english" as const,
+      result,
+      drafts: [],
+    };
+    saveCachedReview(target, cached, "gitlab");
+
+    expect(loadCachedReview(target, "abc123", "github")).toBeNull();
+    expect(loadCachedReview(target, "abc123", "gitlab")?.result).toEqual(result);
+    clearCachedReview(target, "gitlab");
+    expect(loadCachedReview(target, "abc123", "gitlab")).toBeNull();
+  });
 });

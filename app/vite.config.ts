@@ -10,6 +10,18 @@ export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
   build: {
     manifest: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "app-vendor": [
+            "react",
+            "react-dom",
+            "@tanstack/react-query",
+            "@tanstack/react-virtual",
+          ],
+        },
+      },
+    },
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

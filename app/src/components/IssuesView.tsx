@@ -6,14 +6,14 @@ import {
   listGithubIssues,
   type IpcError,
 } from "../ipc";
-import type { IssueContextDto, IssueSummaryDto } from "../bindings";
+import type { CredentialKindDto, IssueContextDto, IssueSummaryDto } from "../bindings";
 import type { RemoteLike } from "../lib/hosting";
 import { useLang, useT } from "../lib/i18n";
 import { findGithubRemote } from "./GithubPrPanel";
 import { IssueIcon, SearchIcon } from "./icons";
 import { IssueTriageWorkspace } from "./IssueTriageWorkspace";
 
-type CredentialKind = "deepseek" | "github";
+type CredentialKind = CredentialKindDto;
 
 export function IssuesView({
   remotes,

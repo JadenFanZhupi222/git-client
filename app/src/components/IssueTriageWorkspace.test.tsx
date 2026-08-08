@@ -6,12 +6,30 @@ import { IssueTriageWorkspace } from "./IssueTriageWorkspace";
 
 const ipc = vi.hoisted(() => ({
   listReviewModels: vi.fn(),
+  credentialStatus: vi.fn(),
   onReviewProgress: vi.fn(),
   publishIssueTriage: vi.fn(),
   startIssueTriage: vi.fn(),
   cancelIssueTriage: vi.fn(),
 }));
 vi.mock("../ipc", () => ipc);
+
+function modelOption(id: string, label: string) {
+  return {
+    id,
+    label,
+    provider: "DeepSeek",
+    provider_id: "deepseek",
+    capabilities: {
+      supports_tool_calling: true,
+      supports_structured_output: true,
+      context_window_tokens: 128_000,
+      max_output_tokens: 32_000,
+      reports_usage: true,
+    },
+    pricing: null,
+  };
+}
 
 const target = { owner: "acme", repo: "rocket", issue_number: 7 };
 const context = {
@@ -50,7 +68,8 @@ describe("IssueTriageWorkspace", () => {
     localStorage.clear();
     setLang("en");
     vi.clearAllMocks();
-    ipc.listReviewModels.mockResolvedValue([{ id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", provider: "DeepSeek" }]);
+    ipc.listReviewModels.mockResolvedValue([modelOption("deepseek-v4-flash", "DeepSeek V4 Flash")]);
+    ipc.credentialStatus.mockResolvedValue(false);
     ipc.onReviewProgress.mockResolvedValue(vi.fn());
     ipc.startIssueTriage.mockResolvedValue(result);
     ipc.cancelIssueTriage.mockResolvedValue(undefined);
@@ -87,8 +106,12 @@ describe("IssueTriageWorkspace", () => {
     expect(localStorage.getItem("issue-triage-result-v1:acme/rocket#7")).toContain("A reproducible launch crash");
   });
 
-  it("routes missing model credentials to settings", async () => {
-    ipc.startIssueTriage.mockRejectedValue({ code: "AI_KEY_MISSING", message: "missing", recoverable: true });
+  it.each([
+    ["AI_KEY_MISSING", "deepseek"],
+    ["OPENAI_KEY_MISSING", "openai"],
+    ["ANTHROPIC_KEY_MISSING", "anthropic"],
+  ] as const)("routes %s model credentials to settings", async (code, kind) => {
+    ipc.startIssueTriage.mockRejectedValue({ code, message: "missing", recoverable: true });
     const user = userEvent.setup();
     const onConfigureCredential = vi.fn();
     localStorage.setItem("issue-triage-consent-v1", "accepted");
@@ -97,7 +120,7 @@ describe("IssueTriageWorkspace", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Start triage" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Start triage" }));
     await user.click(await screen.findByRole("button", { name: "Open settings" }));
-    expect(onConfigureCredential).toHaveBeenCalledWith("deepseek");
+    expect(onConfigureCredential).toHaveBeenCalledWith(kind);
   });
 
   it("shows cancellation as a terminal state with a diagnostic id", async () => {

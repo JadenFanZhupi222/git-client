@@ -26,6 +26,8 @@ pub(crate) fn credential_user(kind: CredentialKindDto) -> &'static str {
         CredentialKindDto::Github => "github-token",
         CredentialKindDto::Gitlab => "gitlab-token",
         CredentialKindDto::Deepseek => "deepseek-token",
+        CredentialKindDto::Openai => "openai-token",
+        CredentialKindDto::Anthropic => "anthropic-token",
     }
 }
 
@@ -162,6 +164,8 @@ pub(crate) fn http_status_error(status: StatusCode) -> IpcError {
 
 struct EndpointConfig {
     deepseek: String,
+    openai: String,
+    anthropic: String,
     github: String,
     gitlab: String,
 }
@@ -170,6 +174,8 @@ impl EndpointConfig {
     fn production() -> Self {
         Self {
             deepseek: "https://api.deepseek.com/models".into(),
+            openai: "https://api.openai.com/v1/models".into(),
+            anthropic: "https://api.anthropic.com/v1/models".into(),
             github: "https://api.github.com/user".into(),
             gitlab: "https://gitlab.com/api/v4/user".into(),
         }
@@ -179,6 +185,8 @@ impl EndpointConfig {
     fn for_test(base: &str) -> Self {
         Self {
             deepseek: format!("{base}/models"),
+            openai: format!("{base}/openai/models"),
+            anthropic: format!("{base}/anthropic/models"),
             github: format!("{base}/user"),
             gitlab: format!("{base}/api/v4/user"),
         }
@@ -200,6 +208,11 @@ async fn validate_credential(
             .get(&endpoints.gitlab)
             .header("PRIVATE-TOKEN", secret),
         CredentialKindDto::Deepseek => client.get(&endpoints.deepseek).bearer_auth(secret),
+        CredentialKindDto::Openai => client.get(&endpoints.openai).bearer_auth(secret),
+        CredentialKindDto::Anthropic => client
+            .get(&endpoints.anthropic)
+            .header("x-api-key", secret)
+            .header("anthropic-version", "2023-06-01"),
     };
     let response = request.send().await.map_err(|_| IpcError {
         code: "NETWORK_ERROR".into(),
@@ -245,6 +258,69 @@ mod tests {
         assert_eq!(
             credential_user(CredentialKindDto::Deepseek),
             "deepseek-token"
+        );
+        assert_eq!(credential_user(CredentialKindDto::Openai), "openai-token");
+        assert_eq!(
+            credential_user(CredentialKindDto::Anthropic),
+            "anthropic-token"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "uses the saved OpenAI credential and performs a billed live API request"]
+    async fn live_openai_provider_smoke() {
+        use review_agent::{
+            GPT_5_6_LUNA_MODEL, ModelOutput, ModelRequest, ResponseFormat, TranscriptItem,
+            create_model_provider,
+        };
+
+        let key = read_credential(CredentialKindDto::Openai)
+            .expect("OpenAI credential must be saved in application settings");
+        let provider = create_model_provider(key, GPT_5_6_LUNA_MODEL)
+            .expect("the allowlisted OpenAI provider must be constructible");
+        let response = provider
+            .respond(&ModelRequest {
+                transcript: vec![TranscriptItem::User("Reply exactly OK.".into())],
+                tools: Vec::new(),
+                response_format: ResponseFormat::Text,
+                response_schema: None,
+                max_output_tokens: 32,
+            })
+            .await
+            .expect("the live OpenAI provider request must succeed");
+
+        assert!(
+            matches!(response.output, ModelOutput::FinalText { ref text } if !text.trim().is_empty()),
+            "OpenAI must return non-empty text"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "uses the saved Anthropic credential and performs a billed live API request"]
+    async fn live_anthropic_provider_smoke() {
+        use review_agent::{
+            CLAUDE_SONNET_5_MODEL, ModelOutput, ModelRequest, ResponseFormat, TranscriptItem,
+            create_model_provider,
+        };
+
+        let key = read_credential(CredentialKindDto::Anthropic)
+            .expect("Anthropic credential must be saved in application settings");
+        let provider = create_model_provider(key, CLAUDE_SONNET_5_MODEL)
+            .expect("the allowlisted Anthropic provider must be constructible");
+        let response = provider
+            .respond(&ModelRequest {
+                transcript: vec![TranscriptItem::User("Reply exactly OK.".into())],
+                tools: Vec::new(),
+                response_format: ResponseFormat::Text,
+                response_schema: None,
+                max_output_tokens: 32,
+            })
+            .await
+            .expect("the live Anthropic provider request must succeed");
+
+        assert!(
+            matches!(response.output, ModelOutput::FinalText { ref text } if !text.trim().is_empty()),
+            "Anthropic must return non-empty text"
         );
     }
 
@@ -384,6 +460,18 @@ mod tests {
                 CredentialKindDto::Gitlab,
                 "/api/v4/user",
                 "private-token",
+                "fixture-secret",
+            ),
+            (
+                CredentialKindDto::Openai,
+                "/openai/models",
+                "authorization",
+                "Bearer fixture-secret",
+            ),
+            (
+                CredentialKindDto::Anthropic,
+                "/anthropic/models",
+                "x-api-key",
                 "fixture-secret",
             ),
         ] {

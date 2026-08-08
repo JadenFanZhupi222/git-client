@@ -8,6 +8,7 @@ import {
   type IpcError,
 } from "../ipc";
 import type {
+  CredentialKindDto,
   IssueContextDto,
   IssueSnapshotDto,
   IssueTargetDto,
@@ -20,10 +21,11 @@ import type {
 import { useLang, useT } from "../lib/i18n";
 import { estimatedRunCost, formatEstimatedCost } from "../lib/agentCost";
 import { CheckIcon, CloseIcon, SpinnerIcon } from "./icons";
+import { AgentModelPicker } from "./AgentModelPicker";
 
 const CONSENT_KEY = "issue-triage-consent-v1";
 const CACHE_PREFIX = "issue-triage-result-v1";
-type CredentialKind = "deepseek" | "github";
+type CredentialKind = CredentialKindDto;
 type Phase = "select" | "running" | "results" | "confirm" | "publishing" | "publish_result";
 type AgentUiError = IpcError & { diagnostic_id?: string };
 
@@ -286,13 +288,15 @@ export function IssueTriageWorkspace({
 
           {phase === "select" && (
             <section>
-              <div className="flex flex-wrap items-end gap-3 border-y border-line py-3">
-                <label className="grid min-w-44 gap-1 text-[11px] font-medium text-fg-muted">
-                  {t("issueTriage.model")}
-                  <select value={selectedModelId} onChange={(event) => setSelectedModelId(event.currentTarget.value)} className="h-8 rounded-md border border-line bg-canvas px-2 text-xs font-normal text-fg outline-none focus:border-accent">
-                    {models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
-                  </select>
-                </label>
+              <div className="flex flex-wrap items-start gap-3 border-y border-line py-3">
+                <AgentModelPicker
+                  id="issue-triage-model"
+                  label={t("issueTriage.model")}
+                  models={models}
+                  value={selectedModelId}
+                  onChange={setSelectedModelId}
+                  onConfigureCredential={onConfigureCredential}
+                />
                 <label className="grid min-w-44 gap-1 text-[11px] font-medium text-fg-muted">
                   {t("issueTriage.language")}
                   <select value={outputLanguage} onChange={(event) => setOutputLanguage(event.currentTarget.value as ReviewLanguageDto)} className="h-8 rounded-md border border-line bg-canvas px-2 text-xs font-normal text-fg outline-none focus:border-accent">
@@ -575,7 +579,15 @@ function CancellationNotice({ error }: { error: AgentUiError }) {
 
 function ErrorNotice({ error, onConfigureCredential, onRetry }: { error: AgentUiError; onConfigureCredential: (kind: CredentialKind) => void; onRetry?: () => void }) {
   const t = useT();
-  const credential = error.code === "AI_KEY_MISSING" ? "deepseek" : error.code === "GITHUB_TOKEN_MISSING" ? "github" : null;
+  const credential: CredentialKind | null = error.code === "AI_KEY_MISSING"
+    ? "deepseek"
+    : error.code === "OPENAI_KEY_MISSING"
+      ? "openai"
+      : error.code === "ANTHROPIC_KEY_MISSING"
+        ? "anthropic"
+        : error.code === "GITHUB_TOKEN_MISSING"
+          ? "github"
+          : null;
   return (
     <div role="alert" className="mt-4 rounded-md border border-danger/40 bg-danger/10 p-3 text-xs text-danger">
       <p>{errorMessage(error, t)}</p>
@@ -597,7 +609,7 @@ function progressLabel(progress: ReviewProgressEventDto | null, t: ReturnType<ty
 }
 
 function errorMessage(error: AgentUiError, t: ReturnType<typeof useT>) {
-  const known = ["AI_KEY_MISSING", "GITHUB_TOKEN_MISSING", "ISSUE_UPDATED", "ISSUE_NOT_FOUND", "ISSUE_TRIAGE_BUDGET_EXCEEDED", "ISSUE_PUBLISH_FAILED", "NETWORK_ERROR", "RATE_LIMITED", "AUTH_FAILED", "INVALID_MODEL_OUTPUT", "INVALID_REVIEW_MODEL", "AGENT_RESOURCE_BUSY", "CANCELLED"];
+  const known = ["AI_KEY_MISSING", "OPENAI_KEY_MISSING", "ANTHROPIC_KEY_MISSING", "GITHUB_TOKEN_MISSING", "ISSUE_UPDATED", "ISSUE_NOT_FOUND", "ISSUE_TRIAGE_BUDGET_EXCEEDED", "ISSUE_PUBLISH_FAILED", "NETWORK_ERROR", "RATE_LIMITED", "AUTH_FAILED", "INVALID_MODEL_OUTPUT", "INVALID_REVIEW_MODEL", "AGENT_RESOURCE_BUSY", "CANCELLED"];
   return known.includes(error.code) ? t(`issueTriage.error.${error.code}` as Parameters<typeof t>[0]) : error.message;
 }
 

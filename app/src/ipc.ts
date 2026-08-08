@@ -813,6 +813,10 @@ export async function getReviewPreflight(target: ReviewTargetDto): Promise<Revie
   return await invoke<ReviewPreflightDto>("get_review_preflight", { target });
 }
 
+export async function getGitlabReviewPreflight(target: ReviewTargetDto): Promise<ReviewPreflightDto> {
+  return await invoke<ReviewPreflightDto>("get_gitlab_review_preflight", { target });
+}
+
 export async function listReviewModels(): Promise<ReviewModelOptionDto[]> {
   return await invoke<ReviewModelOptionDto[]>("list_review_models");
 }
@@ -821,12 +825,20 @@ export async function startPrReview(input: ReviewRunInputDto): Promise<ReviewRun
   return await invoke<ReviewRunResultDto>("start_pr_review", { input });
 }
 
+export async function startGitlabMrReview(input: ReviewRunInputDto): Promise<ReviewRunResultDto> {
+  return await invoke<ReviewRunResultDto>("start_gitlab_mr_review", { input });
+}
+
 export async function cancelPrReview(runId: string): Promise<void> {
   await invoke("cancel_pr_review", { runId });
 }
 
 export async function submitPrReview(input: SubmitReviewDto): Promise<PublishedReviewDto> {
   return await invoke<PublishedReviewDto>("submit_pr_review", { input });
+}
+
+export async function submitGitlabMrReview(input: SubmitReviewDto): Promise<PublishedReviewDto> {
+  return await invoke<PublishedReviewDto>("submit_gitlab_mr_review", { input });
 }
 
 export function onReviewProgress(cb: (progress: ReviewProgressEventDto) => void): Promise<() => void> {

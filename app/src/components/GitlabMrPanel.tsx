@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal, flushSync } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getGitlabToken, hasGitlabToken, type IpcError } from "../ipc";
+import type { CredentialKindDto } from "../bindings";
 import {
   approveGitlabMergeRequest,
   createGitlabMergeRequestNote,
@@ -21,6 +23,7 @@ import {
 import { CloseIcon, SpinnerIcon } from "./icons";
 import { useToast } from "./Toast";
 import { useT } from "../lib/i18n";
+import { PrReviewWorkspace } from "./PrReviewWorkspace";
 
 export function GitlabMrPanel({
   remotes,
@@ -28,12 +31,14 @@ export function GitlabMrPanel({
   preferredRemote,
   onClose,
   onConfigureToken,
+  onConfigureCredential,
 }: {
   remotes: RemoteLike[];
   branch: string | null;
   preferredRemote: string | null;
   onClose: () => void;
   onConfigureToken: () => void;
+  onConfigureCredential?: (kind: CredentialKindDto) => void;
 }) {
   const toast = useToast();
   const t = useT();
@@ -51,6 +56,8 @@ export function GitlabMrPanel({
   const [retryingJobId, setRetryingJobId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [reviewTarget, setReviewTarget] = useState<{ owner: string; repo: string; pull_number: number } | null>(null);
+  const [reviewOwnsFocus, setReviewOwnsFocus] = useState(false);
 
   const remote = useMemo(
     () => findGitlabRemote(remotes, preferredRemote),
@@ -59,11 +66,11 @@ export function GitlabMrPanel({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !reviewTarget) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, reviewTarget]);
 
   useEffect(() => {
     let alive = true;
@@ -298,6 +305,8 @@ export function GitlabMrPanel({
         role="dialog"
         aria-modal="true"
         aria-label={t("gitlabMr.dialog")}
+        aria-hidden={reviewOwnsFocus ? true : undefined}
+        inert={reviewOwnsFocus ? true : undefined}
         className="panel-in popover flex max-h-[78vh] w-[560px] flex-col overflow-hidden rounded-lg border border-line-strong bg-canvas"
         onClick={(e) => e.stopPropagation()}
       >
@@ -391,6 +400,11 @@ export function GitlabMrPanel({
                       onMerge={mergeMr}
                       retryingJobId={retryingJobId}
                       onRetryJob={retryJob}
+                      onAiReview={() => {
+                        if (!remote) return;
+                        setReviewOwnsFocus(false);
+                        setReviewTarget({ owner: remote.owner, repo: remote.repo, pull_number: mr.iid });
+                      }}
                     />
                   )}
                 </li>
@@ -423,6 +437,23 @@ export function GitlabMrPanel({
           </button>
         </div>
       </div>
+      {reviewTarget && createPortal(
+        <PrReviewWorkspace
+          platform="gitlab"
+          target={reviewTarget}
+          onClose={() => {
+            flushSync(() => setReviewOwnsFocus(false));
+            setReviewTarget(null);
+          }}
+          onConfigureCredential={(kind) => {
+            flushSync(() => setReviewOwnsFocus(false));
+            setReviewTarget(null);
+            (onConfigureCredential ?? ((next) => { if (next === "gitlab") onConfigureToken(); }))(kind);
+          }}
+          onFocusReady={() => setReviewOwnsFocus(true)}
+        />,
+        document.body,
+      )}
     </div>
   );
 }
@@ -438,6 +469,7 @@ function MergeRequestDetailsView({
   onMerge,
   retryingJobId,
   onRetryJob,
+  onAiReview,
 }: {
   detail: GitlabMergeRequestDetails;
   approvalAction: "approve" | "unapprove" | null;
@@ -455,6 +487,7 @@ function MergeRequestDetailsView({
     detail: GitlabMergeRequestDetails,
     job: GitlabPipelineJobSummary,
   ) => void;
+  onAiReview: () => void;
 }) {
   const t = useT();
   const [noteBody, setNoteBody] = useState("");
@@ -518,6 +551,14 @@ function MergeRequestDetailsView({
           ) : null}
         </div>
       )}
+      <div className="flex justify-end border-t border-line pt-2">
+        <button
+          onClick={onAiReview}
+          className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-on-accent"
+        >
+          {t("gitlabMrDetail.aiReview")}
+        </button>
+      </div>
       {detail.pipelineJobs.length > 0 && (
         <div className="grid gap-1.5 border-t border-line pt-2">
           <div className="text-[10px] uppercase tracking-wide text-fg-subtle">

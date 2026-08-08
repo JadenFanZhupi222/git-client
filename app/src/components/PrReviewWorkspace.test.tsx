@@ -6,16 +6,37 @@ import { PrReviewWorkspace } from "./PrReviewWorkspace";
 
 const ipc = vi.hoisted(() => ({
   getReviewPreflight: vi.fn(),
+  getGitlabReviewPreflight: vi.fn(),
   listReviewModels: vi.fn(),
+  credentialStatus: vi.fn(),
   startPrReview: vi.fn(),
+  startGitlabMrReview: vi.fn(),
   cancelPrReview: vi.fn(),
   submitPrReview: vi.fn(),
+  submitGitlabMrReview: vi.fn(),
   onReviewProgress: vi.fn(),
 }));
 const opener = vi.hoisted(() => ({ openUrl: vi.fn() }));
 
 vi.mock("../ipc", () => ipc);
 vi.mock("@tauri-apps/plugin-opener", () => opener);
+
+function modelOption(id: string, label: string) {
+  return {
+    id,
+    label,
+    provider: "DeepSeek",
+    provider_id: "deepseek",
+    capabilities: {
+      supports_tool_calling: true,
+      supports_structured_output: true,
+      context_window_tokens: 128_000,
+      max_output_tokens: 32_000,
+      reports_usage: true,
+    },
+    pricing: null,
+  };
+}
 
 const target = { owner: "acme", repo: "rocket", pull_number: 17 };
 const normalPreflight = {
@@ -74,20 +95,28 @@ describe("PrReviewWorkspace", () => {
     setLang("en");
     vi.clearAllMocks();
     ipc.getReviewPreflight.mockReset();
+    ipc.getGitlabReviewPreflight.mockReset();
     ipc.listReviewModels.mockReset();
+    ipc.credentialStatus.mockReset();
     ipc.onReviewProgress.mockReset();
     ipc.startPrReview.mockReset();
+    ipc.startGitlabMrReview.mockReset();
     ipc.cancelPrReview.mockReset();
     ipc.submitPrReview.mockReset();
+    ipc.submitGitlabMrReview.mockReset();
     ipc.getReviewPreflight.mockResolvedValue(normalPreflight);
+    ipc.getGitlabReviewPreflight.mockResolvedValue(normalPreflight);
     ipc.listReviewModels.mockResolvedValue([
-      { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", provider: "DeepSeek" },
-      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "DeepSeek" },
+      modelOption("deepseek-v4-flash", "DeepSeek V4 Flash"),
+      modelOption("deepseek-v4-pro", "DeepSeek V4 Pro"),
     ]);
+    ipc.credentialStatus.mockResolvedValue(false);
     ipc.onReviewProgress.mockResolvedValue(vi.fn());
     ipc.startPrReview.mockResolvedValue(result);
+    ipc.startGitlabMrReview.mockResolvedValue(result);
     ipc.cancelPrReview.mockResolvedValue(undefined);
     ipc.submitPrReview.mockResolvedValue({ review_id: 88, html_url: "https://github.com/acme/rocket/pull/17#pullrequestreview-88" });
+    ipc.submitGitlabMrReview.mockResolvedValue({ review_id: 42, html_url: "https://gitlab.com/acme/rocket/-/merge_requests/17#note_42" });
   });
 
   it("loads preflight, auto-selects reviewable files, and disables non-reviewable files", async () => {
@@ -132,6 +161,25 @@ describe("PrReviewWorkspace", () => {
       model_id: "deepseek-v4-pro",
       output_language: "simplified_chinese",
     }));
+  });
+
+  it("routes GitLab merge request analysis and confirmed publication through GitLab IPC", async () => {
+    const user = userEvent.setup();
+    renderWorkspace({ platform: "gitlab" });
+    await screen.findByText("0123456");
+    await acceptAndStart(user);
+    await screen.findByText("Null access");
+    await user.click(screen.getByRole("button", { name: "Submit review" }));
+
+    expect(ipc.getGitlabReviewPreflight).toHaveBeenCalledWith(target);
+    expect(ipc.startGitlabMrReview).toHaveBeenCalledWith(expect.objectContaining({ target }));
+    expect(ipc.submitGitlabMrReview).toHaveBeenCalledWith(expect.objectContaining({
+      target,
+      findings: [expect.objectContaining({ id: "f1" })],
+    }));
+    expect(ipc.startPrReview).not.toHaveBeenCalled();
+    expect(ipc.submitPrReview).not.toHaveBeenCalled();
+    expect(await screen.findByText("Published review #42")).toBeInTheDocument();
   });
 
   it("requires explicit selection for large PRs and enforces file and byte preview limits", async () => {
@@ -226,7 +274,7 @@ describe("PrReviewWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Cancel review" }));
     rejectRun({ code: "CANCELLED", message: "cancelled", recoverable: true, diagnostic_id: "diag-1111111111111111" });
 
-    expect(await screen.findByText("Review was cancelled. No result was saved and no GitHub review was published.")).toBeInTheDocument();
+    expect(await screen.findByText("Review was cancelled. No result was saved and no review was published.")).toBeInTheDocument();
     expect(screen.getByText("Diagnostic diag-1111111111111111")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start review" })).toBeEnabled();
   });
@@ -271,6 +319,8 @@ describe("PrReviewWorkspace", () => {
 
   it.each([
     ["AI_KEY_MISSING", "deepseek"],
+    ["OPENAI_KEY_MISSING", "openai"],
+    ["ANTHROPIC_KEY_MISSING", "anthropic"],
     ["GITHUB_TOKEN_MISSING", "github"],
   ] as const)("routes %s to credential settings", async (code, kind) => {
     ipc.startPrReview.mockRejectedValue({ code, message: "Missing credential", recoverable: true });
@@ -310,7 +360,7 @@ describe("PrReviewWorkspace", () => {
       findings: [{ ...finding, draft_comment: "Edited comment" }],
     });
     expect(await screen.findByText("Review published")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Open on GitHub" }));
+    await user.click(screen.getByRole("button", { name: "Open published review" }));
     expect(opener.openUrl).toHaveBeenCalledWith("https://github.com/acme/rocket/pull/17#pullrequestreview-88");
   });
 

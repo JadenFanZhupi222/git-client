@@ -2,14 +2,18 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   cancelPrReview,
+  getGitlabReviewPreflight,
   getReviewPreflight,
   listReviewModels,
   onReviewProgress,
+  startGitlabMrReview,
   startPrReview,
+  submitGitlabMrReview,
   submitPrReview,
   type IpcError,
 } from "../ipc";
 import type {
+  CredentialKindDto,
   PublishedReviewDto,
   ReviewFindingDto,
   ReviewLanguageDto,
@@ -25,14 +29,16 @@ import {
   clearCachedReview,
   loadCachedReview,
   saveCachedReview,
+  type ReviewPlatform,
 } from "../lib/prReviewCache";
 import { CheckIcon, CloseIcon, SpinnerIcon } from "./icons";
+import { AgentModelPicker } from "./AgentModelPicker";
 
 const CONSENT_KEY = "pr-review-consent-v1";
 const MAX_FILES = 30;
 const MAX_PATCH_BYTES = 200_000;
 
-type CredentialKind = "deepseek" | "github";
+type CredentialKind = CredentialKindDto;
 type Phase = "preflight" | "select" | "running" | "results" | "published";
 type AgentUiError = IpcError & { diagnostic_id?: string };
 
@@ -47,11 +53,13 @@ export function PrReviewWorkspace({
   onClose,
   onConfigureCredential,
   onFocusReady,
+  platform = "github",
 }: {
   target: ReviewTargetDto;
   onClose: () => void;
   onConfigureCredential: (kind: CredentialKind) => void;
   onFocusReady?: () => void;
+  platform?: ReviewPlatform;
 }) {
   const t = useT();
   const lang = useLang();
@@ -80,6 +88,9 @@ export function PrReviewWorkspace({
   const [published, setPublished] = useState<PublishedReviewDto | null>(null);
 
   const busy = phase === "running" || submitting;
+  const getPreflightRequest = platform === "gitlab" ? getGitlabReviewPreflight : getReviewPreflight;
+  const startReviewRequest = platform === "gitlab" ? startGitlabMrReview : startPrReview;
+  const submitReviewRequest = platform === "gitlab" ? submitGitlabMrReview : submitPrReview;
 
   useLayoutEffect(() => {
     mountedRef.current = true;
@@ -98,7 +109,7 @@ export function PrReviewWorkspace({
 
   useEffect(() => {
     void loadPreflight();
-  }, [target.owner, target.repo, target.pull_number]);
+  }, [target.owner, target.repo, target.pull_number, platform]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -147,7 +158,7 @@ export function PrReviewWorkspace({
     setPublished(null);
     try {
       const [next, nextModels] = await Promise.all([
-        getReviewPreflight(target),
+        getPreflightRequest(target),
         listReviewModels(),
       ]);
       if (!mountedRef.current) return;
@@ -156,7 +167,7 @@ export function PrReviewWorkspace({
       setSelectedModelId((current) => (
         nextModels.some((model) => model.id === current) ? current : (nextModels[0]?.id ?? "")
       ));
-      const cached = loadCachedReview(target, next.head_sha);
+      const cached = loadCachedReview(target, next.head_sha, platform);
       if (cached) {
         const reviewable = new Set(
           next.files.filter((file) => file.reviewable).map((file) => file.path),
@@ -218,10 +229,11 @@ export function PrReviewWorkspace({
       outputLanguage,
       result,
       drafts,
-    });
+    }, platform);
   }, [
     drafts,
     outputLanguage,
+    platform,
     phase,
     result,
     selectedModelId,
@@ -272,7 +284,7 @@ export function PrReviewWorkspace({
         return;
       }
       unsubscribeRef.current = unsubscribe;
-      const next = await startPrReview({
+      const next = await startReviewRequest({
         run_id: runId,
         target,
         expected_head_sha: preflight.head_sha,
@@ -326,9 +338,9 @@ export function PrReviewWorkspace({
     setSubmitting(true);
     setError(null);
     try {
-      const next = await submitPrReview({ target, head_sha: result.head_sha, findings });
+      const next = await submitReviewRequest({ target, head_sha: result.head_sha, findings });
       if (!mountedRef.current) return;
-      clearCachedReview(target);
+      clearCachedReview(target, platform);
       setPublished(next);
       setPhase("published");
     } catch (reason) {
@@ -343,7 +355,7 @@ export function PrReviewWorkspace({
   }
 
   function reviewAgain() {
-    clearCachedReview(target);
+    clearCachedReview(target, platform);
     setResult(null);
     setDrafts([]);
     setPublished(null);
@@ -388,18 +400,15 @@ export function PrReviewWorkspace({
 
           {phase === "select" && preflight && (
             <section aria-labelledby="pr-review-files">
-              <div className="mb-4 flex flex-wrap items-end gap-3 border-y border-line py-3">
-                <label className="grid min-w-40 gap-1 text-[11px] font-medium text-fg-muted">
-                  {t("prReview.model")}
-                  <select
-                    aria-label={t("prReview.model")}
-                    value={selectedModelId}
-                    onChange={(event) => setSelectedModelId(event.currentTarget.value)}
-                    className="h-8 rounded-md border border-line bg-canvas px-2 text-xs font-normal text-fg outline-none focus:border-accent"
-                  >
-                    {models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
-                  </select>
-                </label>
+              <div className="mb-4 flex flex-wrap items-start gap-3 border-y border-line py-3">
+                <AgentModelPicker
+                  id="pr-review-model"
+                  label={t("prReview.model")}
+                  models={models}
+                  value={selectedModelId}
+                  onChange={setSelectedModelId}
+                  onConfigureCredential={onConfigureCredential}
+                />
                 <label className="grid min-w-40 gap-1 text-[11px] font-medium text-fg-muted">
                   {t("prReview.outputLanguage")}
                   <select
@@ -540,7 +549,17 @@ function CancellationNotice({ error }: { error: AgentUiError }) {
 
 function ErrorNotice({ error, onRetry, onConfigureCredential }: { error: AgentUiError; onRetry?: () => void; onConfigureCredential: (kind: CredentialKind) => void }) {
   const t = useT();
-  const credential = error.code === "AI_KEY_MISSING" ? "deepseek" : error.code === "GITHUB_TOKEN_MISSING" ? "github" : null;
+  const credential: CredentialKind | null = error.code === "AI_KEY_MISSING"
+    ? "deepseek"
+    : error.code === "OPENAI_KEY_MISSING"
+      ? "openai"
+      : error.code === "ANTHROPIC_KEY_MISSING"
+        ? "anthropic"
+        : error.code === "GITHUB_TOKEN_MISSING"
+          ? "github"
+          : error.code === "GITLAB_TOKEN_MISSING"
+            ? "gitlab"
+          : null;
   return <div role="alert" className="mt-4 rounded-md border border-danger/40 bg-danger/10 p-3 text-xs text-danger"><p>{errorMessage(error, t)}</p>{error.diagnostic_id && <p className="mt-1 font-mono text-[10px]">{t("prReview.errorDiagnostic", { id: error.diagnostic_id })}</p>}<div className="mt-2 flex gap-2">{credential && <button onClick={() => onConfigureCredential(credential)} className="rounded border border-danger/50 px-2 py-1">{t("prReview.openSettings")}</button>}{onRetry && <button onClick={onRetry} className="rounded border border-danger/50 px-2 py-1">{error.code === "PR_UPDATED" ? t("prReview.refreshPreflight") : t("prReview.retry")}</button>}</div></div>;
 }
 
@@ -562,7 +581,7 @@ function sortFindings(findings: ReviewFindingDto[]) {
 }
 
 function errorMessage(error: AgentUiError, t: ReturnType<typeof useT>) {
-  const known = ["AI_KEY_MISSING", "GITHUB_TOKEN_MISSING", "PR_UPDATED", "REVIEW_BUDGET_EXCEEDED", "NETWORK_ERROR", "RATE_LIMITED", "AUTH_FAILED", "INVALID_MODEL_OUTPUT", "INVALID_REVIEW_MODEL", "REVIEW_PUBLISH_FAILED", "AGENT_RESOURCE_BUSY", "CANCELLED"];
+  const known = ["AI_KEY_MISSING", "OPENAI_KEY_MISSING", "ANTHROPIC_KEY_MISSING", "GITHUB_TOKEN_MISSING", "GITLAB_TOKEN_MISSING", "PR_UPDATED", "REVIEW_BUDGET_EXCEEDED", "NETWORK_ERROR", "RATE_LIMITED", "AUTH_FAILED", "INVALID_MODEL_OUTPUT", "INVALID_REVIEW_MODEL", "REVIEW_PUBLISH_FAILED", "AGENT_RESOURCE_BUSY", "CANCELLED"];
   return known.includes(error.code) ? t(`prReview.error.${error.code}` as Parameters<typeof t>[0]) : error.message;
 }
 

@@ -1,19 +1,26 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { CredentialKindDto, IpcError } from "../bindings";
+import type { CredentialKindDto, IpcError, ReviewModelOptionDto } from "../bindings";
 import {
   clearCredential,
   credentialStatus,
+  listReviewModels,
   saveCredential,
   testCredential,
 } from "../ipc";
 import { useT } from "../lib/i18n";
 import type { SettingsSection } from "../lib/settings";
 import { CloseIcon, SpinnerIcon } from "./icons";
+import { CompatibleModelList } from "./AgentModelPicker";
 import { useToast } from "./Toast";
 import { Button } from "./ui/Button";
 
-const PROVIDERS: SettingsSection[] = ["deepseek", "github", "gitlab"];
+const PROVIDERS: SettingsSection[] = ["deepseek", "openai", "anthropic", "github", "gitlab"];
+const AI_PROVIDER_DETAILS: Partial<Record<SettingsSection, { endpoint: string }>> = {
+  deepseek: { endpoint: "https://api.deepseek.com" },
+  openai: { endpoint: "https://api.openai.com/v1" },
+  anthropic: { endpoint: "https://api.anthropic.com/v1" },
+};
 
 type CredentialStatuses = Partial<Record<SettingsSection, boolean>>;
 type Operation = "save" | "test" | "clear";
@@ -43,6 +50,8 @@ export function SettingsPanel({
   const [statuses, setStatuses] = useState<CredentialStatuses>({});
   const [statusErrors, setStatusErrors] = useState<SettingsSection[]>([]);
   const [secret, setSecret] = useState("");
+  const [models, setModels] = useState<ReviewModelOptionDto[]>([]);
+  const [modelCatalogState, setModelCatalogState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [loading, setLoading] = useState(true);
   const [activeOperation, setActiveOperation] = useState<Operation | null>(null);
   const busy = loading || activeOperation !== null;
@@ -82,6 +91,22 @@ export function SettingsPanel({
       statusGenerationRef.current += 1;
     };
   }, [toast]);
+
+  useEffect(() => {
+    let active = true;
+    void listReviewModels()
+      .then((catalog) => {
+        if (!active) return;
+        setModels(catalog);
+        setModelCatalogState("ready");
+      })
+      .catch(() => {
+        if (active) setModelCatalogState("unavailable");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const previousFocus = previousFocusRef.current;
@@ -136,18 +161,18 @@ export function SettingsPanel({
         setSecret("");
         setStatuses((current) => ({ ...current, [operationProvider]: true }));
         setStatusErrors((current) => current.filter((kind) => kind !== operationProvider));
-        toast({ kind: "success", title: t(providerMessageKey(operationProvider, "saved")) });
+        toast({ kind: "success", title: providerMessage(t, operationProvider, "saved") });
       } else if (operation === "test") {
         await testCredential(operationProvider);
         if (!isCurrent()) return;
-        toast({ kind: "success", title: t(providerMessageKey(operationProvider, "valid")) });
+        toast({ kind: "success", title: providerMessage(t, operationProvider, "valid") });
       } else {
         await clearCredential(operationProvider);
         if (!isCurrent()) return;
         setSecret("");
         setStatuses((current) => ({ ...current, [operationProvider]: false }));
         setStatusErrors((current) => current.filter((kind) => kind !== operationProvider));
-        toast({ kind: "success", title: t(providerMessageKey(operationProvider, "cleared")) });
+        toast({ kind: "success", title: providerMessage(t, operationProvider, "cleared") });
       }
     } catch (error) {
       if (!isCurrent()) return;
@@ -160,6 +185,8 @@ export function SettingsPanel({
   const configured = statuses[provider] === true;
   const statusKnown = statuses[provider] !== undefined;
   const statusFailed = statusErrors.includes(provider);
+  const aiProviderDetails = AI_PROVIDER_DETAILS[provider];
+  const compatibleModels = models.filter((model) => model.provider_id === provider);
 
   function onTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
     const currentIndex = PROVIDERS.indexOf(provider);
@@ -251,7 +278,7 @@ export function SettingsPanel({
                         : "border-transparent text-fg-muted hover:text-fg"
                     }`}
                   >
-                    {t(providerMessageKey(kind, "name"))}
+                    {providerMessage(t, kind, "name")}
                   </button>
                 ))}
               </div>
@@ -277,10 +304,10 @@ export function SettingsPanel({
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <h3 className="text-base font-semibold text-fg">
-                        {t(providerMessageKey(provider, "name"))}
+                        {providerMessage(t, provider, "name")}
                       </h3>
                       <p className="mt-1 text-xs leading-relaxed text-fg-muted">
-                        {t(providerMessageKey(provider, "description"))}
+                        {providerMessage(t, provider, "description")}
                       </p>
                     </div>
                     <span
@@ -299,30 +326,41 @@ export function SettingsPanel({
                     </span>
                   </div>
 
-                  {provider === "deepseek" && (
+                  {aiProviderDetails && (
                     <section className="mt-4">
                       <h4 className="text-xs font-semibold text-fg">
                         {t("settings.serviceDetails")}
                       </h4>
                       <dl className="mt-2 grid gap-1.5 text-xs">
                         <ServiceDetail
-                          label={t("settings.deepseek.endpoint")}
-                          value="https://api.deepseek.com"
-                        />
-                        <ServiceDetail
-                          label={t("settings.deepseek.model")}
-                          value="deepseek-v4-flash"
+                          label={t("settings.service.endpoint")}
+                          value={aiProviderDetails.endpoint}
                         />
                       </dl>
-                      <p id="settings-deepseek-disclosure" className="mt-3 text-xs leading-relaxed text-fg-muted">
-                        {t("settings.deepseek.disclosure")}
+                      <div className="mt-4 border-t border-line pt-4">
+                        <h4 className="text-xs font-semibold text-fg">
+                          {t("settings.ai.compatibleModels")}
+                        </h4>
+                        <p className="mt-1 text-xs leading-relaxed text-fg-muted">
+                          {t("settings.ai.compatibleModelsDescription")}
+                        </p>
+                        {modelCatalogState === "loading" ? (
+                          <p className="mt-2 text-xs text-fg-muted">{t("settings.ai.modelsLoading")}</p>
+                        ) : modelCatalogState === "unavailable" ? (
+                          <p className="mt-2 text-xs text-fg-muted">{t("settings.ai.modelsUnavailable")}</p>
+                        ) : (
+                          <CompatibleModelList models={compatibleModels} />
+                        )}
+                      </div>
+                      <p id={`settings-${provider}-disclosure`} className="mt-3 text-xs leading-relaxed text-fg-muted">
+                        {t("settings.ai.disclosure", { provider: providerMessage(t, provider, "name") })}
                       </p>
                     </section>
                   )}
 
                   <label className="mt-5 flex flex-col gap-1.5">
                     <span className="text-xs font-medium text-fg-subtle">
-                      {t(providerMessageKey(provider, "credentialLabel"))}
+                      {providerMessage(t, provider, "credentialLabel")}
                     </span>
                     <input
                       ref={inputRef}
@@ -331,8 +369,8 @@ export function SettingsPanel({
                       value={secret}
                       disabled={busy}
                       onChange={(event) => setSecret(event.target.value)}
-                      placeholder={t(providerMessageKey(provider, configured ? "replacementPlaceholder" : "placeholder"))}
-                      aria-describedby={`settings-${provider}-credential-helper${provider === "deepseek" ? " settings-deepseek-disclosure" : ""}`}
+                      placeholder={providerMessage(t, provider, configured ? "replacementPlaceholder" : "placeholder")}
+                      aria-describedby={`settings-${provider}-credential-helper${aiProviderDetails ? ` settings-${provider}-disclosure` : ""}`}
                       className="field h-9 rounded bg-canvas px-2.5 font-mono text-xs text-fg placeholder:text-fg-subtle disabled:opacity-50"
                     />
                   </label>
@@ -490,13 +528,38 @@ type ProviderMessageSuffix =
   | "cleared";
 
 function providerMessageKey(
-  section: CredentialKindDto,
+  section: Extract<CredentialKindDto, "github" | "gitlab">,
   suffix: ProviderMessageSuffix,
 ):
-  | `settings.deepseek.${ProviderMessageSuffix}`
   | `settings.github.${ProviderMessageSuffix}`
   | `settings.gitlab.${ProviderMessageSuffix}` {
   return `settings.${section}.${suffix}`;
+}
+
+const AI_MESSAGE_KEYS = {
+  description: "settings.ai.description",
+  credentialLabel: "settings.ai.credentialLabel",
+  placeholder: "settings.ai.placeholder",
+  replacementPlaceholder: "settings.ai.replacementPlaceholder",
+  saved: "settings.ai.saved",
+  valid: "settings.ai.valid",
+  cleared: "settings.ai.cleared",
+} as const;
+
+function providerMessage(
+  t: ReturnType<typeof useT>,
+  section: SettingsSection,
+  suffix: ProviderMessageSuffix,
+): string {
+  if (section === "deepseek" || section === "openai" || section === "anthropic") {
+    const nameKey = `settings.${section}.name` as
+      | "settings.deepseek.name"
+      | "settings.openai.name"
+      | "settings.anthropic.name";
+    const provider = t(nameKey);
+    return suffix === "name" ? provider : t(AI_MESSAGE_KEYS[suffix], { provider });
+  }
+  return t(providerMessageKey(section, suffix));
 }
 
 function errorMessage(error: unknown): string {

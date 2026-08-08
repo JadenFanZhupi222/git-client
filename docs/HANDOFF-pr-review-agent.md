@@ -2,24 +2,27 @@
 
 ## Implemented scope
 
-The `feat/pr-review-agent` branch adds a public GitHub PR review workflow:
+The review-agent slice provides public GitHub PR and GitLab MR review workflows:
 
-- DeepSeek V4 through its OpenAI-compatible Chat Completions API.
-- Review-time model selection between allowlisted DeepSeek V4 Flash and V4 Pro models,
-  plus Simplified Chinese or English output selection.
-- A Rust-owned credential flow for DeepSeek, GitHub, and GitLab keys.
-- Review input pinned to the pull request head SHA.
+- DeepSeek through its OpenAI-compatible Chat Completions API, OpenAI through
+  the Responses API, and Anthropic through the Messages API.
+- Review-time selection across seven backend-allowlisted models, plus Simplified
+  Chinese or English output selection.
+- A Rust-owned credential flow for DeepSeek, OpenAI, Anthropic, GitHub, and GitLab keys.
+- Review input pinned to the pull request or merge request head SHA.
 - Read-only repository-tree and file-reading tools with enforced round, call, file,
   patch, line, and byte budgets.
 - Versioned code-disclosure consent and explicit file selection for oversized pull requests.
 - Select-all file controls with an indeterminate state and a clearly bounded first-request
   input-token estimate; tool reads and output usage remain actual-usage-only.
-- Review results and edited comment drafts are cached locally per pull request and head SHA,
-  restored after reopening, invalidated when the PR changes, and cleared after publication.
+- Review results and edited comment drafts are cached locally per hosting provider,
+  change request, and head SHA; they are restored after reopening, invalidated when the
+  change updates, and cleared after publication.
 - No-findings results use a compact completion state; verbose model summaries remain available
   behind an explicit disclosure instead of dominating the result view.
 - Progress events, cancellation, editable findings, and a valid no-findings result.
-- One GitHub `COMMENT` review containing the selected line comments.
+- One GitHub `COMMENT` review containing the selected line comments, or selected GitLab
+  diff discussions positioned with the current base/start/head SHA triplet.
 - A second head-SHA check before publishing; stale results return `PR_UPDATED` and publish nothing.
 - Sanitized rolling traces that exclude credentials, prompts, patches, source content,
   complete model output, and reasoning.
@@ -39,9 +42,11 @@ summaries live in `ReviewOutputCodec`; Issue Triage uses its own domain codec ov
 same provider response. Tool execution, unique-read caching, budgets, patch-line
 validation, and traces remain in the PR orchestrator.
 
-The current production adapter is `DeepSeekProvider`, shared by PR Review and Issue
-Triage. Future OpenAI, Anthropic, or local adapters should implement `ModelProvider`
-rather than adding provider branches to either orchestrator.
+The production adapters are `DeepSeekProvider`, `OpenAiProvider`, and
+`AnthropicProvider`, all shared by PR Review and Issue Triage. The aggregate catalog
+and factory live in `providers.rs`; neither workflow contains provider-specific
+branches. Future local or hosted adapters should implement `ModelProvider` and join
+that registry instead of branching either orchestrator.
 
 ## Security boundary
 
@@ -52,8 +57,10 @@ increase budgets. Credentials stay in the Rust backend and are never returned to
 
 ## Stable errors
 
-The public workflow uses these codes: `AI_KEY_MISSING`, `GITHUB_TOKEN_MISSING`,
-`AUTH_FAILED`, `RATE_LIMITED`, `NETWORK_ERROR`, `PR_UPDATED`,
+The public workflow uses these codes: `AI_KEY_MISSING`, `OPENAI_KEY_MISSING`,
+`ANTHROPIC_KEY_MISSING`, `GITHUB_TOKEN_MISSING`, `GITLAB_TOKEN_MISSING`,
+`AUTH_FAILED`, `RATE_LIMITED`,
+`NETWORK_ERROR`, `PR_UPDATED`,
 `REVIEW_BUDGET_EXCEEDED`, `INVALID_MODEL_OUTPUT`, `CANCELLED`, and
 `REVIEW_PUBLISH_FAILED`. `AGENT_RESOURCE_BUSY` is returned when another run is
 already active for the same PR, even if the client generated a different run ID.
@@ -66,20 +73,16 @@ Agent failures and cancellations return that diagnostic ID through an Agent-spec
 IPC error contract; cancellation is shown as a terminal state rather than silently
 returning to file selection.
 
-## Follow-up milestones
+## Milestone status and follow-up
 
-The actionable next-stage plan is maintained in `AGENT-ROADMAP.md`. Its order is:
+The provider contract, multi-provider proof, GitHub Issue Triage workflow, confirmed
+Issue publication, production hardening, and GitLab merge-request review expansion are
+complete. The remaining larger direction is:
 
-1. Stabilize the provider contract and expose a backend-owned model catalog.
-2. Add a second provider adapter to prove that the runtime is genuinely provider-neutral.
-3. Add GitHub Issue triage as a read-only workflow, followed by a separately approved
-   label/comment publication slice.
-4. Keep GitLab merge-request review as the next collaboration expansion after GitHub
-   Issue triage and GitLab-specific diff-position rules are defined.
-5. Design local development agents as a separate security milestone. Local commands and
+1. Design local development agents as a separate security milestone. Local commands and
    file writes must not be added to the PR review runtime's security boundary.
 
 ## Verification
 
 Run the standard repository checks documented in `README.md`. Tests use fake providers
-and HTTP/GitHub fixtures; they do not require real API keys or external network access.
+and HTTP GitHub/GitLab fixtures; they do not require real API keys or external network access.

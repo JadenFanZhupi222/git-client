@@ -8,6 +8,7 @@ import appSource from "./App.tsx?raw";
 
 const ipc = vi.hoisted(() => ({
   credentialStatus: vi.fn(async () => false),
+  listReviewModels: vi.fn(async () => []),
   saveCredential: vi.fn(),
   testCredential: vi.fn(),
   clearCredential: vi.fn(),

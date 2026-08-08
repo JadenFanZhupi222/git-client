@@ -51,8 +51,9 @@ cache is deleted and the user is explicitly asked to run triage again.
 - `crates/review-agent/src/issue.rs`: domain contract, orchestration, GitHub
   source, budgets, snapshot checks, publication validation, per-action results,
   and comment idempotency.
-- `crates/review-agent/src/deepseek.rs`: the shared DeepSeek provider adapter
-  and backend-owned model capability/pricing catalog.
+- `crates/review-agent/src/deepseek.rs`, `openai.rs`, and `anthropic.rs`: the
+  three shared provider adapters. `providers.rs` owns the aggregate model catalog
+  and provider factory.
 - `app/src-tauri/src/review_commands.rs`: credential-owned IPC services,
   progress, cancellation, and production backend construction.
 - `crates/ipc-types/src/lib.rs`: stable DTO boundary and generated TypeScript
@@ -92,8 +93,10 @@ Use a non-production test repository and test credentials:
    pull requests and renders issue details.
 2. Open AI Triage and confirm the workflow-specific disclosure appears before
    any model request.
-3. Run both supported DeepSeek models in Chinese and English and confirm the
-   result starts with every publication action unselected.
+3. Run the supported DeepSeek models in Chinese and English and confirm the
+   result starts with every publication action unselected. OpenAI and Anthropic
+   are covered by automated fixtures and still require credential-backed desktop
+   acceptance before being treated as manually certified.
 4. Update the issue or add a comment on GitHub, reopen triage, and confirm the
    saved result is discarded and the stale-result notice appears.
 5. Select one existing label and the reply, verify the exact confirmation view,
@@ -115,5 +118,7 @@ returns duration, provider attempts, usage, and a sanitized diagnostic ID while
 migrating older cached results. Estimated cost uses actual provider token usage and
 the catalog's conservative cache-miss input price. Errors and cancellations return
 the same diagnostic ID written to the shared sanitized trace, and cancellation has
-an explicit terminal UI state. A5 is complete for the currently installed provider
-matrix. A2 remains pending a second provider credential.
+an explicit terminal UI state. A5 is complete for the installed DeepSeek, OpenAI,
+and Anthropic provider matrix. OpenAI and Anthropic live-service acceptance remains
+an operator task because automated verification intentionally uses fixtures and no
+real provider credentials.

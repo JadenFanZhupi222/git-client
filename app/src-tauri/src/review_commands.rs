@@ -9,9 +9,9 @@ use ipc_types::{
     SubmitReviewDto,
 };
 use review_agent::{
-    CancelSignal, DeepSeekProvider, GithubIssueSource, GithubReviewSource, IssuePublicationSource,
-    IssueSource, IssueTriageOrchestrator, IssueTriagePublisher, ProgressSink, ProgressUpdate,
-    ReviewOrchestrator, ReviewSource, SanitizedTraceStore,
+    CancelSignal, GithubIssueSource, GithubReviewSource, GitlabReviewSource,
+    IssuePublicationSource, IssueSource, IssueTriageOrchestrator, IssueTriagePublisher,
+    ProgressSink, ProgressUpdate, ReviewOrchestrator, ReviewSource, SanitizedTraceStore,
 };
 use std::collections::{HashMap, VecDeque};
 use std::sync::{
@@ -27,12 +27,38 @@ trait CredentialReader: Send + Sync {
 }
 
 trait ReviewBackendFactory: Send + Sync {
-    fn source(&self, token: String) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError>;
+    fn source(
+        &self,
+        platform: ReviewPlatform,
+        token: String,
+    ) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError>;
     fn model(
         &self,
         model_id: &str,
         key: String,
     ) -> Result<Box<dyn review_agent::ModelProvider>, review_agent::ReviewError>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReviewPlatform {
+    Github,
+    Gitlab,
+}
+
+impl ReviewPlatform {
+    fn credential(self) -> CredentialKindDto {
+        match self {
+            Self::Github => CredentialKindDto::Github,
+            Self::Gitlab => CredentialKindDto::Gitlab,
+        }
+    }
+
+    fn resource_prefix(self) -> &'static str {
+        match self {
+            Self::Github => "github-pr",
+            Self::Gitlab => "gitlab-mr",
+        }
+    }
 }
 
 trait ProgressEmitter: Send + Sync {
@@ -45,6 +71,7 @@ struct ReviewCommandService<'a> {
     progress: &'a dyn ProgressEmitter,
     trace: &'a dyn review_agent::TraceSink,
     registry: &'a ReviewRunRegistry,
+    platform: ReviewPlatform,
 }
 
 impl<'a> ReviewCommandService<'a> {
@@ -61,6 +88,25 @@ impl<'a> ReviewCommandService<'a> {
             progress,
             trace,
             registry,
+            platform: ReviewPlatform::Github,
+        }
+    }
+
+    fn new_for_platform(
+        credentials: &'a dyn CredentialReader,
+        factory: &'a dyn ReviewBackendFactory,
+        progress: &'a dyn ProgressEmitter,
+        trace: &'a dyn review_agent::TraceSink,
+        registry: &'a ReviewRunRegistry,
+        platform: ReviewPlatform,
+    ) -> Self {
+        Self {
+            credentials,
+            factory,
+            progress,
+            trace,
+            registry,
+            platform,
         }
     }
 
@@ -74,12 +120,15 @@ impl<'a> ReviewCommandService<'a> {
     }
 
     async fn source(&self) -> Result<Box<dyn ReviewSource>, IpcError> {
+        let credential = self.platform.credential();
         let token = self
             .credentials
-            .read(CredentialKindDto::Github)
+            .read(credential)
             .await
-            .map_err(|e| map_review_credential_error(CredentialKindDto::Github, e))?;
-        self.factory.source(token).map_err(review_error)
+            .map_err(|e| map_review_credential_error(credential, e))?;
+        self.factory
+            .source(self.platform, token)
+            .map_err(review_error)
     }
 
     async fn preflight(&self, target: ReviewTargetDto) -> Result<ReviewPreflightDto, IpcError> {
@@ -112,7 +161,7 @@ impl<'a> ReviewCommandService<'a> {
     ) -> Result<ReviewRunResultDto, AgentIpcErrorDto> {
         let run_id = input.run_id.clone();
         let diagnostic_id = review_agent::diagnostic_id(&run_id);
-        let resource_key = review_resource_key(&input.target);
+        let resource_key = review_resource_key_for(self.platform, &input.target);
         let cancel = self
             .registry
             .register_resource(&run_id, &resource_key)
@@ -528,9 +577,15 @@ impl ReviewRunRegistry {
     }
 }
 
+#[cfg(test)]
 fn review_resource_key(target: &ReviewTargetDto) -> String {
+    review_resource_key_for(ReviewPlatform::Github, target)
+}
+
+fn review_resource_key_for(platform: ReviewPlatform, target: &ReviewTargetDto) -> String {
     format!(
-        "pr:{}/{}#{}",
+        "{}:{}/{}#{}",
+        platform.resource_prefix(),
         target.owner.trim().to_ascii_lowercase(),
         target.repo.trim().to_ascii_lowercase(),
         target.pull_number
@@ -581,7 +636,9 @@ fn map_review_credential_error(kind: CredentialKindDto, mut error: IpcError) -> 
         error.code = match kind {
             CredentialKindDto::Github => "GITHUB_TOKEN_MISSING",
             CredentialKindDto::Deepseek => "AI_KEY_MISSING",
-            CredentialKindDto::Gitlab => "CREDENTIAL_MISSING",
+            CredentialKindDto::Openai => "OPENAI_KEY_MISSING",
+            CredentialKindDto::Anthropic => "ANTHROPIC_KEY_MISSING",
+            CredentialKindDto::Gitlab => "GITLAB_TOKEN_MISSING",
         }
         .into();
     }
@@ -589,7 +646,7 @@ fn map_review_credential_error(kind: CredentialKindDto, mut error: IpcError) -> 
 }
 
 fn review_model_options() -> Vec<ReviewModelOptionDto> {
-    review_agent::deepseek_model_catalog()
+    review_agent::model_catalog()
         .into_iter()
         .map(|entry| ReviewModelOptionDto {
             id: entry.id,
@@ -619,10 +676,10 @@ fn review_model_options() -> Vec<ReviewModelOptionDto> {
 }
 
 fn review_model_credential(model_id: &str) -> Result<CredentialKindDto, IpcError> {
-    match model_id {
-        review_agent::DEEPSEEK_V4_FLASH_MODEL | review_agent::DEEPSEEK_V4_PRO_MODEL => {
-            Ok(CredentialKindDto::Deepseek)
-        }
+    match review_agent::model_provider_id(model_id) {
+        Some("deepseek") => Ok(CredentialKindDto::Deepseek),
+        Some("openai") => Ok(CredentialKindDto::Openai),
+        Some("anthropic") => Ok(CredentialKindDto::Anthropic),
         _ => Err(IpcError {
             code: "INVALID_REVIEW_MODEL".into(),
             message: "The selected review model is not supported".into(),
@@ -643,15 +700,22 @@ impl CredentialReader for KeyringCredentialReader {
 
 struct ProductionBackendFactory;
 impl ReviewBackendFactory for ProductionBackendFactory {
-    fn source(&self, token: String) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError> {
-        Ok(Box::new(GithubReviewSource::new(token)?))
+    fn source(
+        &self,
+        platform: ReviewPlatform,
+        token: String,
+    ) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError> {
+        match platform {
+            ReviewPlatform::Github => Ok(Box::new(GithubReviewSource::new(token)?)),
+            ReviewPlatform::Gitlab => Ok(Box::new(GitlabReviewSource::new(token)?)),
+        }
     }
     fn model(
         &self,
         model_id: &str,
         key: String,
     ) -> Result<Box<dyn review_agent::ModelProvider>, review_agent::ReviewError> {
-        Ok(Box::new(DeepSeekProvider::new_with_model(key, model_id)?))
+        review_agent::create_model_provider(key, model_id)
     }
 }
 
@@ -668,7 +732,7 @@ impl IssueBackendFactory for ProductionBackendFactory {
         model_id: &str,
         key: String,
     ) -> Result<Box<dyn review_agent::ModelProvider>, review_agent::ReviewError> {
-        Ok(Box::new(DeepSeekProvider::new_with_model(key, model_id)?))
+        review_agent::create_model_provider(key, model_id)
     }
 
     fn issue_publisher(
@@ -719,6 +783,22 @@ pub(crate) async fn get_review_preflight(
 }
 
 #[tauri::command]
+pub(crate) async fn get_gitlab_review_preflight(
+    target: ReviewTargetDto,
+) -> Result<ReviewPreflightDto, IpcError> {
+    ReviewCommandService::new_for_platform(
+        &KeyringCredentialReader,
+        &ProductionBackendFactory,
+        &NoopProgressEmitter,
+        &NoopTraceSink,
+        &ReviewRunRegistry::default(),
+        ReviewPlatform::Gitlab,
+    )
+    .preflight(target)
+    .await
+}
+
+#[tauri::command]
 pub(crate) async fn start_pr_review(
     app: tauri::AppHandle,
     state: tauri::State<'_, ReviewRunRegistry>,
@@ -749,6 +829,37 @@ pub(crate) async fn start_pr_review(
 }
 
 #[tauri::command]
+pub(crate) async fn start_gitlab_mr_review(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ReviewRunRegistry>,
+    input: ReviewRunInputDto,
+) -> Result<ReviewRunResultDto, AgentIpcErrorDto> {
+    let diagnostic_id = review_agent::diagnostic_id(&input.run_id);
+    let trace_path = app
+        .path()
+        .app_data_dir()
+        .map_err(|_| IpcError {
+            code: "APP_DATA_DIR".into(),
+            message: "Application data directory is unavailable".into(),
+            recoverable: false,
+        })
+        .map_err(|error| agent_error(error, &diagnostic_id))?
+        .join("gitlab-review-agent-trace.json");
+    let trace = SanitizedTraceStore::new(trace_path);
+    let emitter = AppProgressEmitter(app);
+    ReviewCommandService::new_for_platform(
+        &KeyringCredentialReader,
+        &ProductionBackendFactory,
+        &emitter,
+        &trace,
+        &state,
+        ReviewPlatform::Gitlab,
+    )
+    .start(input)
+    .await
+}
+
+#[tauri::command]
 pub(crate) fn cancel_pr_review(state: tauri::State<'_, ReviewRunRegistry>, run_id: String) {
     ReviewCommandService::new(
         &KeyringCredentialReader,
@@ -770,6 +881,22 @@ pub(crate) async fn submit_pr_review(
         &NoopProgressEmitter,
         &NoopTraceSink,
         &ReviewRunRegistry::default(),
+    )
+    .submit(input)
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn submit_gitlab_mr_review(
+    input: SubmitReviewDto,
+) -> Result<PublishedReviewDto, IpcError> {
+    ReviewCommandService::new_for_platform(
+        &KeyringCredentialReader,
+        &ProductionBackendFactory,
+        &NoopProgressEmitter,
+        &NoopTraceSink,
+        &ReviewRunRegistry::default(),
+        ReviewPlatform::Gitlab,
     )
     .submit(input)
     .await
@@ -1049,7 +1176,11 @@ mod tests {
     }
 
     impl ReviewBackendFactory for GateFactory {
-        fn source(&self, _: String) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError> {
+        fn source(
+            &self,
+            _: ReviewPlatform,
+            _: String,
+        ) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError> {
             Ok(Box::new(self.source.clone()))
         }
 
@@ -1065,7 +1196,11 @@ mod tests {
         }
     }
     impl ReviewBackendFactory for CancellingFactory {
-        fn source(&self, _: String) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError> {
+        fn source(
+            &self,
+            _: ReviewPlatform,
+            _: String,
+        ) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError> {
             Ok(Box::new(self.source.clone()))
         }
         fn model(
@@ -1091,7 +1226,11 @@ mod tests {
         model_calls: Arc<AtomicUsize>,
     }
     impl ReviewBackendFactory for CountingFactory {
-        fn source(&self, _: String) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError> {
+        fn source(
+            &self,
+            _: ReviewPlatform,
+            _: String,
+        ) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError> {
             self.source_calls.fetch_add(1, AtomicOrdering::SeqCst);
             Ok(Box::new(fake_factory(vec![]).source))
         }
@@ -1105,7 +1244,11 @@ mod tests {
         }
     }
     impl ReviewBackendFactory for FakeFactory {
-        fn source(&self, _: String) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError> {
+        fn source(
+            &self,
+            _: ReviewPlatform,
+            _: String,
+        ) -> Result<Box<dyn ReviewSource>, review_agent::ReviewError> {
             Ok(Box::new(self.source.clone()))
         }
         fn model(
@@ -1147,7 +1290,7 @@ mod tests {
     #[test]
     fn review_model_catalog_is_allowlisted_and_provider_qualified() {
         let models = list_review_models();
-        assert_eq!(models.len(), 2);
+        assert_eq!(models.len(), 7);
         assert_eq!(models[0].id, "deepseek-v4-flash");
         assert_eq!(models[0].provider, "DeepSeek");
         assert_eq!(models[0].provider_id, "deepseek");
@@ -1164,9 +1307,21 @@ mod tests {
                 .starts_with("https://api-docs.deepseek.com/")
         );
         assert_eq!(models[1].id, "deepseek-v4-pro");
+        assert_eq!(models[2].id, "gpt-5.6-terra");
+        assert_eq!(models[2].provider_id, "openai");
+        assert_eq!(models[5].id, "claude-sonnet-5");
+        assert_eq!(models[5].provider_id, "anthropic");
         assert_eq!(
             review_model_credential(&models[0].id).unwrap(),
             CredentialKindDto::Deepseek
+        );
+        assert_eq!(
+            review_model_credential(&models[2].id).unwrap(),
+            CredentialKindDto::Openai
+        );
+        assert_eq!(
+            review_model_credential(&models[5].id).unwrap(),
+            CredentialKindDto::Anthropic
         );
         let error = review_model_credential("user-controlled-model").unwrap_err();
         assert_eq!(error.code, "INVALID_REVIEW_MODEL");
@@ -1252,6 +1407,22 @@ mod tests {
         assert_eq!(
             service.preflight(target_dto()).await.unwrap_err().code,
             "GITHUB_TOKEN_MISSING"
+        );
+
+        let gitlab = MissingCredentials {
+            missing: CredentialKindDto::Gitlab,
+        };
+        let service = ReviewCommandService::new_for_platform(
+            &gitlab,
+            &factory,
+            &NoopProgressEmitter,
+            &NoopTraceSink,
+            &registry,
+            ReviewPlatform::Gitlab,
+        );
+        assert_eq!(
+            service.preflight(target_dto()).await.unwrap_err().code,
+            "GITLAB_TOKEN_MISSING"
         );
 
         let deepseek = MissingCredentials {
@@ -1502,7 +1673,18 @@ mod tests {
                 repo: "ROCKET".into(),
                 pull_number: 17,
             }),
-            "pr:acme/rocket#17"
+            "github-pr:acme/rocket#17"
+        );
+        assert_eq!(
+            review_resource_key_for(
+                ReviewPlatform::Gitlab,
+                &ReviewTargetDto {
+                    owner: " Acme ".into(),
+                    repo: "ROCKET".into(),
+                    pull_number: 17,
+                }
+            ),
+            "gitlab-mr:acme/rocket#17"
         );
         assert_eq!(
             issue_resource_key(&IssueTargetDto {
@@ -1607,8 +1789,20 @@ mod tests {
             "GITHUB_TOKEN_MISSING"
         );
         assert_eq!(
-            map_review_credential_error(CredentialKindDto::Deepseek, missing).code,
+            map_review_credential_error(CredentialKindDto::Deepseek, missing.clone()).code,
             "AI_KEY_MISSING"
+        );
+        assert_eq!(
+            map_review_credential_error(CredentialKindDto::Openai, missing.clone()).code,
+            "OPENAI_KEY_MISSING"
+        );
+        assert_eq!(
+            map_review_credential_error(CredentialKindDto::Anthropic, missing.clone()).code,
+            "ANTHROPIC_KEY_MISSING"
+        );
+        assert_eq!(
+            map_review_credential_error(CredentialKindDto::Gitlab, missing).code,
+            "GITLAB_TOKEN_MISSING"
         );
     }
 

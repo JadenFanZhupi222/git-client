@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getGithubToken, hasGithubToken, type IpcError } from "../ipc";
+import type { CredentialKindDto } from "../bindings";
 import {
   createGithubPullRequestComment,
   fetchGithubPullRequestDetails,
@@ -33,7 +34,7 @@ export function PullRequestsView({
   preferredRemote: string | null;
   onCreatePullRequest: () => void;
   onConfigureToken: () => void;
-  onConfigureCredential?: (kind: "deepseek" | "github") => void;
+  onConfigureCredential?: (kind: CredentialKindDto) => void;
 }) {
   const toast = useToast();
   const t = useT();
