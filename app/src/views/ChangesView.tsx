@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   stageFile, unstageFile, stageHunk, unstageHunk, stageLines, commit, amendCommit,
   getHeadCommit, refreshStatus, resolveOurs, resolveTheirs,
-  type FileEntryDto, type IpcError,
+  type FileEntryDto, type IpcError, type CredentialKindDto,
 } from "../ipc";
 import { useStatus, useWorkingDiff, useRepoState, invalidateWorktree, invalidateHistory, qk } from "../lib/queries";
 import { useListKeyboardNav, isTypingTarget } from "../lib/listNav";
@@ -17,6 +17,7 @@ import { FloatBar, FLOAT_BAR_INSET } from "../components/ui/FloatBar";
 import { Spine } from "../components/ui/Spine";
 import { useT } from "../lib/i18n";
 import type { MessageKey } from "../lib/locales/zh";
+import { ChangePlanWorkspace } from "../components/ChangePlanWorkspace";
 
 const ConflictEditor = lazy(() =>
   import("../components/ConflictEditor").then((m) => ({ default: m.ConflictEditor })),
@@ -56,7 +57,10 @@ function splitPath(path: string) {
   return { dir: i >= 0 ? path.slice(0, i + 1) : "", name: i >= 0 ? path.slice(i + 1) : path };
 }
 
-export function ChangesView({ repo }: { repo: string }) {
+export function ChangesView({ repo, onConfigureCredential }: {
+  repo: string;
+  onConfigureCredential?: (kind: CredentialKindDto) => void;
+}) {
   const t = useT();
   const qc = useQueryClient();
   const statusQ = useStatus(repo);
@@ -66,6 +70,7 @@ export function ChangesView({ repo }: { repo: string }) {
   const [amend, setAmend] = useState(false);
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [plannerOpen, setPlannerOpen] = useState(false);
   const [sel, setSel] = useState<{ path: string; staged: boolean } | null>(null);
   const listCol = useResizableWidth("changes.listW", 340, 220, 680);
   const listScrollRef = useRef<HTMLDivElement>(null);
@@ -120,7 +125,7 @@ export function ChangesView({ repo }: { repo: string }) {
   }, [sel]);
 
   // 切仓库清空选择与 amend
-  useEffect(() => { setSel(null); setAmend(false); }, [repo]);
+  useEffect(() => { setSel(null); setAmend(false); setPlannerOpen(false); }, [repo]);
 
   // 勾选 amend 且信息为空时,预填上次提交信息(方便在其基础上改)
   async function toggleAmend(next: boolean) {
@@ -295,6 +300,17 @@ export function ChangesView({ repo }: { repo: string }) {
         <FloatBar>
           <span className="flex-1 text-[12.5px] font-semibold text-fg">{t("changes.workingTree")}</span>
           <button
+            type="button"
+            onClick={() => setPlannerOpen(true)}
+            disabled={busy || plannerOpen}
+            title={t("changePlan.open")}
+            aria-label={t("changePlan.open")}
+            className="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-line px-2 text-[11px] font-medium text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-40"
+          >
+            <FileDiffIcon width={12} height={12} />
+            {t("changePlan.open")}
+          </button>
+          <button
             data-testid="refresh-status"
             onClick={refresh}
             disabled={busy || refreshing || statusQ.isFetching}
@@ -377,6 +393,19 @@ export function ChangesView({ repo }: { repo: string }) {
 
       {/* 右列:选中文件的工作区 diff */}
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {plannerOpen ? (
+          <ChangePlanWorkspace
+            repo={repo}
+            onClose={() => setPlannerOpen(false)}
+            onConfigureCredential={onConfigureCredential}
+            onCommitted={() => {
+              invalidateWorktree(qc, repo);
+              invalidateHistory(qc, repo);
+              setSel(null);
+            }}
+          />
+        ) : (
+        <>
         <div className="flex shrink-0 items-center gap-1.5 border-b border-line px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
           <FileDiffIcon width={13} height={13} />
           {sel ? (
@@ -394,6 +423,8 @@ export function ChangesView({ repo }: { repo: string }) {
           </Suspense>
         ) : (
           <DiffView diff={diffQ.data ?? null} loading={diffQ.isLoading} hasFile={!!sel} repo={repo} hunkAction={hunkAction} lineStage={lineStage} />
+        )}
+        </>
         )}
       </main>
       </div>

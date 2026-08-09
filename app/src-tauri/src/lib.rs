@@ -20,8 +20,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::Emitter;
 
+mod change_commands;
 mod credentials;
 mod review_commands;
+use change_commands::{analyze_change_plan, cancel_change_plan, commit_change_group};
 use credentials::{clear_credential, credential_status, save_credential, test_credential};
 use review_commands::{
     ReviewRunRegistry, cancel_issue_triage, cancel_pr_review, get_github_issue_context,
@@ -1742,6 +1744,9 @@ pub fn run() {
         start_issue_triage,
         cancel_issue_triage,
         publish_issue_triage,
+        analyze_change_plan,
+        cancel_change_plan,
+        commit_change_group,
         watch_repo,
         e2e_prepare_repo,
         e2e_write_file
@@ -1847,6 +1852,9 @@ pub fn run() {
         start_issue_triage,
         cancel_issue_triage,
         publish_issue_triage,
+        analyze_change_plan,
+        cancel_change_plan,
+        commit_change_group,
         watch_repo
     ]);
 

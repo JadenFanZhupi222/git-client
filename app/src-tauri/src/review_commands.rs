@@ -608,6 +608,9 @@ pub(crate) fn review_error(error: review_agent::ReviewError) -> IpcError {
             | review_agent::ReviewError::NetworkError(_)
             | review_agent::ReviewError::PrUpdated
             | review_agent::ReviewError::IssueUpdated
+            | review_agent::ReviewError::WorktreeUpdated
+            | review_agent::ReviewError::IndexNotClean
+            | review_agent::ReviewError::ChangeCommitFailed(_)
             | review_agent::ReviewError::Cancelled
             | review_agent::ReviewError::ReviewPublishFailed(_)
             | review_agent::ReviewError::IssuePublishFailed(_)
@@ -627,11 +630,14 @@ pub(crate) fn review_error(error: review_agent::ReviewError) -> IpcError {
     }
 }
 
-fn agent_error(error: IpcError, diagnostic_id: &str) -> AgentIpcErrorDto {
+pub(crate) fn agent_error(error: IpcError, diagnostic_id: &str) -> AgentIpcErrorDto {
     AgentIpcErrorDto::from_ipc(error, diagnostic_id)
 }
 
-fn map_review_credential_error(kind: CredentialKindDto, mut error: IpcError) -> IpcError {
+pub(crate) fn map_review_credential_error(
+    kind: CredentialKindDto,
+    mut error: IpcError,
+) -> IpcError {
     if error.code == "CREDENTIAL_MISSING" {
         error.code = match kind {
             CredentialKindDto::Github => "GITHUB_TOKEN_MISSING",
@@ -675,7 +681,7 @@ fn review_model_options() -> Vec<ReviewModelOptionDto> {
         .collect()
 }
 
-fn review_model_credential(model_id: &str) -> Result<CredentialKindDto, IpcError> {
+pub(crate) fn review_model_credential(model_id: &str) -> Result<CredentialKindDto, IpcError> {
     match review_agent::model_provider_id(model_id) {
         Some("deepseek") => Ok(CredentialKindDto::Deepseek),
         Some("openai") => Ok(CredentialKindDto::Openai),

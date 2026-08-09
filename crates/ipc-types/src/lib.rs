@@ -173,6 +173,84 @@ pub struct ReviewProgressEventDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ChangePlanInputDto {
+    pub run_id: String,
+    pub repo_path: String,
+    pub model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub enum ChangeWarningSeverityDto {
+    Info,
+    Warning,
+    Blocker,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ChangeWarningDto {
+    pub code: String,
+    pub severity: ChangeWarningSeverityDto,
+    pub message: String,
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ChangePlanFileDto {
+    pub path: String,
+    pub state: String,
+    pub staged: bool,
+    pub additions: u32,
+    pub deletions: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ChangeCommitGroupDto {
+    pub id: String,
+    pub title: String,
+    pub rationale: String,
+    pub commit_message: String,
+    pub files: Vec<ChangePlanFileDto>,
+    pub executable: bool,
+    pub blocked_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ChangePlanResultDto {
+    pub snapshot_id: String,
+    pub summary: String,
+    pub warnings: Vec<ChangeWarningDto>,
+    pub groups: Vec<ChangeCommitGroupDto>,
+    pub enhanced: bool,
+    pub usage: ReviewUsageDto,
+    pub model_id: String,
+    pub provider_attempts: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct CommitChangeGroupInputDto {
+    pub run_id: String,
+    pub repo_path: String,
+    pub snapshot_id: String,
+    pub group_id: String,
+    pub commit_message: String,
+    pub confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ChangeGroupCommitResultDto {
+    pub sha: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct IssueRepositoryTargetDto {
     pub owner: String,
     pub repo: String,

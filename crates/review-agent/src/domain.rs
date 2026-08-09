@@ -172,6 +172,14 @@ pub enum ReviewError {
     IssueTriageBudgetExceeded,
     #[error("issue publication failed: {0}")]
     IssuePublishFailed(String),
+    #[error("local change evidence exceeded its analysis budget")]
+    ChangePlanBudgetExceeded,
+    #[error("working tree changed since the plan was generated")]
+    WorktreeUpdated,
+    #[error("the Git index does not match the confirmed commit group")]
+    IndexNotClean,
+    #[error("change group commit failed: {0}")]
+    ChangeCommitFailed(String),
 }
 
 impl ReviewError {
@@ -191,6 +199,10 @@ impl ReviewError {
             Self::IssueNotFound => "ISSUE_NOT_FOUND",
             Self::IssueTriageBudgetExceeded => "ISSUE_TRIAGE_BUDGET_EXCEEDED",
             Self::IssuePublishFailed(_) => "ISSUE_PUBLISH_FAILED",
+            Self::ChangePlanBudgetExceeded => "CHANGE_PLAN_BUDGET_EXCEEDED",
+            Self::WorktreeUpdated => "WORKTREE_UPDATED",
+            Self::IndexNotClean => "INDEX_NOT_CLEAN",
+            Self::ChangeCommitFailed(_) => "CHANGE_COMMIT_FAILED",
         }
     }
 }

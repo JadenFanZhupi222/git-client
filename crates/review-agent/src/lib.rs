@@ -1,4 +1,5 @@
 mod anthropic;
+mod change_plan;
 mod deepseek;
 mod domain;
 mod github;
@@ -13,6 +14,7 @@ mod trace;
 
 pub use agent_runtime::*;
 pub use anthropic::*;
+pub use change_plan::*;
 pub use deepseek::*;
 pub use domain::*;
 pub use github::*;

@@ -55,6 +55,14 @@ export type {
   IssueTriagePublishResultDto,
   IssueTriageProposalDto,
   IssueTriageResultDto,
+  ChangeCommitGroupDto,
+  ChangeGroupCommitResultDto,
+  ChangePlanFileDto,
+  ChangePlanInputDto,
+  ChangePlanResultDto,
+  ChangeWarningDto,
+  ChangeWarningSeverityDto,
+  CommitChangeGroupInputDto,
 } from "./bindings";
 
 export type {
@@ -91,6 +99,10 @@ import type {
   IssueTriagePublishInputDto,
   IssueTriagePublishResultDto,
   IssueTriageResultDto,
+  ChangeGroupCommitResultDto,
+  ChangePlanInputDto,
+  ChangePlanResultDto,
+  CommitChangeGroupInputDto,
 } from "./bindings";
 
 import type {
@@ -823,6 +835,20 @@ export async function listReviewModels(): Promise<ReviewModelOptionDto[]> {
 
 export async function startPrReview(input: ReviewRunInputDto): Promise<ReviewRunResultDto> {
   return await invoke<ReviewRunResultDto>("start_pr_review", { input });
+}
+
+export async function analyzeChangePlan(input: ChangePlanInputDto): Promise<ChangePlanResultDto> {
+  return await invoke<ChangePlanResultDto>("analyze_change_plan", { input });
+}
+
+export async function cancelChangePlan(runId: string): Promise<void> {
+  await invoke("cancel_change_plan", { runId });
+}
+
+export async function commitChangeGroup(
+  input: CommitChangeGroupInputDto,
+): Promise<ChangeGroupCommitResultDto> {
+  return await invoke<ChangeGroupCommitResultDto>("commit_change_group", { input });
 }
 
 export async function startGitlabMrReview(input: ReviewRunInputDto): Promise<ReviewRunResultDto> {

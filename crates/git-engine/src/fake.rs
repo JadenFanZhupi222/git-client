@@ -18,6 +18,7 @@ pub struct FakeBackend {
     staged: Mutex<Vec<PathBuf>>,
     unstaged: Mutex<Vec<PathBuf>>,
     commits: Mutex<Vec<String>>,
+    commit_error: Mutex<Option<String>>,
     canned_log: Mutex<Vec<Commit>>,
     canned_commit_files: Mutex<Vec<FileChange>>,
     canned_branch: Mutex<Option<String>>,
@@ -94,6 +95,10 @@ impl FakeBackend {
     }
     pub fn commit_messages(&self) -> Vec<String> {
         self.commits.lock().unwrap().clone()
+    }
+    pub fn fail_commit_with(self, message: impl Into<String>) -> Self {
+        *self.commit_error.lock().unwrap() = Some(message.into());
+        self
     }
     pub fn with_log(self, commits: Vec<Commit>) -> Self {
         *self.canned_log.lock().unwrap() = commits;
@@ -352,6 +357,9 @@ impl GitBackend for FakeBackend {
     }
 
     fn commit(&self, _path: &Path, message: &str) -> Result<String, GitError> {
+        if let Some(error) = self.commit_error.lock().unwrap().take() {
+            return Err(GitError::Backend(error));
+        }
         self.commits.lock().unwrap().push(message.to_string());
         Ok("fake000000000000000000000000000000000000".to_string())
     }
