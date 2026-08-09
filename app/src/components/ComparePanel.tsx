@@ -12,7 +12,7 @@ import { useT } from "../lib/i18n";
  *  自身是纵向 flex,丢进任意 flex 容器即可铺满。
  *
  *  可选 `toolbar` / `statHead`:比较页传入,把浮动玻璃工具栏(ref 药丸 + 交换)与编辑性统计头
- *  收进左列(对齐 Strata 原型);历史内联比较两者都不传,沿用朴素布局。 */
+ *  收进左列(对齐 VersionArc 原型);历史内联比较两者都不传,沿用朴素布局。 */
 export function ComparePanel({
   repo, from, to, toolbar, statHead, listWidthKey = "compare.filesW",
 }: {

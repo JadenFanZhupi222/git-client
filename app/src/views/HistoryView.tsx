@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { cherryPick, revert, type CommitDto, type GraphRowDto, type FileChangeDto, type IpcError } from "../ipc";
+import { cherryPick, revert, type CommitDto, type CredentialKindDto, type GraphRowDto, type FileChangeDto, type IpcError } from "../ipc";
 import { useGraph, useCommitSearch, usePickaxe, useCommitFiles, useCommitDiff, useCurrentBranch, invalidateHistory, invalidateWorktree, qk } from "../lib/queries";
 import { useListKeyboardNav, isTypingTarget } from "../lib/listNav";
 import { CommitGraph } from "../components/CommitGraph";
@@ -20,6 +20,7 @@ import { CommitFileList } from "../components/CommitFileList";
 import { EmptyHint } from "../components/ui/EmptyHint";
 import { CommitDetail } from "../components/CommitDetail";
 import { DiffView } from "../components/DiffView";
+import { HistoryInvestigationWorkspace } from "../components/HistoryInvestigationWorkspace";
 import { Resizer, useResizableWidth } from "../components/Resizer";
 import { useToast } from "../components/Toast";
 import { BranchIcon, CommitIcon, FileDiffIcon, SearchIcon, CloseIcon } from "../components/icons";
@@ -39,7 +40,13 @@ function ColumnHead({ icon, children }: { icon?: React.ReactNode; children: Reac
   );
 }
 
-export function HistoryView({ repo }: { repo: string }) {
+export function HistoryView({
+  repo,
+  onConfigureCredential = () => undefined,
+}: {
+  repo: string;
+  onConfigureCredential?: (kind: CredentialKindDto) => void;
+}) {
   const [limit, setLimit] = useState(PAGE);
   const [selected, setSelected] = useState<CommitDto | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
@@ -49,6 +56,7 @@ export function HistoryView({ repo }: { repo: string }) {
   const [searchMode, setSearchMode] = useState<SearchMode>("message"); // 信息 / 内容-S / 正则-G
   const [rebaseOpen, setRebaseOpen] = useState(false);
   const [reflogOpen, setReflogOpen] = useState(false);
+  const [investigatorOpen, setInvestigatorOpen] = useState(false);
   const [historyFile, setHistoryFile] = useState<string | null>(null); // 文件历史面板:当前查看的文件
   const [compareWith, setCompareWith] = useState<CommitDto | null>(null); // 比较模式的第二个提交
   const [menu, setMenu] = useState<{ commit: CommitDto; x: number; y: number } | null>(null);
@@ -96,7 +104,7 @@ export function HistoryView({ repo }: { repo: string }) {
   const afterRebase = () => { setRebaseOpen(false); refresh(); };
 
   // 切仓库:重置分页、选择与搜索
-  useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); setSearchInput(""); setQuery(""); setSearchMode("message"); setRebaseOpen(false); setCompareWith(null); setMenu(null); setFocusedPane("commits"); }, [repo]);
+  useEffect(() => { setLimit(PAGE); setSelected(null); setSelectedFile(null); setSearchInput(""); setQuery(""); setSearchMode("message"); setRebaseOpen(false); setReflogOpen(false); setInvestigatorOpen(false); setCompareWith(null); setMenu(null); setFocusedPane("commits"); }, [repo]);
 
   // Cmd/Ctrl+点击第二个提交 → 进入比较模式;普通点击 → 单选并退出比较。
   function selectCommit(c: CommitDto, opts?: { compare?: boolean }) {
@@ -124,7 +132,7 @@ export function HistoryView({ repo }: { repo: string }) {
 
   // 键盘导航。两个可导航列表:提交列表(commits)与改动文件列表(files);j/k 作用于「聚焦的」那个。
   // 弹层/比较/右键菜单打开时整体让出键盘。
-  const modalsOpen = comparing || rebaseOpen || reflogOpen || !!historyFile || !!menu;
+  const modalsOpen = investigatorOpen || comparing || rebaseOpen || reflogOpen || !!historyFile || !!menu;
   const files = filesQ.data ?? [];
 
   // ① 提交列表:搜索态=搜索结果,否则=图谱行。
@@ -262,9 +270,17 @@ export function HistoryView({ repo }: { repo: string }) {
         searchResults={activeSearchQ.data ?? []}
         searchLoading={activeSearchQ.isFetching}
         onOpenReflog={() => setReflogOpen(true)}
+        onOpenInvestigator={() => setInvestigatorOpen(true)}
       />
 
-      {comparing && cmpFrom && cmpTo ? (
+      {investigatorOpen ? (
+        <HistoryInvestigationWorkspace
+          repo={repo}
+          selectedFile={selectedFile}
+          onClose={() => setInvestigatorOpen(false)}
+          onConfigureCredential={onConfigureCredential}
+        />
+      ) : comparing && cmpFrom && cmpTo ? (
         /* 比较模式:横幅 + 两提交的改动文件/diff(占据中+右区域) */
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="flex shrink-0 items-center gap-2 border-b border-line bg-accent/5 px-3 py-2 text-xs">
@@ -374,7 +390,7 @@ const SEARCH_MODE_LABEL: Record<SearchMode, MessageKey> = { message: "history.mo
 /** 图谱列(含可拖拽宽度 + 提交搜索)。搜索时切扁平匹配列表,清空回到图谱。 */
 function GraphColumn({
   branch, rows, selectedId, compareId, focused, onSelect, onContext, onCherryPick, onLoadMore, loading, firstLoad, hasMore, error,
-  searchInput, onSearchChange, searchMode, onSearchModeChange, searching, searchResults, searchLoading, onOpenReflog,
+  searchInput, onSearchChange, searchMode, onSearchModeChange, searching, searchResults, searchLoading, onOpenReflog, onOpenInvestigator,
 }: {
   branch: string | null;
   rows: GraphRowDto[];
@@ -397,6 +413,7 @@ function GraphColumn({
   searchResults: CommitDto[];
   searchLoading: boolean;
   onOpenReflog: () => void;
+  onOpenInvestigator: () => void;
 }) {
   const t = useT();
   const col = useResizableWidth("history.graphW", 320, 220, 640);
@@ -450,9 +467,18 @@ function GraphColumn({
               <Button
                 variant="secondary"
                 size="chip"
+                onClick={onOpenInvestigator}
+                title={t("historyInvestigator.openTitle")}
+                className="ml-auto normal-case tracking-normal text-accent"
+              >
+                {t("historyInvestigator.open")}
+              </Button>
+              <Button
+                variant="secondary"
+                size="chip"
                 onClick={onOpenReflog}
                 title={t("history.reflogTitle")}
-                className="ml-auto normal-case tracking-normal"
+                className="normal-case tracking-normal"
               >
                 Reflog
               </Button>

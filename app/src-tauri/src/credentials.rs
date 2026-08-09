@@ -2,7 +2,8 @@ use ipc_types::{CredentialKindDto, IpcError};
 use reqwest::{Client, StatusCode};
 use std::time::Duration;
 
-const SERVICE: &str = "com.gitclient.desktop";
+const SERVICE: &str = "com.versionarc.desktop";
+const LEGACY_SERVICE: &str = "com.gitclient.desktop";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -52,8 +53,8 @@ fn keyring_error(error: keyring::Error) -> IpcError {
     }
 }
 
-fn entry(kind: CredentialKindDto) -> Result<keyring::Entry, IpcError> {
-    keyring::Entry::new(SERVICE, credential_user(kind)).map_err(keyring_error)
+fn entry(service: &str, kind: CredentialKindDto) -> Result<keyring::Entry, IpcError> {
+    keyring::Entry::new(service, credential_user(kind)).map_err(keyring_error)
 }
 
 trait CredentialStore: Send + Sync {
@@ -66,19 +67,34 @@ struct KeyringCredentialStore;
 
 impl CredentialStore for KeyringCredentialStore {
     fn get(&self, kind: CredentialKindDto) -> Result<Option<String>, IpcError> {
-        match entry(kind)?.get_password() {
+        match entry(SERVICE, kind)?.get_password() {
             Ok(secret) => Ok(Some(secret)),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(keyring::Error::NoEntry) => match entry(LEGACY_SERVICE, kind)?.get_password() {
+                Ok(secret) => {
+                    entry(SERVICE, kind)?
+                        .set_password(&secret)
+                        .map_err(keyring_error)?;
+                    Ok(Some(secret))
+                }
+                Err(keyring::Error::NoEntry) => Ok(None),
+                Err(error) => Err(keyring_error(error)),
+            },
             Err(error) => Err(keyring_error(error)),
         }
     }
 
     fn set(&self, kind: CredentialKindDto, secret: &str) -> Result<(), IpcError> {
-        entry(kind)?.set_password(secret).map_err(keyring_error)
+        entry(SERVICE, kind)?
+            .set_password(secret)
+            .map_err(keyring_error)
     }
 
     fn clear(&self, kind: CredentialKindDto) -> Result<(), IpcError> {
-        match entry(kind)?.delete_credential() {
+        match entry(SERVICE, kind)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(keyring_error(error)),
+        }?;
+        match entry(LEGACY_SERVICE, kind)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(keyring_error(error)),
         }
@@ -203,7 +219,7 @@ async fn validate_credential(
         CredentialKindDto::Github => client
             .get(&endpoints.github)
             .bearer_auth(secret)
-            .header("User-Agent", "git-client"),
+            .header("User-Agent", "versionarc"),
         CredentialKindDto::Gitlab => client
             .get(&endpoints.gitlab)
             .header("PRIVATE-TOKEN", secret),

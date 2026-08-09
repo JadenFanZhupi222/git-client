@@ -246,7 +246,7 @@ export function CommitGraph({
                       stroke={laneColor(s.color)} strokeWidth={hl ? 2.4 : 1.8} strokeOpacity={hl ? 1 : 0.6} strokeLinecap="round" />
                   );
                 })}
-                {/* 节点(对齐 Strata 原型):合并=空心环(画布填充 + 泳道描边);普通=实心泳道色 +
+                {/* 节点(对齐 VersionArc 原型):合并=空心环(画布填充 + 泳道描边);普通=实心泳道色 +
                     画布描边把背后泳道挖干净;选中放大到 r6 + 泳道色辉光;HEAD 外加一圈淡环。
                     同步状态(未 push/pull)不再改节点形态,改由行首竖色条表达,避免与「合并空心」语义撞。
                     新提交时 node-pop 弹入(transform-box:fill-box 以圆心为原点)。 */}

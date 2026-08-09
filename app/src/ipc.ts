@@ -63,6 +63,9 @@ export type {
   ChangeWarningDto,
   ChangeWarningSeverityDto,
   CommitChangeGroupInputDto,
+  HistoryInvestigationFindingDto,
+  HistoryInvestigationInputDto,
+  HistoryInvestigationResultDto,
 } from "./bindings";
 
 export type {
@@ -103,6 +106,8 @@ import type {
   ChangePlanInputDto,
   ChangePlanResultDto,
   CommitChangeGroupInputDto,
+  HistoryInvestigationInputDto,
+  HistoryInvestigationResultDto,
 } from "./bindings";
 
 import type {
@@ -843,6 +848,16 @@ export async function analyzeChangePlan(input: ChangePlanInputDto): Promise<Chan
 
 export async function cancelChangePlan(runId: string): Promise<void> {
   await invoke("cancel_change_plan", { runId });
+}
+
+export async function investigateRepositoryHistory(
+  input: HistoryInvestigationInputDto,
+): Promise<HistoryInvestigationResultDto> {
+  return await invoke<HistoryInvestigationResultDto>("investigate_repository_history", { input });
+}
+
+export async function cancelHistoryInvestigation(runId: string): Promise<void> {
+  await invoke("cancel_history_investigation", { runId });
 }
 
 export async function commitChangeGroup(

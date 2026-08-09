@@ -22,9 +22,11 @@ use tauri::Emitter;
 
 mod change_commands;
 mod credentials;
+mod history_commands;
 mod review_commands;
 use change_commands::{analyze_change_plan, cancel_change_plan, commit_change_group};
 use credentials::{clear_credential, credential_status, save_credential, test_credential};
+use history_commands::{cancel_history_investigation, investigate_repository_history};
 use review_commands::{
     ReviewRunRegistry, cancel_issue_triage, cancel_pr_review, get_github_issue_context,
     get_gitlab_review_preflight, get_review_preflight, list_github_issues, list_review_models,
@@ -195,8 +197,8 @@ fn prepare_e2e_repo_at(root: &Path, run_id: &str) -> Result<PathBuf, IpcError> {
     RepoService::new(Arc::new(CompositeBackend::default()))
         .init_repo(&repo)
         .map_err(to_ipc)?;
-    run_e2e_git(&repo, &["config", "user.name", "Git Client E2E"])?;
-    run_e2e_git(&repo, &["config", "user.email", "e2e@git-client.invalid"])?;
+    run_e2e_git(&repo, &["config", "user.name", "VersionArc E2E"])?;
+    run_e2e_git(&repo, &["config", "user.email", "e2e@versionarc.invalid"])?;
     Ok(repo)
 }
 
@@ -325,8 +327,8 @@ mod e2e_fixture_tests {
 
         assert!(repo.join(".git").is_dir());
         let config = std::fs::read_to_string(repo.join(".git/config")).unwrap();
-        assert!(config.contains("Git Client E2E"));
-        assert!(config.contains("e2e@git-client.invalid"));
+        assert!(config.contains("VersionArc E2E"));
+        assert!(config.contains("e2e@versionarc.invalid"));
 
         write_e2e_file_at(root.path(), "fixture-run", "hello.txt", "hello from e2e\n").unwrap();
         assert_eq!(
@@ -356,7 +358,8 @@ mod e2e_fixture_tests {
 /// - 仓库上下文从 `RepoRegistry`(Tauri State)取,不再每次 `RepoService::new` +
 ///   重建后端。`registry.context()` 只在查表那一瞬持锁,返回的 `Arc<RepoContext>`
 ///   move 进阻塞线程后才跑 git,绝不持锁做阻塞操作。
-const GITHUB_TOKEN_SERVICE: &str = "com.gitclient.desktop";
+const TOKEN_SERVICE: &str = "com.versionarc.desktop";
+const LEGACY_TOKEN_SERVICE: &str = "com.gitclient.desktop";
 const GITHUB_TOKEN_USER: &str = "github-token";
 const GITLAB_TOKEN_USER: &str = "gitlab-token";
 
@@ -409,11 +412,43 @@ fn keyring_error(error: keyring::Error) -> IpcError {
 }
 
 fn github_token_entry() -> Result<keyring::Entry, IpcError> {
-    keyring::Entry::new(GITHUB_TOKEN_SERVICE, GITHUB_TOKEN_USER).map_err(keyring_error)
+    keyring::Entry::new(TOKEN_SERVICE, GITHUB_TOKEN_USER).map_err(keyring_error)
 }
 
 fn gitlab_token_entry() -> Result<keyring::Entry, IpcError> {
-    keyring::Entry::new(GITHUB_TOKEN_SERVICE, GITLAB_TOKEN_USER).map_err(keyring_error)
+    keyring::Entry::new(TOKEN_SERVICE, GITLAB_TOKEN_USER).map_err(keyring_error)
+}
+
+fn migrated_token(user: &str) -> Result<Option<String>, IpcError> {
+    let current = keyring::Entry::new(TOKEN_SERVICE, user).map_err(keyring_error)?;
+    match current.get_password() {
+        Ok(token) => Ok(Some(token)),
+        Err(keyring::Error::NoEntry) => {
+            let legacy = keyring::Entry::new(LEGACY_TOKEN_SERVICE, user).map_err(keyring_error)?;
+            match legacy.get_password() {
+                Ok(token) => {
+                    current.set_password(&token).map_err(keyring_error)?;
+                    Ok(Some(token))
+                }
+                Err(keyring::Error::NoEntry) => Ok(None),
+                Err(error) => Err(keyring_error(error)),
+            }
+        }
+        Err(error) => Err(keyring_error(error)),
+    }
+}
+
+fn clear_migrated_token(user: &str) -> Result<(), IpcError> {
+    for service in [TOKEN_SERVICE, LEGACY_TOKEN_SERVICE] {
+        match keyring::Entry::new(service, user)
+            .map_err(keyring_error)?
+            .delete_credential()
+        {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(error) => return Err(keyring_error(error)),
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -430,10 +465,8 @@ async fn set_github_token(token: String) -> Result<(), IpcError> {
 
 #[tauri::command]
 async fn has_github_token() -> Result<bool, IpcError> {
-    tokio::task::spawn_blocking(move || match github_token_entry()?.get_password() {
-        Ok(_) => Ok(true),
-        Err(keyring::Error::NoEntry) => Ok(false),
-        Err(error) => Err(keyring_error(error)),
+    tokio::task::spawn_blocking(move || {
+        migrated_token(GITHUB_TOKEN_USER).map(|token| token.is_some())
     })
     .await
     .map_err(join_panic)?
@@ -441,10 +474,8 @@ async fn has_github_token() -> Result<bool, IpcError> {
 
 #[tauri::command]
 async fn get_github_token() -> Result<String, IpcError> {
-    tokio::task::spawn_blocking(move || match github_token_entry()?.get_password() {
-        Ok(token) => Ok(token),
-        Err(keyring::Error::NoEntry) => Err(github_token_missing_error()),
-        Err(error) => Err(keyring_error(error)),
+    tokio::task::spawn_blocking(move || {
+        migrated_token(GITHUB_TOKEN_USER)?.ok_or_else(github_token_missing_error)
     })
     .await
     .map_err(join_panic)?
@@ -452,12 +483,9 @@ async fn get_github_token() -> Result<String, IpcError> {
 
 #[tauri::command]
 async fn clear_github_token() -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || match github_token_entry()?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(keyring_error(error)),
-    })
-    .await
-    .map_err(join_panic)?
+    tokio::task::spawn_blocking(move || clear_migrated_token(GITHUB_TOKEN_USER))
+        .await
+        .map_err(join_panic)?
 }
 
 #[tauri::command]
@@ -474,10 +502,8 @@ async fn set_gitlab_token(token: String) -> Result<(), IpcError> {
 
 #[tauri::command]
 async fn has_gitlab_token() -> Result<bool, IpcError> {
-    tokio::task::spawn_blocking(move || match gitlab_token_entry()?.get_password() {
-        Ok(_) => Ok(true),
-        Err(keyring::Error::NoEntry) => Ok(false),
-        Err(error) => Err(keyring_error(error)),
+    tokio::task::spawn_blocking(move || {
+        migrated_token(GITLAB_TOKEN_USER).map(|token| token.is_some())
     })
     .await
     .map_err(join_panic)?
@@ -485,10 +511,8 @@ async fn has_gitlab_token() -> Result<bool, IpcError> {
 
 #[tauri::command]
 async fn get_gitlab_token() -> Result<String, IpcError> {
-    tokio::task::spawn_blocking(move || match gitlab_token_entry()?.get_password() {
-        Ok(token) => Ok(token),
-        Err(keyring::Error::NoEntry) => Err(gitlab_token_missing_error()),
-        Err(error) => Err(keyring_error(error)),
+    tokio::task::spawn_blocking(move || {
+        migrated_token(GITLAB_TOKEN_USER)?.ok_or_else(gitlab_token_missing_error)
     })
     .await
     .map_err(join_panic)?
@@ -496,12 +520,9 @@ async fn get_gitlab_token() -> Result<String, IpcError> {
 
 #[tauri::command]
 async fn clear_gitlab_token() -> Result<(), IpcError> {
-    tokio::task::spawn_blocking(move || match gitlab_token_entry()?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(error) => Err(keyring_error(error)),
-    })
-    .await
-    .map_err(join_panic)?
+    tokio::task::spawn_blocking(move || clear_migrated_token(GITLAB_TOKEN_USER))
+        .await
+        .map_err(join_panic)?
 }
 
 #[cfg(test)]
@@ -1747,6 +1768,8 @@ pub fn run() {
         analyze_change_plan,
         cancel_change_plan,
         commit_change_group,
+        investigate_repository_history,
+        cancel_history_investigation,
         watch_repo,
         e2e_prepare_repo,
         e2e_write_file
@@ -1855,6 +1878,8 @@ pub fn run() {
         analyze_change_plan,
         cancel_change_plan,
         commit_change_group,
+        investigate_repository_history,
+        cancel_history_investigation,
         watch_repo
     ]);
 

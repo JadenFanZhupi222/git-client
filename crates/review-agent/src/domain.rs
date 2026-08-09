@@ -180,6 +180,8 @@ pub enum ReviewError {
     IndexNotClean,
     #[error("change group commit failed: {0}")]
     ChangeCommitFailed(String),
+    #[error("repository history evidence exceeded its analysis budget")]
+    HistoryInvestigationBudgetExceeded,
 }
 
 impl ReviewError {
@@ -203,6 +205,7 @@ impl ReviewError {
             Self::WorktreeUpdated => "WORKTREE_UPDATED",
             Self::IndexNotClean => "INDEX_NOT_CLEAN",
             Self::ChangeCommitFailed(_) => "CHANGE_COMMIT_FAILED",
+            Self::HistoryInvestigationBudgetExceeded => "HISTORY_INVESTIGATION_BUDGET_EXCEEDED",
         }
     }
 }

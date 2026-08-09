@@ -718,7 +718,7 @@ impl GithubIssueSource {
             return Err(ReviewError::GithubTokenMissing);
         }
         let client = Client::builder()
-            .user_agent("git-client-issue-agent")
+            .user_agent("versionarc-issue-agent")
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .build()
@@ -806,7 +806,7 @@ impl GithubIssueSource {
     async fn comment_marker_exists(
         &self,
         target: &IssueTarget,
-        marker: &str,
+        markers: &[&str],
     ) -> Result<bool, ReviewError> {
         let issue = parse_issue_summary(&self.issue_value(target).await?)?;
         if issue.comments == 0 {
@@ -834,7 +834,7 @@ impl GithubIssueSource {
             comment
                 .get("body")
                 .and_then(Value::as_str)
-                .is_some_and(|body| body.contains(marker))
+                .is_some_and(|body| markers.iter().any(|marker| body.contains(marker)))
         }))
     }
 
@@ -987,8 +987,12 @@ impl IssuePublicationSource for GithubIssueSource {
         publish_id: &str,
         body: &str,
     ) -> Result<IssueMutationOutcome, ReviewError> {
-        let marker = format!("<!-- git-client-issue-triage:{publish_id} -->");
-        if self.comment_marker_exists(target, &marker).await? {
+        let marker = format!("<!-- versionarc-issue-triage:{publish_id} -->");
+        let legacy_marker = format!("<!-- git-client-issue-triage:{publish_id} -->");
+        if self
+            .comment_marker_exists(target, &[&marker, &legacy_marker])
+            .await?
+        {
             return Ok(IssueMutationOutcome::AlreadyApplied);
         }
         let repository = target.repository();
@@ -1010,7 +1014,7 @@ impl IssuePublicationSource for GithubIssueSource {
             Ok(()) => Ok(IssueMutationOutcome::Applied),
             Err(error) => {
                 if self
-                    .comment_marker_exists(target, &marker)
+                    .comment_marker_exists(target, &[&marker, &legacy_marker])
                     .await
                     .unwrap_or(false)
                 {
@@ -1103,11 +1107,18 @@ fn parse_comment(value: &Value) -> Result<IssueComment, ReviewError> {
 }
 
 fn strip_internal_issue_triage_markers(body: &str) -> String {
-    const MARKER_PREFIX: &str = "<!-- git-client-issue-triage:";
+    const MARKER_PREFIXES: [&str; 2] = [
+        "<!-- versionarc-issue-triage:",
+        "<!-- git-client-issue-triage:",
+    ];
     let mut cleaned = String::with_capacity(body.len());
     let mut remaining = body;
 
-    while let Some(start) = remaining.find(MARKER_PREFIX) {
+    while let Some((start, _)) = MARKER_PREFIXES
+        .iter()
+        .filter_map(|prefix| remaining.find(prefix).map(|start| (start, prefix)))
+        .min_by_key(|(start, _)| *start)
+    {
         cleaned.push_str(&remaining[..start]);
         let marker = &remaining[start..];
         let Some(end) = marker.find("-->") else {
@@ -1435,6 +1446,12 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(comment.body, "Visible reply");
+
+        let current = parse_comment(&json!({
+            "body":"Current reply\n\n<!-- versionarc-issue-triage:batch-2 -->"
+        }))
+        .unwrap();
+        assert_eq!(current.body, "Current reply");
 
         let unrelated = parse_comment(&json!({
             "body":"Keep this <!-- ordinary-comment --> text"

@@ -37,7 +37,7 @@ impl GitlabReviewSource {
             return Err(ReviewError::AuthFailed);
         }
         let client = Client::builder()
-            .user_agent("git-client-review-agent")
+            .user_agent("versionarc-review-agent")
             .connect_timeout(CONNECT_TIMEOUT)
             .timeout(REQUEST_TIMEOUT)
             .build()

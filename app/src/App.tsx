@@ -766,7 +766,7 @@ export default function App() {
               message={t("common.lazyLoadFailed")}
               retryLabel={t("common.reload")}
             >
-              {tab === "changes" ? <ChangesView repo={repo} onConfigureCredential={setSettingsSection} /> : tab === "history" ? <HistoryView repo={repo} /> : tab === "compare" ? <CompareView repo={repo} /> : tab === "pullRequests" ? <PullRequestsView remotes={remoteInfos} branch={branch} preferredRemote={selectedRemote} onCreatePullRequest={() => setGithubCreatePrOpen(true)} onConfigureToken={() => openSettingsFor(APP_SETTINGS_ENTRY_POINTS.githubPrPanel)} onConfigureCredential={setSettingsSection} /> : tab === "issues" ? <IssuesView remotes={remoteInfos} preferredRemote={selectedRemote} onConfigureCredential={setSettingsSection} /> : tab === "submodules" ? <SubmodulesView repo={repo} /> : tab === "worktrees" ? <WorktreesView repo={repo} /> : tab === "sparse" ? <SparseCheckoutView repo={repo} /> : <BlameView repo={repo} />}
+              {tab === "changes" ? <ChangesView repo={repo} onConfigureCredential={setSettingsSection} /> : tab === "history" ? <HistoryView repo={repo} onConfigureCredential={setSettingsSection} /> : tab === "compare" ? <CompareView repo={repo} /> : tab === "pullRequests" ? <PullRequestsView remotes={remoteInfos} branch={branch} preferredRemote={selectedRemote} onCreatePullRequest={() => setGithubCreatePrOpen(true)} onConfigureToken={() => openSettingsFor(APP_SETTINGS_ENTRY_POINTS.githubPrPanel)} onConfigureCredential={setSettingsSection} /> : tab === "issues" ? <IssuesView remotes={remoteInfos} preferredRemote={selectedRemote} onConfigureCredential={setSettingsSection} /> : tab === "submodules" ? <SubmodulesView repo={repo} /> : tab === "worktrees" ? <WorktreesView repo={repo} /> : tab === "sparse" ? <SparseCheckoutView repo={repo} /> : <BlameView repo={repo} />}
             </LazyBoundary>
           </div>
         </div>
@@ -981,7 +981,7 @@ function BranchMark({ onHome, title }: { onHome?: () => void; title?: string }) 
 }
 
 /** 没选仓库时的启动屏 —— 编辑性封面(Paper & Ink)。
- *  纸面左对齐单栏,Instrument Serif 巨字「Strata」+ 斜体朱红副题,右侧缓行书脊图谱,
+ *  纸面左对齐单栏,Instrument Serif 巨字「VersionArc」+ 斜体朱红副题,右侧缓行书脊图谱,
  *  逐元素电影级入场(hero-rise stagger),右上角语言切换。 */
 function EmptyState({ onPick, onClone, onInit, lastRepo, onResume }: { onPick: () => void; onClone: () => void; onInit: () => void; lastRepo: string | null; onResume: (r: string) => void }) {
   const t = useT();
@@ -1022,9 +1022,9 @@ function EmptyState({ onPick, onClone, onInit, lastRepo, onResume }: { onPick: (
           <span className="font-mono text-[11px] uppercase tracking-[0.22em] text-fg-subtle">{t("launch.eyebrow")}</span>
         </div>
 
-        {/* 巨字 Strata(Instrument Serif,品牌字,不翻译) */}
-        <h1 className="hero-rise serif mt-7 text-[108px] font-normal leading-[0.9] tracking-[-0.01em] text-fg" style={{ animationDelay: "120ms" }}>
-          Strata
+        {/* 巨字 VersionArc(Instrument Serif,品牌字,不翻译) */}
+        <h1 className="hero-rise serif mt-7 text-[clamp(68px,8.5vw,108px)] font-normal leading-[0.9] tracking-[-0.025em] text-fg" style={{ animationDelay: "120ms" }}>
+          VersionArc
         </h1>
 
         {/* 斜体朱红副题 */}

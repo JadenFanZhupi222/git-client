@@ -251,6 +251,38 @@ pub struct ChangeGroupCommitResultDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct HistoryInvestigationInputDto {
+    pub run_id: String,
+    pub repo_path: String,
+    pub question: String,
+    pub file: Option<String>,
+    pub model_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct HistoryInvestigationFindingDto {
+    pub title: String,
+    pub explanation: String,
+    pub commit_ids: Vec<String>,
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct HistoryInvestigationResultDto {
+    pub snapshot_id: String,
+    pub summary: String,
+    pub confidence: String,
+    pub findings: Vec<HistoryInvestigationFindingDto>,
+    pub caveats: Vec<String>,
+    pub usage: ReviewUsageDto,
+    pub model_id: String,
+    pub provider_attempts: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct IssueRepositoryTargetDto {
     pub owner: String,
     pub repo: String,

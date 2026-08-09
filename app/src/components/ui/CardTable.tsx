@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 /** 次级视图(子模块 / 工作树 / 稀疏检出)的杂志级页眉:
- *  34×34 朱红图标瓦片 + 衬线标题 + 其下 mono 计数。对齐 Strata 原型 viewSecondary 头。 */
+ *  34×34 朱红图标瓦片 + 衬线标题 + 其下 mono 计数。对齐 VersionArc 原型 viewSecondary 头。 */
 export function SecondaryHeader({ icon, title, count }: { icon: ReactNode; title: string; count?: ReactNode }) {
   return (
     <div className="mb-5 flex items-center gap-3">

@@ -3,7 +3,7 @@
 
 import type { GraphSegDto } from "../ipc";
 
-export const LANE_W = 22; // 每条 lane 的像素宽(对齐 Strata 原型,更宽的泳道呼吸感)
+export const LANE_W = 22; // 每条 lane 的像素宽(对齐 VersionArc 原型,更宽的泳道呼吸感)
 export const ROW_H = 56; // 行高必须固定,否则跨行的连线对不齐(对齐原型 56)
 const MID = ROW_H / 2;
 
