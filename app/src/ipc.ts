@@ -64,6 +64,7 @@ export type {
   ChangeWarningSeverityDto,
   CommitChangeGroupInputDto,
   HistoryInvestigationFindingDto,
+  HistoryEvidenceLinkDto,
   HistoryInvestigationInputDto,
   HistoryInvestigationResultDto,
 } from "./bindings";

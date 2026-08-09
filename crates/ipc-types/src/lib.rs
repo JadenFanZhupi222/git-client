@@ -266,6 +266,14 @@ pub struct HistoryInvestigationFindingDto {
     pub explanation: String,
     pub commit_ids: Vec<String>,
     pub paths: Vec<String>,
+    pub evidence_links: Vec<HistoryEvidenceLinkDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct HistoryEvidenceLinkDto {
+    pub commit_id: String,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -276,6 +284,9 @@ pub struct HistoryInvestigationResultDto {
     pub confidence: String,
     pub findings: Vec<HistoryInvestigationFindingDto>,
     pub caveats: Vec<String>,
+    pub search_terms: Vec<String>,
+    pub evidence_sources: Vec<String>,
+    pub evidence_commit_count: usize,
     pub usage: ReviewUsageDto,
     pub model_id: String,
     pub provider_attempts: u32,
