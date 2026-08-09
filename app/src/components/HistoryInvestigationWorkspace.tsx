@@ -21,11 +21,13 @@ export function HistoryInvestigationWorkspace({
   repo,
   selectedFile,
   onClose,
+  onOpenEvidence,
   onConfigureCredential = () => undefined,
 }: {
   repo: string;
   selectedFile: string | null;
   onClose: () => void;
+  onOpenEvidence: (commitId: string, path?: string) => void;
   onConfigureCredential?: (kind: CredentialKindDto) => void;
 }) {
   const t = useT();
@@ -219,6 +221,17 @@ export function HistoryInvestigationWorkspace({
                   {t(`historyInvestigator.confidence.${normalizeConfidence(result.confidence)}`)}
                 </span>
               </div>
+              <div className="flex flex-wrap items-center gap-1.5 border-b border-line py-2.5 text-[10.5px] text-fg-subtle">
+                <span>{t("historyInvestigator.retrieval", { n: result.evidence_commit_count })}</span>
+                {result.evidence_sources.map((source) => (
+                  <span key={source} className="rounded bg-overlay px-1.5 py-0.5 text-fg-muted">
+                    {sourceLabel(source, t)}
+                  </span>
+                ))}
+                {result.search_terms.map((term) => (
+                  <span key={term} className="rounded bg-accent/10 px-1.5 py-0.5 font-mono text-accent">S:{term}</span>
+                ))}
+              </div>
               <div className="divide-y divide-line">
                 {result.findings.map((finding, index) => (
                   <article key={`${finding.title}-${index}`} className="py-4">
@@ -226,11 +239,32 @@ export function HistoryInvestigationWorkspace({
                     <p className="mt-1.5 text-[11.5px] leading-relaxed text-fg-muted">{finding.explanation}</p>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {finding.commit_ids.map((commit) => (
-                        <span key={commit} className="rounded bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent">{commit}</span>
+                        <button
+                          type="button"
+                          key={commit}
+                          onClick={() => onOpenEvidence(commit)}
+                          title={t("historyInvestigator.openCommit", { commit })}
+                          className="rounded bg-accent/10 px-1.5 py-0.5 font-mono text-[10px] text-accent hover:bg-accent/20"
+                        >
+                          {commit}
+                        </button>
                       ))}
-                      {finding.paths.map((path) => (
-                        <span key={path} className="max-w-full truncate rounded bg-overlay px-1.5 py-0.5 font-mono text-[10px] text-fg-muted" title={path}>{path}</span>
-                      ))}
+                      {finding.paths.map((path) => {
+                        const link = finding.evidence_links.find((candidate) => candidate.path === path);
+                        return link ? (
+                          <button
+                            type="button"
+                            key={path}
+                            onClick={() => onOpenEvidence(link.commit_id, link.path)}
+                            title={t("historyInvestigator.openDiff", { commit: link.commit_id, path })}
+                            className="max-w-full truncate rounded bg-overlay px-1.5 py-0.5 font-mono text-[10px] text-fg-muted hover:bg-elevated hover:text-fg"
+                          >
+                            {path}
+                          </button>
+                        ) : (
+                          <span key={path} className="max-w-full truncate rounded bg-overlay px-1.5 py-0.5 font-mono text-[10px] text-fg-muted" title={path}>{path}</span>
+                        );
+                      })}
                     </div>
                   </article>
                 ))}
@@ -256,6 +290,25 @@ export function HistoryInvestigationWorkspace({
       </div>
     </section>
   );
+}
+
+type Translate = ReturnType<typeof useT>;
+
+function sourceLabel(source: string, t: Translate): string {
+  const key = {
+    recent_history: "historyInvestigator.source.recentHistory",
+    file_history: "historyInvestigator.source.fileHistory",
+    pickaxe: "historyInvestigator.source.pickaxe",
+    blame: "historyInvestigator.source.blame",
+    commit_diffs: "historyInvestigator.source.commitDiffs",
+  }[source] as
+    | "historyInvestigator.source.recentHistory"
+    | "historyInvestigator.source.fileHistory"
+    | "historyInvestigator.source.pickaxe"
+    | "historyInvestigator.source.blame"
+    | "historyInvestigator.source.commitDiffs"
+    | undefined;
+  return key ? t(key) : source;
 }
 
 function normalizeConfidence(value: string): "high" | "medium" | "low" {

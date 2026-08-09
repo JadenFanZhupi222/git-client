@@ -36,8 +36,12 @@ const result = {
     explanation: "The commit adds a fallback before the graph is loaded.",
     commit_ids: ["abc1234"],
     paths: ["src/history.rs"],
+    evidence_links: [{ commit_id: "abc1234", path: "src/history.rs" }],
   }],
   caveats: ["Earlier history was outside the evidence window."],
+  search_terms: ["startup guard"],
+  evidence_sources: ["file_history", "pickaxe", "blame", "commit_diffs"],
+  evidence_commit_count: 12,
   usage: { input_tokens: 120, output_tokens: 44, tool_calls: 0 },
   model_id: model.id,
   provider_attempts: 1,
@@ -56,18 +60,20 @@ describe("HistoryInvestigationWorkspace", () => {
 
   it("requires consent and sends the selected file as bounded evidence scope", async () => {
     const user = userEvent.setup();
+    const onOpenEvidence = vi.fn();
     render(
       <HistoryInvestigationWorkspace
         repo="D:/repo"
         selectedFile="src/history.rs"
         onClose={vi.fn()}
+        onOpenEvidence={onOpenEvidence}
       />,
     );
 
     await screen.findByText("GPT-5.4 mini");
-    const question = screen.getByLabelText("What do you want to understand?");
+    const question = screen.getByLabelText("What code decision do you want to trace?");
     await user.type(question, "Why was the startup guard introduced?");
-    const run = screen.getByRole("button", { name: "Investigate history" });
+    const run = screen.getByRole("button", { name: "Find evidence and answer" });
     expect(run).toBeDisabled();
 
     await user.click(screen.getByRole("checkbox", { name: /I agree to send bounded commit metadata/ }));
@@ -84,6 +90,9 @@ describe("HistoryInvestigationWorkspace", () => {
     expect(await screen.findByText("Startup guard")).toBeInTheDocument();
     expect(screen.getByText("abc1234")).toBeInTheDocument();
     expect(screen.getByText("High confidence")).toBeInTheDocument();
+    expect(screen.getByText("Pickaxe search")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "src/history.rs" }));
+    expect(onOpenEvidence).toHaveBeenCalledWith("abc1234", "src/history.rs");
   });
 
   it("can broaden the investigation from the selected file to recent repository history", async () => {
@@ -94,13 +103,14 @@ describe("HistoryInvestigationWorkspace", () => {
         repo="D:/repo"
         selectedFile="src/history.rs"
         onClose={vi.fn()}
+        onOpenEvidence={vi.fn()}
       />,
     );
 
     await screen.findByText("GPT-5.4 mini");
-    await user.type(screen.getByLabelText("What do you want to understand?"), "How did this architecture evolve?");
+    await user.type(screen.getByLabelText("What code decision do you want to trace?"), "How did this architecture evolve?");
     await user.click(screen.getByRole("checkbox", { name: /Limit evidence to the selected file/ }));
-    await user.click(screen.getByRole("button", { name: "Investigate history" }));
+    await user.click(screen.getByRole("button", { name: "Find evidence and answer" }));
 
     await waitFor(() => expect(ipc.investigateRepositoryHistory).toHaveBeenCalledWith(
       expect.objectContaining({ file: null }),

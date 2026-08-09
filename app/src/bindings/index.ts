@@ -72,5 +72,6 @@ export type { ChangeWarningDto } from "./ChangeWarningDto";
 export type { ChangeWarningSeverityDto } from "./ChangeWarningSeverityDto";
 export type { CommitChangeGroupInputDto } from "./CommitChangeGroupInputDto";
 export type { HistoryInvestigationFindingDto } from "./HistoryInvestigationFindingDto";
+export type { HistoryEvidenceLinkDto } from "./HistoryEvidenceLinkDto";
 export type { HistoryInvestigationInputDto } from "./HistoryInvestigationInputDto";
 export type { HistoryInvestigationResultDto } from "./HistoryInvestigationResultDto";

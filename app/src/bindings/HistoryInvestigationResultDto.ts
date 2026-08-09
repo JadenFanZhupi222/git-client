@@ -2,4 +2,4 @@
 import type { HistoryInvestigationFindingDto } from "./HistoryInvestigationFindingDto";
 import type { ReviewUsageDto } from "./ReviewUsageDto";
 
-export type HistoryInvestigationResultDto = { snapshot_id: string, summary: string, confidence: string, findings: Array<HistoryInvestigationFindingDto>, caveats: Array<string>, usage: ReviewUsageDto, model_id: string, provider_attempts: number, };
+export type HistoryInvestigationResultDto = { snapshot_id: string, summary: string, confidence: string, findings: Array<HistoryInvestigationFindingDto>, caveats: Array<string>, search_terms: Array<string>, evidence_sources: Array<string>, evidence_commit_count: number, usage: ReviewUsageDto, model_id: string, provider_attempts: number, };
