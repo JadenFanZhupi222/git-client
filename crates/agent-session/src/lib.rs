@@ -8,7 +8,8 @@ pub use context::{
     PlannedContext,
 };
 pub use engine::{
-    AgentTurnRequest, AgentTurnResult, SessionEngine, SessionEngineConfig, SessionEngineError,
+    AgentLoopPolicy, AgentTurnRequest, AgentTurnResult, SessionEngine, SessionEngineConfig,
+    SessionEngineError,
 };
 pub use rag::{InMemoryRagIndex, NoopRagRetriever, RagChunk, RagError, RagRetriever};
 pub use session::{

@@ -113,13 +113,19 @@ For each turn:
 6. on final text, validate bounds, atomically commit memory, and return the authoritative `AgentTurnResult`;
 7. on cancellation or error, abort the lease and return a stable error.
 
-Unknown tools and schema-invalid arguments become stable, non-sensitive tool-result errors so the model can recover. Duplicate/empty call IDs, cancellation, deadline, and exhausted budgets are terminal. On the final allowed model round, tools are disabled and a bounded system instruction requests a final answer. A provider that still returns tool calls fails with `loop_exhausted`.
+Unknown tools and schema-invalid arguments become stable, non-sensitive tool-result errors so the model can recover. Duplicate/empty call IDs and cancellation remain terminal. Model-round, tool-call, cumulative token, result-byte, and wall-clock ceilings remain hard safety fuses, but they are not normal task-completion targets.
+
+`AgentLoopPolicy` reserves model rounds, cumulative input/output tokens, and wall-clock time for tool-free final synthesis. Before a normal request would consume a reserve, or when the next model/tool call would reach a hard fuse, the engine stops advertising tools and requests the best final answer from the evidence already gathered. The repository product profile therefore uses high emergency fuses (64 model rounds and 128 tool calls), a 20-minute deadline, and separate synthesis reserves instead of treating the former 16/32 counters as business-level completion criteria.
+
+The loop also fingerprints each complete tool batch from canonical tool names, complete arguments, and sanitized results while excluding provider call IDs. Three consecutive identical batches are classified as no progress and enter final synthesis. This is a loop detector, not an execution cache: each accepted call still passes schema, permission, cancellation, timeout, and budget enforcement before execution.
+
+Final synthesis allows a small bounded number of model attempts. If a provider emits tool calls or recovered provider protocol after tools have been disabled, the calls are never executed or replayed as executable input; the engine adds one provider-neutral correction and retries within the reserved rounds. Continued protocol output fails with `loop_exhausted`. Final structured/text results remain authoritative and are committed only after normal validation.
 
 Provider retries emit distinct attempt IDs on one monotonic run event sequence. Tool execution events are associated with the model attempt that produced the complete calls. Partial tool-argument stream deltas remain observational and never reach the executor.
 
 ## 9. Usage and result authority
 
-The engine accumulates checked input/output usage and successful or attempted tool counts under configured ceilings. Overflow or configured budget exhaustion fails closed.
+The engine accumulates checked input/output usage and successful or attempted tool counts under configured ceilings. It estimates the next request before provider I/O so final-synthesis reserves can activate before the cumulative hard limit. Arithmetic overflow and actual hard-limit exhaustion still fail closed.
 
 `AgentTurnResult` contains only session ID, run ID, committed revision, canonical final text, aggregate usage, model-round count, and retrieval count. Stream text, approval state, and tool events are not substituted for this result.
 
@@ -152,7 +158,7 @@ S5 is accepted when:
 5. Context planning accounts for system, memory, history, RAG, tools, schema, current tool transcript, and output reservation.
 6. Irreducible oversized input fails before provider I/O; tool results may be compacted without breaking call/result order.
 7. RAG proves stable lexical ranking, no zero-score results, injection bounds, and prompt-injection delimiting.
-8. The generic loop proves final-only commit, complete-call execution, schema failure recovery, approval denial recovery, cancellation, retry, duplicate IDs, tool/round/usage ceilings, and final-round tool disabling.
+8. The generic loop proves final-only commit, complete-call execution, schema failure recovery, approval denial recovery, cancellation, retry, duplicate IDs, high emergency fuses, synthesis reserves, repeated-batch no-progress detection, and tool-free finalization.
 9. Event ordering remains monotonic and contains no memory, prompts, retrieval bodies, or raw tool results.
 10. Workspace Rust tests, frontend tests, Clippy with warnings denied, rustfmt, dependency boundaries, and production build pass.
 11. Tauri get/reset/start/cancel commands use opaque repository-scoped sessions, canonical repository roots, stable errors, and the existing run/approval registries.
@@ -167,9 +173,9 @@ S5 is accepted when:
 | Transcript | assistant text serialization plus all three provider request mappings |
 | Context | conservative estimate, unknown window, reserved output, history removal, RAG dropping, tool-result markers, irreducible overflow |
 | RAG | tokenization, overlap ranking, tie order, limits, invalid chunks, untrusted delimiters |
-| Loop | direct final, serial/parallel call sets, invalid/unknown tool recovery, final-round no-tools, loop ceiling |
+| Loop | direct final, serial/parallel call sets, invalid/unknown tool recovery, synthesis reserves, repeated-batch no-progress detection, high loop ceiling |
 | Safety | partial arguments never execute, duplicate IDs terminal, denied writes do not mutate, cancellation aborts memory |
-| Retry/events | transient retry only, distinct attempts, monotonic sequence, sanitized event shapes |
+| Retry/events | transient retry only, tool-free protocol correction, distinct attempts, monotonic sequence, sanitized event shapes and loop diagnostics |
 | Integration | fake provider + S3 executor + S4 tools completes a read/patch/final turn under approval policy |
 | IPC / host | DTO generation, input/model validation, opaque repository IDs, policy filtering, command registration in normal and E2E builds |
 | React | loading/empty session, consent gate, authoritative completion, cancel rollback, reset, approval handoff |

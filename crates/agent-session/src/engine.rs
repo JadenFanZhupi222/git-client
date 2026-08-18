@@ -21,6 +21,7 @@ use crate::session::{SessionError, SessionLease, SessionStore};
 pub struct SessionEngineConfig {
     pub context: ContextLimits,
     pub tool_run: ToolRunLimits,
+    pub loop_policy: AgentLoopPolicy,
     pub retry: RetryPolicy,
     pub max_total_input_tokens: u64,
     pub max_total_output_tokens: u64,
@@ -29,11 +30,39 @@ pub struct SessionEngineConfig {
     pub max_run_duration: Duration,
 }
 
+#[derive(Debug, Clone)]
+pub struct AgentLoopPolicy {
+    /// Model rounds kept free for a clean, tool-free final answer before the
+    /// emergency model-round fuse is reached.
+    pub final_synthesis_rounds: u32,
+    /// Consecutive tool batches with identical calls and sanitized results
+    /// before the run is treated as making no progress.
+    pub max_repeated_tool_batches: u32,
+    /// Cumulative provider usage kept available for final synthesis.
+    pub final_input_token_reserve: u64,
+    pub final_output_token_reserve: u64,
+    /// Wall-clock time kept available for final synthesis.
+    pub final_time_reserve: Duration,
+}
+
+impl Default for AgentLoopPolicy {
+    fn default() -> Self {
+        Self {
+            final_synthesis_rounds: 2,
+            max_repeated_tool_batches: 3,
+            final_input_token_reserve: 32_000,
+            final_output_token_reserve: 4_096,
+            final_time_reserve: Duration::from_secs(30),
+        }
+    }
+}
+
 impl Default for SessionEngineConfig {
     fn default() -> Self {
         Self {
             context: ContextLimits::default(),
             tool_run: ToolRunLimits::default(),
+            loop_policy: AgentLoopPolicy::default(),
             retry: RetryPolicy::default(),
             max_total_input_tokens: 500_000,
             max_total_output_tokens: 100_000,
@@ -150,6 +179,15 @@ impl SessionEngine {
     ) -> Result<Self, SessionEngineError> {
         if config.tool_run.max_model_rounds == 0
             || config.tool_run.max_tool_calls == 0
+            || config.loop_policy.final_synthesis_rounds == 0
+            || config.loop_policy.final_synthesis_rounds > config.tool_run.max_model_rounds
+            || config.loop_policy.max_repeated_tool_batches == 0
+            || config.loop_policy.final_input_token_reserve == 0
+            || config.loop_policy.final_input_token_reserve >= config.max_total_input_tokens
+            || config.loop_policy.final_output_token_reserve == 0
+            || config.loop_policy.final_output_token_reserve >= config.max_total_output_tokens
+            || config.loop_policy.final_time_reserve.is_zero()
+            || config.loop_policy.final_time_reserve >= config.max_run_duration
             || config.retry.max_attempts == 0
             || config.max_total_input_tokens == 0
             || config.max_total_output_tokens == 0
@@ -271,7 +309,8 @@ impl SessionEngine {
             .with_events(router.clone())
             .with_secret_literals(self.secret_literals.clone());
         let mut run_limits = self.config.tool_run.clone();
-        run_limits.deadline = Some(Instant::now() + self.config.max_run_duration);
+        let run_started = Instant::now();
+        run_limits.deadline = Some(run_started + self.config.max_run_duration);
         let mut run = ToolRun::new(lease.run_id.clone(), run_limits, Arc::clone(&cancellation));
         if let Some(policy) = request.run_policy.clone() {
             run = run.with_policy(policy);
@@ -293,38 +332,125 @@ impl SessionEngine {
         let mut seen_call_ids = HashSet::new();
         let mut tool_calls = 0u32;
         let mut model_rounds = 0u32;
-        let mut tool_budget_exhausted = false;
+        let mut finalization = None;
+        let mut finalization_rounds = 0u32;
+        let mut last_tool_batch_fingerprint = None;
+        let mut repeated_tool_batches = 0u32;
 
         loop {
+            if finalization.is_none() {
+                let remaining_rounds = self
+                    .config
+                    .tool_run
+                    .max_model_rounds
+                    .saturating_sub(model_rounds);
+                if remaining_rounds <= self.config.loop_policy.final_synthesis_rounds {
+                    start_finalization(
+                        &mut finalization,
+                        FinalizationReason::ModelRoundFuse,
+                        &router,
+                        model_rounds,
+                        tool_calls,
+                    );
+                } else if tool_calls >= self.config.tool_run.max_tool_calls {
+                    start_finalization(
+                        &mut finalization,
+                        FinalizationReason::ToolCallFuse,
+                        &router,
+                        model_rounds,
+                        tool_calls,
+                    );
+                } else if run_started.elapsed()
+                    >= self
+                        .config
+                        .max_run_duration
+                        .saturating_sub(self.config.loop_policy.final_time_reserve)
+                {
+                    start_finalization(
+                        &mut finalization,
+                        FinalizationReason::TimeReserve,
+                        &router,
+                        model_rounds,
+                        tool_calls,
+                    );
+                }
+            }
             run.begin_model_round().map_err(map_tool_error)?;
             model_rounds = model_rounds.saturating_add(1);
+            let planned = loop {
+                let tools_enabled = descriptor.capabilities.tool_calling
+                    != agent_runtime::ToolCallingSupport::None
+                    && finalization.is_none();
+                let tools = if tools_enabled {
+                    all_tools.as_slice()
+                } else {
+                    &[]
+                };
+                let mut request_turn = current.clone();
+                if let Some(reason) = finalization {
+                    request_turn.push(TranscriptItem::System(reason.instruction().into()));
+                }
+                let planned = self.planner.plan(
+                    descriptor.capabilities,
+                    &lease.snapshot,
+                    &request_turn,
+                    retrieval.clone(),
+                    tools,
+                    request.response_schema.as_ref(),
+                    request.max_output_tokens,
+                )?;
+                if finalization.is_none() {
+                    let projected_input = usage
+                        .input_tokens
+                        .saturating_add(planned.estimated_input_tokens)
+                        .saturating_add(self.config.loop_policy.final_input_token_reserve);
+                    let projected_output = usage
+                        .output_tokens
+                        .saturating_add(u64::from(request.max_output_tokens))
+                        .saturating_add(self.config.loop_policy.final_output_token_reserve);
+                    let reason = if projected_input > self.config.max_total_input_tokens {
+                        Some(FinalizationReason::InputTokenReserve)
+                    } else if projected_output > self.config.max_total_output_tokens {
+                        Some(FinalizationReason::OutputTokenReserve)
+                    } else {
+                        None
+                    };
+                    if let Some(reason) = reason {
+                        start_finalization(
+                            &mut finalization,
+                            reason,
+                            &router,
+                            model_rounds,
+                            tool_calls,
+                        );
+                        continue;
+                    }
+                }
+                break planned;
+            };
             let tools_enabled = descriptor.capabilities.tool_calling
                 != agent_runtime::ToolCallingSupport::None
-                && model_rounds < self.config.tool_run.max_model_rounds
-                && tool_calls < self.config.tool_run.max_tool_calls;
-            let tools_enabled = tools_enabled && !tool_budget_exhausted;
+                && finalization.is_none();
             let tools = if tools_enabled {
                 all_tools.as_slice()
             } else {
                 &[]
             };
-            let mut request_turn = current.clone();
-            if !tools_enabled {
-                request_turn.push(TranscriptItem::System(
-                    "Tools are disabled for this final round. Return the final answer now using only the available evidence."
-                        .into(),
-                ));
+            if finalization.is_some() {
+                finalization_rounds = finalization_rounds.saturating_add(1);
             }
-            let planned = self.planner.plan(
-                descriptor.capabilities,
-                &lease.snapshot,
-                &request_turn,
-                retrieval.clone(),
-                tools,
-                request.response_schema.as_ref(),
-                request.max_output_tokens,
-            )?;
             let retrieval_count = planned.retrieval_count;
+            tracing::info!(
+                run_id = %router.run_id(),
+                model_rounds,
+                tool_calls,
+                tools_enabled,
+                finalization_reason = finalization.map(FinalizationReason::as_str),
+                finalization_rounds,
+                estimated_input_tokens = planned.estimated_input_tokens,
+                compacted_tool_results = planned.compacted_tool_results,
+                "agent loop model request prepared"
+            );
             let model_request = ModelRequest {
                 transcript: planned.transcript,
                 tools: tools.to_vec(),
@@ -353,7 +479,21 @@ impl SessionEngine {
                 }
                 ModelOutput::ToolCalls { calls } => {
                     if !tools_enabled {
-                        return Err(SessionEngineError::LoopExhausted);
+                        tracing::warn!(
+                            run_id = %router.run_id(),
+                            model_rounds,
+                            finalization_rounds,
+                            requested_tool_calls = calls.len(),
+                            "provider returned tool calls during tool-free finalization"
+                        );
+                        if finalization_rounds >= self.config.loop_policy.final_synthesis_rounds {
+                            return Err(SessionEngineError::LoopExhausted);
+                        }
+                        current.push(TranscriptItem::System(
+                            "The previous response attempted another tool call, but final synthesis is already in progress. Do not emit tool or provider protocol syntax. Return a direct final answer from the evidence already available."
+                                .into(),
+                        ));
+                        continue;
                     }
                     validate_calls(&calls, &mut seen_call_ids)?;
                     let next_count = tool_calls
@@ -371,16 +511,24 @@ impl SessionEngine {
                             max_tool_calls = self.config.tool_run.max_tool_calls,
                             "tool batch exceeded the remaining run budget"
                         );
-                        tool_budget_exhausted = true;
-                        current.push(TranscriptItem::System(
-                            "The requested tool batch exceeded the remaining tool budget and was not executed. Tools are now disabled. Return the final answer using only the evidence already available."
-                                .into(),
-                        ));
+                        start_finalization(
+                            &mut finalization,
+                            FinalizationReason::ToolCallFuse,
+                            &router,
+                            model_rounds,
+                            tool_calls,
+                        );
                         continue;
                     }
                     tool_calls = next_count;
                     current.push(TranscriptItem::AssistantToolCalls(calls.clone()));
+                    let mut batch_fingerprint = 0xcbf29ce484222325_u64;
                     for call in calls {
+                        fingerprint_field(&mut batch_fingerprint, call.name.as_bytes());
+                        fingerprint_field(
+                            &mut batch_fingerprint,
+                            &serde_json::to_vec(&call.arguments).unwrap_or_default(),
+                        );
                         let result = match executor.execute(&run, call.clone()).await {
                             Ok(result) => result,
                             Err(ToolExecutionError::UnknownTool) => synthetic_tool_result(
@@ -393,12 +541,29 @@ impl SessionEngine {
                             ),
                             Err(error) => return Err(map_tool_error(error)),
                         };
+                        fingerprint_field(&mut batch_fingerprint, result.name.as_bytes());
+                        fingerprint_field(&mut batch_fingerprint, result.content.as_bytes());
                         current.push(TranscriptItem::ToolResult {
                             name: result.name,
                             call_id: result.call_id,
                             content: result.content,
                             counts_toward_budget: true,
                         });
+                    }
+                    if last_tool_batch_fingerprint == Some(batch_fingerprint) {
+                        repeated_tool_batches = repeated_tool_batches.saturating_add(1);
+                    } else {
+                        last_tool_batch_fingerprint = Some(batch_fingerprint);
+                        repeated_tool_batches = 1;
+                    }
+                    if repeated_tool_batches >= self.config.loop_policy.max_repeated_tool_batches {
+                        start_finalization(
+                            &mut finalization,
+                            FinalizationReason::NoProgress,
+                            &router,
+                            model_rounds,
+                            tool_calls,
+                        );
                     }
                 }
             }
@@ -479,6 +644,72 @@ impl SessionEngine {
         Err(SessionEngineError::Provider(
             AgentErrorCode::InvalidResponse,
         ))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FinalizationReason {
+    ModelRoundFuse,
+    ToolCallFuse,
+    InputTokenReserve,
+    OutputTokenReserve,
+    TimeReserve,
+    NoProgress,
+}
+
+impl FinalizationReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ModelRoundFuse => "model_round_fuse",
+            Self::ToolCallFuse => "tool_call_fuse",
+            Self::InputTokenReserve => "input_token_reserve",
+            Self::OutputTokenReserve => "output_token_reserve",
+            Self::TimeReserve => "time_reserve",
+            Self::NoProgress => "no_progress",
+        }
+    }
+
+    fn instruction(self) -> &'static str {
+        match self {
+            Self::NoProgress => {
+                "The recent tool batches repeated without producing new evidence. Stop using tools and return the best direct final answer from the evidence already available. State any material uncertainty instead of repeating a call. Do not emit tool or provider protocol syntax."
+            }
+            _ => {
+                "The run is reserving its remaining resources for final synthesis. Stop using tools and return the best direct final answer from the evidence already available. State any material incompleteness clearly. Do not emit tool or provider protocol syntax."
+            }
+        }
+    }
+}
+
+fn start_finalization(
+    current: &mut Option<FinalizationReason>,
+    reason: FinalizationReason,
+    router: &RunEventRouter,
+    model_rounds: u32,
+    tool_calls: u32,
+) {
+    if current.is_some() {
+        return;
+    }
+    tracing::info!(
+        run_id = %router.run_id(),
+        model_rounds,
+        tool_calls,
+        finalization_reason = reason.as_str(),
+        "agent loop entered tool-free final synthesis"
+    );
+    *current = Some(reason);
+}
+
+fn fingerprint_field(hash: &mut u64, value: &[u8]) {
+    for byte in value
+        .len()
+        .to_le_bytes()
+        .into_iter()
+        .chain(value.iter().copied())
+    {
+        *hash ^= u64::from(byte);
+        *hash = hash.wrapping_mul(0x100000001b3);
     }
 }
 
@@ -792,6 +1023,13 @@ mod tests {
                 max_tool_calls: 4,
                 ..ToolRunLimits::default()
             },
+            loop_policy: AgentLoopPolicy {
+                final_synthesis_rounds: 1,
+                max_repeated_tool_batches: 3,
+                final_input_token_reserve: 512,
+                final_output_token_reserve: 256,
+                final_time_reserve: Duration::from_secs(1),
+            },
             retry: RetryPolicy {
                 max_attempts: 2,
                 base_delay_ms: 0,
@@ -943,9 +1181,170 @@ mod tests {
         assert!(requests[1].tools.is_empty());
         assert!(requests[1].transcript.iter().any(|item| matches!(
             item,
-            TranscriptItem::System(text) if text.contains("exceeded the remaining tool budget")
+            TranscriptItem::System(text) if text.contains("reserving its remaining resources")
         )));
         assert_eq!(sessions.get("session").unwrap().revision, 1);
+    }
+
+    #[tokio::test]
+    async fn repeated_identical_tool_batches_switch_to_tool_free_synthesis() {
+        let handler = Arc::new(CountingHandler::default());
+        let provider = fixture_provider(vec![
+            response(ModelOutput::ToolCalls {
+                calls: vec![ToolCall::with_call_id(
+                    "echo",
+                    "call-1",
+                    json!({"text":"same"}),
+                )],
+            }),
+            response(ModelOutput::ToolCalls {
+                calls: vec![ToolCall::with_call_id(
+                    "echo",
+                    "call-2",
+                    json!({"text":"same"}),
+                )],
+            }),
+            response(ModelOutput::ToolCalls {
+                calls: vec![ToolCall::with_call_id(
+                    "echo",
+                    "call-3",
+                    json!({"text":"same"}),
+                )],
+            }),
+            response(ModelOutput::FinalText {
+                text: "best answer from existing evidence".into(),
+            }),
+        ]);
+        let mut loop_config = config(6);
+        loop_config.tool_run.max_tool_calls = 8;
+        let engine = SessionEngine::new(
+            provider.clone(),
+            sessions(),
+            registry(Arc::clone(&handler)),
+            policy(),
+            Arc::new(DenyAllApprovals),
+            Arc::new(NoopAgentEventSink),
+            loop_config,
+        )
+        .unwrap();
+
+        let result = engine
+            .run_turn(
+                AgentTurnRequest::text("session", "run", "question", 256),
+                Arc::new(NeverCancel),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.final_text, "best answer from existing evidence");
+        assert_eq!(result.usage.tool_calls, 3);
+        assert_eq!(handler.0.load(Ordering::Relaxed), 3);
+        let requests = provider.requests.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        assert!(requests[3].tools.is_empty());
+        assert!(requests[3].transcript.iter().any(|item| matches!(
+            item,
+            TranscriptItem::System(text) if text.contains("repeated without producing new evidence")
+        )));
+    }
+
+    #[tokio::test]
+    async fn finalization_retries_protocol_output_without_executing_it() {
+        let handler = Arc::new(CountingHandler::default());
+        let provider = fixture_provider(vec![
+            response(ModelOutput::ToolCalls {
+                calls: (0..5)
+                    .map(|index| {
+                        ToolCall::with_call_id(
+                            "echo",
+                            format!("overflow-{index}"),
+                            json!({"text":index.to_string()}),
+                        )
+                    })
+                    .collect(),
+            }),
+            response(ModelOutput::ToolCalls {
+                calls: vec![ToolCall::with_call_id(
+                    "echo",
+                    "must-not-run",
+                    json!({"text":"ignored"}),
+                )],
+            }),
+            response(ModelOutput::FinalText {
+                text: "clean final answer".into(),
+            }),
+        ]);
+        let mut loop_config = config(4);
+        loop_config.loop_policy.final_synthesis_rounds = 2;
+        let engine = SessionEngine::new(
+            provider.clone(),
+            sessions(),
+            registry(Arc::clone(&handler)),
+            policy(),
+            Arc::new(DenyAllApprovals),
+            Arc::new(NoopAgentEventSink),
+            loop_config,
+        )
+        .unwrap();
+
+        let result = engine
+            .run_turn(
+                AgentTurnRequest::text("session", "run", "question", 256),
+                Arc::new(NeverCancel),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.final_text, "clean final answer");
+        assert_eq!(result.usage.tool_calls, 0);
+        assert_eq!(handler.0.load(Ordering::Relaxed), 0);
+        let requests = provider.requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[1].tools.is_empty());
+        assert!(requests[2].tools.is_empty());
+        assert!(requests[2].transcript.iter().any(|item| matches!(
+            item,
+            TranscriptItem::System(text) if text.contains("previous response attempted another tool call")
+        )));
+    }
+
+    #[tokio::test]
+    async fn cumulative_usage_reserve_starts_synthesis_before_the_hard_limit() {
+        let handler = Arc::new(CountingHandler::default());
+        let provider = fixture_provider(vec![response(ModelOutput::FinalText {
+            text: "answer within the reserve".into(),
+        })]);
+        let mut loop_config = config(3);
+        loop_config.max_total_input_tokens = 550;
+        loop_config.loop_policy.final_input_token_reserve = 540;
+        let engine = SessionEngine::new(
+            provider.clone(),
+            sessions(),
+            registry(Arc::clone(&handler)),
+            policy(),
+            Arc::new(DenyAllApprovals),
+            Arc::new(NoopAgentEventSink),
+            loop_config,
+        )
+        .unwrap();
+
+        let result = engine
+            .run_turn(
+                AgentTurnRequest::text("session", "run", "question", 256),
+                Arc::new(NeverCancel),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.final_text, "answer within the reserve");
+        assert_eq!(handler.0.load(Ordering::Relaxed), 0);
+        let requests = provider.requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].tools.is_empty());
+        assert!(requests[0].transcript.iter().any(|item| matches!(
+            item,
+            TranscriptItem::System(text) if text.contains("reserving its remaining resources")
+        )));
     }
 
     #[tokio::test]
@@ -1122,6 +1521,7 @@ mod tests {
         let sessions = sessions();
         let mut short = config(2);
         short.max_run_duration = Duration::from_millis(20);
+        short.loop_policy.final_time_reserve = Duration::from_millis(5);
         let engine = SessionEngine::new(
             Arc::new(HangingProvider),
             Arc::clone(&sessions),
