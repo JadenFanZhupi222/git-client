@@ -310,6 +310,13 @@ pub trait ToolIntentJournal: Send + Sync {
         intent: &ToolIntent,
         receipt: &ToolReceipt,
     ) -> Result<(), ToolExecutionError>;
+    /// Must durably remove an intent whose read-only execution is known to have
+    /// produced no side effect before returning.
+    fn record_no_effect(
+        &self,
+        intent: &ToolIntent,
+        outcome: ToolOutcome,
+    ) -> Result<(), ToolExecutionError>;
 }
 
 #[derive(Debug, Default)]
@@ -321,6 +328,10 @@ impl ToolIntentJournal for NoopToolIntentJournal {
     }
 
     fn record_receipt(&self, _: &ToolIntent, _: &ToolReceipt) -> Result<(), ToolExecutionError> {
+        Ok(())
+    }
+
+    fn record_no_effect(&self, _: &ToolIntent, _: ToolOutcome) -> Result<(), ToolExecutionError> {
         Ok(())
     }
 }
@@ -353,6 +364,8 @@ pub enum ToolExecutionError {
     IntentPersistence,
     #[error("tool receipt persistence failed")]
     ReceiptPersistence,
+    #[error("tool intent resolution persistence failed")]
+    IntentResolutionPersistence,
     #[error("tool intent preparation failed")]
     IntentPreparation,
 }
@@ -1182,6 +1195,7 @@ impl ToolExecutor {
         let output = tokio::select! {
             biased;
             _ = run.cancellation.cancelled() => {
+                self.resolve_read_only_without_effect(&intent, ToolOutcome::Cancelled)?;
                 self.emit_terminal(&call, started, ToolOutcome::Cancelled, 0, false);
                 return Err(ToolExecutionError::Cancelled);
             },
@@ -1189,6 +1203,7 @@ impl ToolExecutor {
                 match result {
                     Ok(result) => result,
                     Err(_) => {
+                        self.resolve_read_only_without_effect(&intent, ToolOutcome::Timeout)?;
                         self.emit_terminal(&call, started, ToolOutcome::Timeout, 0, false);
                         return Err(ToolExecutionError::Timeout);
                     },
@@ -1206,7 +1221,10 @@ impl ToolExecutor {
                     Some(output.receipt),
                 )
             }
-            Err(_) => (ToolOutcome::Failed, "Tool execution failed.".into(), None),
+            Err(_) => {
+                self.resolve_read_only_without_effect(&intent, ToolOutcome::Failed)?;
+                (ToolOutcome::Failed, "Tool execution failed.".into(), None)
+            }
         };
         let content = redact_sensitive_text(content, &self.secret_literals);
         let cap = tool
@@ -1249,6 +1267,19 @@ impl ToolExecutor {
             content_bytes,
             truncated,
         });
+    }
+
+    fn resolve_read_only_without_effect(
+        &self,
+        intent: &ToolIntent,
+        outcome: ToolOutcome,
+    ) -> Result<(), ToolExecutionError> {
+        if intent.risk != ToolRisk::ReadOnly {
+            return Ok(());
+        }
+        self.journal
+            .record_no_effect(intent, outcome)
+            .map_err(|_| ToolExecutionError::IntentResolutionPersistence)
     }
 }
 
@@ -1635,6 +1666,7 @@ mod tests {
 
     #[tokio::test]
     async fn timeout_and_budgets_fail_closed() {
+        let order = Arc::new(Mutex::new(Vec::new()));
         let mut slow = definition();
         slow.name = "test.slow".into();
         slow.timeout_ms = 5;
@@ -1645,7 +1677,12 @@ mod tests {
             risk: None,
             decision: PermissionDecision::Allow,
         }]);
-        let executor = ToolExecutor::new(Arc::new(registry), policy);
+        let executor = ToolExecutor::new(Arc::new(registry), policy).with_journal(Arc::new(
+            RecordingJournal {
+                order: Arc::clone(&order),
+                fail_intent: false,
+            },
+        ));
         let run = ToolRun::new(
             "run",
             ToolRunLimits {
@@ -1664,6 +1701,7 @@ mod tests {
                 .unwrap_err(),
             ToolExecutionError::Timeout
         );
+        assert_eq!(*order.lock().unwrap(), vec!["intent", "no_effect"]);
         assert_eq!(
             executor
                 .execute(
@@ -1755,6 +1793,124 @@ mod tests {
             self.order.lock().unwrap().push("receipt");
             Ok(())
         }
+
+        fn record_no_effect(
+            &self,
+            _: &ToolIntent,
+            _: ToolOutcome,
+        ) -> Result<(), ToolExecutionError> {
+            self.order.lock().unwrap().push("no_effect");
+            Ok(())
+        }
+    }
+
+    struct FailingHandler;
+
+    #[async_trait]
+    impl ToolHandler for FailingHandler {
+        async fn execute(
+            &self,
+            _: ToolExecutionContext,
+            _: Value,
+        ) -> Result<ToolHandlerOutput, ToolHandlerError> {
+            Err(ToolHandlerError)
+        }
+    }
+
+    #[tokio::test]
+    async fn read_only_failure_resolves_intent_without_effect() {
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = ToolRegistry::default();
+        registry
+            .register(definition(), Arc::new(FailingHandler))
+            .unwrap();
+        let executor = ToolExecutor::new(Arc::new(registry), allow_policy()).with_journal(
+            Arc::new(RecordingJournal {
+                order: Arc::clone(&order),
+                fail_intent: false,
+            }),
+        );
+        let run = ToolRun::new("run", ToolRunLimits::default(), Arc::new(NeverCancel));
+        let result = executor
+            .execute(
+                &run,
+                ToolCall::with_call_id("test.echo", "failed-read", json!({"text":"ok"})),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.outcome, ToolOutcome::Failed);
+        assert_eq!(*order.lock().unwrap(), vec!["intent", "no_effect"]);
+    }
+
+    #[tokio::test]
+    async fn read_only_cancellation_resolves_intent_without_effect() {
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let mut slow = definition();
+        slow.name = "test.slow-cancel".into();
+        slow.timeout_ms = 2_000;
+        let mut registry = ToolRegistry::default();
+        registry.register(slow, Arc::new(SlowHandler)).unwrap();
+        let policy = PermissionPolicy::new(vec![PermissionRule {
+            matcher: ToolMatcher::Exact("test.slow-cancel".into()),
+            risk: Some(ToolRisk::ReadOnly),
+            decision: PermissionDecision::Allow,
+        }]);
+        let executor = ToolExecutor::new(Arc::new(registry), policy).with_journal(Arc::new(
+            RecordingJournal {
+                order: Arc::clone(&order),
+                fail_intent: false,
+            },
+        ));
+        let cancellation = Arc::new(ToggleCancel(AtomicBool::new(false)));
+        let trigger = Arc::clone(&cancellation);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            trigger.0.store(true, Ordering::SeqCst);
+        });
+        let run = ToolRun::new("run", ToolRunLimits::default(), cancellation);
+        let error = executor
+            .execute(
+                &run,
+                ToolCall::with_call_id("test.slow-cancel", "cancelled-read", json!({"text":"ok"})),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error, ToolExecutionError::Cancelled);
+        assert_eq!(*order.lock().unwrap(), vec!["intent", "no_effect"]);
+    }
+
+    #[tokio::test]
+    async fn mutation_timeout_preserves_intent_for_ambiguous_recovery() {
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let mut slow = definition();
+        slow.name = "test.write-slow".into();
+        slow.risk = ToolRisk::Write;
+        slow.timeout_ms = 5;
+        let mut registry = ToolRegistry::default();
+        registry.register(slow, Arc::new(SlowHandler)).unwrap();
+        let policy = PermissionPolicy::new(vec![PermissionRule {
+            matcher: ToolMatcher::Exact("test.write-slow".into()),
+            risk: Some(ToolRisk::Write),
+            decision: PermissionDecision::Allow,
+        }]);
+        let executor = ToolExecutor::new(Arc::new(registry), policy).with_journal(Arc::new(
+            RecordingJournal {
+                order: Arc::clone(&order),
+                fail_intent: false,
+            },
+        ));
+        let run = ToolRun::new("run", ToolRunLimits::default(), Arc::new(NeverCancel));
+        assert_eq!(
+            executor
+                .execute(
+                    &run,
+                    ToolCall::with_call_id("test.write-slow", "write", json!({"text":"ok"})),
+                )
+                .await
+                .unwrap_err(),
+            ToolExecutionError::Timeout
+        );
+        assert_eq!(*order.lock().unwrap(), vec!["intent"]);
     }
 
     #[tokio::test]

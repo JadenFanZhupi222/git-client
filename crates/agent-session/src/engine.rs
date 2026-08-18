@@ -1185,6 +1185,9 @@ fn map_tool_error(error: ToolExecutionError) -> SessionEngineError {
         ToolExecutionError::InvalidInput { code, .. } => SessionEngineError::Tool(code),
         ToolExecutionError::IntentPersistence => SessionEngineError::Tool("intent_persistence"),
         ToolExecutionError::ReceiptPersistence => SessionEngineError::Tool("receipt_persistence"),
+        ToolExecutionError::IntentResolutionPersistence => {
+            SessionEngineError::Tool("intent_resolution_persistence")
+        }
         ToolExecutionError::IntentPreparation => SessionEngineError::Tool("intent_preparation"),
     }
 }

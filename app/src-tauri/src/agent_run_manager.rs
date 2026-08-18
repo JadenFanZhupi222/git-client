@@ -135,27 +135,65 @@ impl AgentRunManager {
         let Some(goal) = session.active_goal else {
             return Ok(true);
         };
-        if goal.status != AgentGoalStatus::Paused
-            || goal.pause_reason != Some(PauseReason::AppRestarted)
-        {
+        let restart_recovery = goal.status == AgentGoalStatus::Paused
+            && goal.pause_reason == Some(PauseReason::AppRestarted);
+        let ambiguity_recovery = goal.status == AgentGoalStatus::Blocked
+            && goal.block_reason == Some(BlockReason::AmbiguousToolEffect);
+        if !restart_recovery && !ambiguity_recovery {
             return Ok(true);
         }
         if goal.checkpoint.pending_intents.is_empty() {
+            if ambiguity_recovery {
+                self.goals
+                    .mutate_goal_current(session_id, now_ms(), |goal| {
+                        goal.status = AgentGoalStatus::Paused;
+                        goal.pause_reason = Some(PauseReason::User);
+                        goal.block_reason = None;
+                        Ok(())
+                    })?;
+                tracing::info!(
+                    goal_id = %goal.goal_id,
+                    pending_count = 0,
+                    recovery_class = "resolved_no_effect",
+                    "agent tool recovery completed"
+                );
+            }
             return Ok(true);
         }
         let recovery = classify_pending_intents(repository, &goal.checkpoint.pending_intents)?;
-        let ambiguous = recovery.ambiguous;
+        let ambiguous = recovery.is_ambiguous();
+        let resolved_execution_ids = recovery.resolved_execution_ids();
+        tracing::info!(
+            goal_id = %goal.goal_id,
+            pending_count = goal.checkpoint.pending_intents.len(),
+            safe_discard_count = recovery.safe_discard_execution_ids.len(),
+            recovered_count = recovery.recovered.len(),
+            retry_count = recovery.retry_execution_ids.len(),
+            ambiguous_count = recovery.ambiguous_execution_ids.len(),
+            recovery_class = if ambiguous { "ambiguous" } else { "resolved" },
+            "agent tool recovery classified"
+        );
         self.goals.mutate_goal_current(session_id, now_ms(), |goal| {
+            goal.checkpoint.pending_intents.retain(|intent| {
+                !resolved_execution_ids.contains(&intent.execution_id)
+            });
+            goal.checkpoint
+                .receipts
+                .extend(recovery.recovered.iter().cloned());
             if ambiguous {
                 goal.status = AgentGoalStatus::Blocked;
+                goal.pause_reason = None;
                 goal.block_reason = Some(BlockReason::AmbiguousToolEffect);
                 return Ok(());
             }
-            goal.checkpoint.pending_intents.clear();
-            goal.checkpoint.receipts.extend(recovery.recovered);
+            if ambiguity_recovery {
+                goal.status = AgentGoalStatus::Paused;
+                goal.pause_reason = Some(PauseReason::User);
+                goal.block_reason = None;
+            }
             if !recovery.retry_execution_ids.is_empty() {
                 goal.checkpoint.recent_transcript.push(TranscriptItem::System(
-                    "A previously approved filesystem mutation did not take effect before restart. Reissue it only if still needed; a fresh approval is required."
+                    "A persisted filesystem mutation did not take effect. Reissue it only if still needed; a fresh approval is required."
                         .into(),
                 ));
             }
@@ -261,6 +299,12 @@ impl AgentRunManager {
                 return Ok(());
             }
             if !goal.checkpoint.pending_intents.is_empty() {
+                tracing::warn!(
+                    goal_id = %goal.goal_id,
+                    pending_count = goal.checkpoint.pending_intents.len(),
+                    recovery_class = "requires_reconciliation",
+                    "agent goal stopped at unresolved tool intent"
+                );
                 self.goals
                     .mutate_goal_current(session_id, now_ms(), |goal| {
                         goal.status = AgentGoalStatus::Blocked;
@@ -720,7 +764,15 @@ impl ToolIntentJournal for GoalToolJournal {
                 goal.checkpoint.pending_intents.push(intent.clone());
                 Ok(())
             })
-            .map_err(|_| ToolExecutionError::IntentPersistence)
+            .map_err(|_| ToolExecutionError::IntentPersistence)?;
+        tracing::info!(
+            execution_id = %intent.execution_id,
+            tool_name = %intent.tool_name,
+            risk = ?intent.risk,
+            stage = "intent_persisted",
+            "agent tool journal advanced"
+        );
+        Ok(())
     }
 
     fn record_receipt(
@@ -740,6 +792,13 @@ impl ToolIntentJournal for GoalToolJournal {
                 Ok(())
             })
             .map_err(|_| ToolExecutionError::ReceiptPersistence)?;
+        tracing::info!(
+            execution_id = %intent.execution_id,
+            tool_name = %intent.tool_name,
+            receipt_kind = receipt_kind(receipt),
+            stage = "receipt_persisted",
+            "agent tool journal advanced"
+        );
         if let Ok(goal) = current_goal(&self.goals, &self.session_id) {
             let digest = serde_json::to_vec(receipt)
                 .ok()
@@ -761,6 +820,41 @@ impl ToolIntentJournal for GoalToolJournal {
             );
         }
         Ok(())
+    }
+
+    fn record_no_effect(
+        &self,
+        intent: &ToolIntent,
+        outcome: review_agent::ToolOutcome,
+    ) -> Result<(), ToolExecutionError> {
+        self.goals
+            .mutate_goal_current(&self.session_id, now_ms(), |goal| {
+                if goal.status.is_terminal() {
+                    return Err(GoalError::Terminal);
+                }
+                goal.checkpoint
+                    .pending_intents
+                    .retain(|pending| pending.execution_id != intent.execution_id);
+                Ok(())
+            })
+            .map_err(|_| ToolExecutionError::IntentResolutionPersistence)?;
+        tracing::info!(
+            execution_id = %intent.execution_id,
+            tool_name = %intent.tool_name,
+            outcome = ?outcome,
+            stage = "resolved_no_effect",
+            "agent tool journal advanced"
+        );
+        Ok(())
+    }
+}
+
+fn receipt_kind(receipt: &ToolReceipt) -> &'static str {
+    match receipt {
+        ToolReceipt::Observation { .. } => "observation",
+        ToolReceipt::Mutation { .. } => "mutation",
+        ToolReceipt::Artifact { .. } => "artifact",
+        ToolReceipt::Process { .. } => "process",
     }
 }
 
@@ -853,7 +947,28 @@ fn receipts_match_repository(goal: &AgentGoal, repository: &Path) -> Result<bool
 struct PendingIntentRecovery {
     recovered: Vec<ToolReceipt>,
     retry_execution_ids: Vec<String>,
-    ambiguous: bool,
+    safe_discard_execution_ids: Vec<String>,
+    ambiguous_execution_ids: Vec<String>,
+}
+
+impl PendingIntentRecovery {
+    fn is_ambiguous(&self) -> bool {
+        !self.ambiguous_execution_ids.is_empty()
+    }
+
+    fn resolved_execution_ids(&self) -> HashSet<String> {
+        self.safe_discard_execution_ids
+            .iter()
+            .chain(self.retry_execution_ids.iter())
+            .chain(self.recovered.iter().filter_map(|receipt| match receipt {
+                ToolReceipt::Mutation { execution_id, .. }
+                | ToolReceipt::Artifact { execution_id, .. }
+                | ToolReceipt::Process { execution_id, .. } => Some(execution_id),
+                ToolReceipt::Observation { .. } => None,
+            }))
+            .cloned()
+            .collect()
+    }
 }
 
 fn classify_pending_intents(
@@ -864,20 +979,30 @@ fn classify_pending_intents(
         agent_tools::PathScope::new(repository, true).map_err(|_| GoalError::StorageUnavailable)?;
     let mut recovery = PendingIntentRecovery::default();
     for intent in intents {
+        if intent.risk == ToolRisk::ReadOnly {
+            recovery
+                .safe_discard_execution_ids
+                .push(intent.execution_id.clone());
+            continue;
+        }
         if !matches!(
             intent.tool_name.as_str(),
             "filesystem.write" | "patch.apply"
         ) {
-            recovery.ambiguous = true;
-            break;
+            recovery
+                .ambiguous_execution_ids
+                .push(intent.execution_id.clone());
+            continue;
         }
         let (Some(resource), Some(before), Some(after)) = (
             intent.resource.as_deref(),
             intent.before_digest.as_deref(),
             intent.expected_after_digest.as_deref(),
         ) else {
-            recovery.ambiguous = true;
-            break;
+            recovery
+                .ambiguous_execution_ids
+                .push(intent.execution_id.clone());
+            continue;
         };
         let target = scope
             .write_target(resource)
@@ -899,8 +1024,9 @@ fn classify_pending_intents(
                 .retry_execution_ids
                 .push(intent.execution_id.clone());
         } else {
-            recovery.ambiguous = true;
-            break;
+            recovery
+                .ambiguous_execution_ids
+                .push(intent.execution_id.clone());
         }
     }
     Ok(recovery)
@@ -1452,9 +1578,9 @@ fn map_engine_error(error: SessionEngineError) -> RunGoalError {
         SessionEngineError::Budget("model_rounds" | "tool_calls" | "runaway_tool_calls") => {
             RunGoalError::Runaway
         }
-        SessionEngineError::Tool("intent_persistence" | "receipt_persistence") => {
-            RunGoalError::Storage
-        }
+        SessionEngineError::Tool(
+            "intent_persistence" | "receipt_persistence" | "intent_resolution_persistence",
+        ) => RunGoalError::Storage,
         _ => RunGoalError::InvalidResult,
     }
 }
@@ -1603,20 +1729,20 @@ mod tests {
             classify_pending_intents(repository.path(), std::slice::from_ref(&intent)).unwrap();
         assert_eq!(not_started.retry_execution_ids, vec!["exec-1"]);
         assert!(not_started.recovered.is_empty());
-        assert!(!not_started.ambiguous);
+        assert!(!not_started.is_ambiguous());
 
         std::fs::write(&path, b"after").unwrap();
         let completed =
             classify_pending_intents(repository.path(), std::slice::from_ref(&intent)).unwrap();
         assert_eq!(completed.recovered.len(), 1);
         assert!(completed.retry_execution_ids.is_empty());
-        assert!(!completed.ambiguous);
+        assert!(!completed.is_ambiguous());
 
         std::fs::write(&path, b"external-change").unwrap();
         assert!(
             classify_pending_intents(repository.path(), std::slice::from_ref(&intent))
                 .unwrap()
-                .ambiguous
+                .is_ambiguous()
         );
 
         let mut process = intent;
@@ -1624,7 +1750,7 @@ mod tests {
         assert!(
             classify_pending_intents(repository.path(), &[process])
                 .unwrap()
-                .ambiguous
+                .is_ambiguous()
         );
         assert!(
             classify_pending_intents(repository.path(), &[])
@@ -1632,5 +1758,35 @@ mod tests {
                 .recovered
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn crash_recovery_discards_read_only_intents_without_ambiguity() {
+        let repository = tempfile::tempdir().unwrap();
+        let intent = ToolIntent {
+            execution_id: "exec-read".into(),
+            run_id: "goal-1".into(),
+            call_id: "call-read".into(),
+            tool_name: "search.text".into(),
+            risk: ToolRisk::ReadOnly,
+            arguments: serde_json::json!({"query":"Goal"}),
+            approval_id: None,
+            approved: true,
+            resource: None,
+            before_digest: None,
+            expected_after_digest: None,
+            replay_policy: None,
+        };
+
+        let recovery =
+            classify_pending_intents(repository.path(), std::slice::from_ref(&intent)).unwrap();
+        assert_eq!(recovery.safe_discard_execution_ids, vec!["exec-read"]);
+        assert_eq!(
+            recovery.resolved_execution_ids(),
+            HashSet::from(["exec-read".to_owned()])
+        );
+        assert!(!recovery.is_ambiguous());
+        assert!(recovery.recovered.is_empty());
+        assert!(recovery.retry_execution_ids.is_empty());
     }
 }

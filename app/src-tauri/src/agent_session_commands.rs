@@ -297,6 +297,7 @@ pub(crate) async fn cancel_agent_goal(
     manager
         .ensure(&session_id, &session_id)
         .map_err(goal_ipc_error)?;
+    let mut discarded_read_intents = 0usize;
     manager
         .goals()
         .mutate_goal(
@@ -308,7 +309,14 @@ pub(crate) async fn cancel_agent_goal(
                 if goal.status.is_terminal() {
                     return Err(agent_session::GoalError::Terminal);
                 }
-                if goal.checkpoint.pending_intents.is_empty() {
+                let pending_are_read_only = goal
+                    .checkpoint
+                    .pending_intents
+                    .iter()
+                    .all(|intent| intent.risk == ToolRisk::ReadOnly);
+                if pending_are_read_only {
+                    discarded_read_intents = goal.checkpoint.pending_intents.len();
+                    goal.checkpoint.pending_intents.clear();
                     goal.status = agent_session::AgentGoalStatus::Cancelled;
                     goal.pause_reason = None;
                     goal.block_reason = None;
@@ -321,6 +329,14 @@ pub(crate) async fn cancel_agent_goal(
             },
         )
         .map_err(goal_ipc_error)?;
+    if discarded_read_intents > 0 {
+        tracing::info!(
+            goal_id = %input.goal_id,
+            discarded_count = discarded_read_intents,
+            recovery_class = "cancelled_read_only",
+            "agent tool intents resolved during cancellation"
+        );
+    }
     registry.cancel(&input.goal_id);
     current_goal_snapshot(&manager, &session_id)
 }
@@ -339,15 +355,35 @@ pub(crate) async fn resume_agent_goal(
     manager
         .ensure(&session_id, &session_id)
         .map_err(goal_ipc_error)?;
-    manager
+    let before_reconciliation = manager
+        .goals()
+        .snapshot(&session_id)
+        .map_err(goal_ipc_error)?
+        .active_goal
+        .ok_or_else(|| goal_ipc_error(agent_session::GoalError::GoalNotFound))?;
+    ensure_goal_id(&before_reconciliation, &input.goal_id).map_err(goal_ipc_error)?;
+    if before_reconciliation.revision != input.expected_revision {
+        return Err(goal_ipc_error(agent_session::GoalError::RevisionConflict));
+    }
+    let reconciled = manager
         .reconcile_pending(&session_id, &repository)
         .map_err(goal_ipc_error)?;
+    if !reconciled {
+        return current_goal_snapshot(&manager, &session_id);
+    }
+    let reconciled_revision = manager
+        .goals()
+        .snapshot(&session_id)
+        .map_err(goal_ipc_error)?
+        .active_goal
+        .ok_or_else(|| goal_ipc_error(agent_session::GoalError::GoalNotFound))?
+        .revision;
     let confirmed_repository_digest = repository_state_digest(&repository).await?;
     let cancellation =
         registry.register_resource(&input.goal_id, &format!("agent-goal:{session_id}"))?;
     let mutation = manager.goals().mutate_goal(
         &session_id,
-        input.expected_revision,
+        reconciled_revision,
         current_time_ms(),
         |goal| {
             ensure_goal_id(goal, &input.goal_id)?;
