@@ -12,6 +12,7 @@ describe("AgentStreamPanel", () => {
     const user = userEvent.setup();
     const stream: AgentStreamState = {
       runId: "run-1",
+      runStatus: "active",
       lastSequence: 7,
       attempts: [{
         attemptId: 1,
@@ -46,11 +47,26 @@ describe("AgentStreamPanel", () => {
   it("uses a workflow-specific preparation label before model events arrive", () => {
     render(
       <AgentStreamPanel
-        stream={{ runId: "run-2", lastSequence: 0, attempts: [] }}
+        stream={{ runId: "run-2", runStatus: "active", lastSequence: 0, attempts: [] }}
         preparingLabel="Gathering repository evidence"
       />,
     );
 
     expect(screen.getByText("Gathering repository evidence")).toBeInTheDocument();
+  });
+
+  it("shows explicit failed and cancelled terminal states instead of implying success", () => {
+    const failed = {
+      runId: "run-failed",
+      runStatus: "failed" as const,
+      lastSequence: 0,
+      attempts: [],
+    };
+    const view = render(<AgentStreamPanel stream={failed} />);
+    expect(screen.getByText("Run ended without a validated answer")).toBeInTheDocument();
+    expect(screen.queryByText("Generating structured answer")).not.toBeInTheDocument();
+
+    view.rerender(<AgentStreamPanel stream={{ ...failed, runStatus: "cancelled" }} />);
+    expect(screen.getByText("Run cancelled")).toBeInTheDocument();
   });
 });

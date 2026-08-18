@@ -195,6 +195,65 @@ describe("HistoryInvestigationWorkspace", () => {
     expect(await screen.findByText("High confidence")).toBeInTheDocument();
     expect(screen.getByText("abc1234")).toBeInTheDocument();
   });
+
+  it("shows a failed terminal state when evidence collection ends before model events", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("history-investigation-model-consent-v1", "accepted");
+    ipc.investigateRepositoryHistory.mockRejectedValue({
+      code: "HISTORY_EVIDENCE_FAILED",
+      message: "Could not collect evidence",
+      recoverable: true,
+      diagnostic_id: "diag-evidence",
+    });
+    render(
+      <HistoryInvestigationWorkspace
+        repo="D:/repo"
+        selectedFile={null}
+        onClose={vi.fn()}
+        onOpenEvidence={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("GPT-5.4 mini");
+    await user.type(screen.getByLabelText("What code decision do you want to trace?"), "Why did evidence collection fail?");
+    await user.click(screen.getByRole("button", { name: "Find evidence and answer" }));
+
+    expect(await screen.findByText("Run ended without a validated answer")).toBeInTheDocument();
+    expect(screen.queryByText("Gathering bounded repository evidence…")).not.toBeInTheDocument();
+  });
+
+  it("shows cancellation as a neutral terminal state without an error alert", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("history-investigation-model-consent-v1", "accepted");
+    let rejectInvestigation!: (reason: unknown) => void;
+    ipc.investigateRepositoryHistory.mockImplementation(() => new Promise((_, reject) => {
+      rejectInvestigation = reject;
+    }));
+    ipc.cancelHistoryInvestigation.mockImplementation(async () => {
+      rejectInvestigation({
+        code: "CANCELLED",
+        message: "Cancelled",
+        recoverable: true,
+        diagnostic_id: "diag-cancel",
+      });
+    });
+    render(
+      <HistoryInvestigationWorkspace
+        repo="D:/repo"
+        selectedFile={null}
+        onClose={vi.fn()}
+        onOpenEvidence={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("GPT-5.4 mini");
+    await user.type(screen.getByLabelText("What code decision do you want to trace?"), "Why was this implementation introduced?");
+    await user.click(screen.getByRole("button", { name: "Find evidence and answer" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    expect(await screen.findByText("Run cancelled")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });
 
 function agentEvent(

@@ -1,9 +1,8 @@
-import type { AgentStreamState } from "../lib/agentStream";
+import type { AgentAttemptStatus, AgentRunStatus, AgentStreamState } from "../lib/agentStream";
 import { useT } from "../lib/i18n";
 
 type AgentStreamPanelProps = {
   stream: AgentStreamState | null;
-  active?: boolean;
   preparingLabel?: string;
 };
 
@@ -15,7 +14,7 @@ const statusKey = {
   failed: "agentStream.status.failed",
 } as const;
 
-export function AgentStreamPanel({ stream, active = true, preparingLabel }: AgentStreamPanelProps) {
+export function AgentStreamPanel({ stream, preparingLabel }: AgentStreamPanelProps) {
   const t = useT();
   if (!stream) return null;
   const latestStatus = stream.attempts[stream.attempts.length - 1]?.status;
@@ -24,7 +23,7 @@ export function AgentStreamPanel({ stream, active = true, preparingLabel }: Agen
     <section className="w-full max-w-3xl border-y border-line text-left" aria-label={t("agentStream.title")}>
       <header className="flex items-center justify-between gap-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
-          <span className={`size-1.5 shrink-0 rounded-full ${headerDotClass(active, latestStatus)}`} aria-hidden="true" />
+          <span className={`size-1.5 shrink-0 rounded-full ${headerDotClass(stream.runStatus, latestStatus)}`} aria-hidden="true" />
           <h3 className="truncate text-[11.5px] font-semibold text-fg">{t("agentStream.title")}</h3>
         </div>
         <span className="font-mono text-[10px] text-fg-subtle">
@@ -32,16 +31,19 @@ export function AgentStreamPanel({ stream, active = true, preparingLabel }: Agen
         </span>
       </header>
       <div className="max-h-72 overflow-auto border-t border-line py-1">
-        {stream.attempts.map((attempt, index) => (
+        {stream.attempts.map((attempt, index) => {
+          const isLatest = index === stream.attempts.length - 1;
+          const displayedStatus = attemptDisplayStatus(attempt.status, isLatest, stream.runStatus);
+          return (
           <article key={attempt.attemptId} className="relative grid grid-cols-[14px_minmax(0,1fr)] gap-2.5 py-2.5">
             {index < stream.attempts.length - 1 && <span className="absolute bottom-0 left-[6px] top-[17px] w-px bg-line" aria-hidden="true" />}
-            <span className={`relative z-[1] mt-1 size-3 rounded-full border-2 border-canvas ${statusDotClass(attempt.status)}`} aria-hidden="true" />
+            <span className={`relative z-[1] mt-1 size-3 rounded-full border-2 border-canvas ${statusDotClass(displayedStatus)}`} aria-hidden="true" />
             <div className="min-w-0">
               <div className="flex min-w-0 items-baseline gap-2 text-[11px]">
                 <span className="truncate font-medium text-fg" aria-live="polite">
-                  {t(activityKey(attempt.status, attempt.tools.length > 0, attempt.text.length > 0, active))}
+                  {t(activityKey(attempt.status, attempt.tools.length > 0, attempt.text.length > 0, isLatest, stream.runStatus))}
                 </span>
-                <span className="ml-auto shrink-0 text-[10px] text-fg-subtle">{t(statusKey[attempt.status])}</span>
+                <span className="ml-auto shrink-0 text-[10px] text-fg-subtle">{t(displayStatusKey(displayedStatus))}</span>
               </div>
               <p className="mt-0.5 truncate font-mono text-[10px] text-fg-subtle">
                 {t("agentStream.attemptModel", { attempt: attempt.attemptId, model: attempt.modelId ?? t("agentStream.modelPending") })}
@@ -79,11 +81,16 @@ export function AgentStreamPanel({ stream, active = true, preparingLabel }: Agen
               )}
             </div>
           </article>
-        ))}
+          );
+        })}
         {stream.attempts.length === 0 && (
           <div className="flex items-center gap-2 py-3 text-[11px] text-fg-muted" aria-live="polite">
-            <span className="size-2 rounded-full bg-accent" aria-hidden="true" />
-            <span>{preparingLabel ?? t("agentStream.connecting")}</span>
+            <span className={`size-2 rounded-full ${statusDotClass(stream.runStatus)}`} aria-hidden="true" />
+            <span>
+              {stream.runStatus === "active"
+                ? (preparingLabel ?? t("agentStream.connecting"))
+                : t(emptyActivityKey(stream.runStatus))}
+            </span>
           </div>
         )}
       </div>
@@ -91,25 +98,55 @@ export function AgentStreamPanel({ stream, active = true, preparingLabel }: Agen
   );
 }
 
-function activityKey(status: keyof typeof statusKey, hasTools: boolean, hasText: boolean, active: boolean) {
+function activityKey(
+  status: AgentAttemptStatus,
+  hasTools: boolean,
+  hasText: boolean,
+  isLatest: boolean,
+  runStatus: AgentRunStatus,
+) {
+  if (isLatest && runStatus === "cancelled") return "agentStream.activity.cancelled" as const;
+  if (isLatest && runStatus === "failed") return "agentStream.activity.runFailed" as const;
+  if (isLatest && runStatus === "completed") return "agentStream.activity.validated" as const;
   if (status === "failed") return "agentStream.activity.failed" as const;
   if (status === "retrying") return "agentStream.activity.retrying" as const;
-  if (status === "completed") return active ? "agentStream.activity.validating" as const : "agentStream.activity.validated" as const;
+  if (status === "completed") return "agentStream.activity.validating" as const;
   if (hasTools) return "agentStream.activity.usingTools" as const;
   if (status === "streaming" && hasText) return "agentStream.activity.generating" as const;
   if (status === "streaming") return "agentStream.activity.waitingResponse" as const;
   return "agentStream.activity.preparingModel" as const;
 }
 
-function statusDotClass(status: keyof typeof statusKey): string {
+function attemptDisplayStatus(
+  status: AgentAttemptStatus,
+  isLatest: boolean,
+  runStatus: AgentRunStatus,
+): AgentAttemptStatus | AgentRunStatus {
+  return isLatest && runStatus !== "active" ? runStatus : status;
+}
+
+function displayStatusKey(status: AgentAttemptStatus | AgentRunStatus) {
+  if (status === "cancelled") return "agentStream.status.cancelled" as const;
+  if (status === "active") return "agentStream.status.streaming" as const;
+  return statusKey[status];
+}
+
+function emptyActivityKey(runStatus: AgentRunStatus) {
+  if (runStatus === "cancelled") return "agentStream.activity.cancelled" as const;
+  if (runStatus === "failed") return "agentStream.activity.runFailed" as const;
+  if (runStatus === "completed") return "agentStream.activity.validated" as const;
+  return "agentStream.connecting" as const;
+}
+
+function statusDotClass(status: AgentAttemptStatus | AgentRunStatus): string {
   if (status === "failed") return "bg-danger";
   if (status === "completed") return "bg-success";
   if (status === "retrying") return "bg-warning";
+  if (status === "cancelled") return "bg-fg-subtle";
   return "bg-accent";
 }
 
-function headerDotClass(active: boolean, status?: keyof typeof statusKey): string {
-  if (status === "failed") return "bg-danger";
-  if (status === "retrying") return "bg-warning";
-  return active ? "bg-accent" : "bg-success";
+function headerDotClass(runStatus: AgentRunStatus, status?: AgentAttemptStatus): string {
+  if (runStatus !== "active") return statusDotClass(runStatus);
+  return status ? statusDotClass(status) : "bg-accent";
 }

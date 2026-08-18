@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -215,6 +215,11 @@ pub enum AgentEventKind {
         item_index: Option<u32>,
         delta: String,
     },
+    ArtifactTextReset {
+        artifact_type: String,
+        field: String,
+        item_index: Option<u32>,
+    },
     ToolCallStarted {
         call_id: String,
         name: String,
@@ -259,25 +264,45 @@ impl AgentEventSink for NoopAgentEventSink {
 pub struct AgentEventEmitter<'a> {
     run_id: &'a str,
     attempt_id: u32,
-    sequence: &'a AtomicU64,
+    clock: &'a AgentEventClock,
     sink: &'a dyn AgentEventSink,
     augmenter: Option<&'a dyn AgentEventAugmenter>,
 }
 
 pub struct AgentEventPublisher<'a> {
     run_id: &'a str,
-    sequence: AtomicU64,
-    attempt_sequence: AtomicU32,
+    clock: AgentEventClock,
     sink: &'a dyn AgentEventSink,
     augmenter: Option<&'a dyn AgentEventAugmenter>,
+}
+
+#[derive(Debug)]
+pub struct AgentEventClock {
+    state: Mutex<AgentEventClockState>,
+}
+
+#[derive(Debug)]
+struct AgentEventClockState {
+    next_sequence: u64,
+    next_attempt: u32,
+}
+
+impl Default for AgentEventClock {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(AgentEventClockState {
+                next_sequence: 1,
+                next_attempt: 1,
+            }),
+        }
+    }
 }
 
 impl<'a> AgentEventPublisher<'a> {
     pub fn new(run_id: &'a str, sink: &'a dyn AgentEventSink) -> Self {
         Self {
             run_id,
-            sequence: AtomicU64::new(1),
-            attempt_sequence: AtomicU32::new(1),
+            clock: AgentEventClock::default(),
             sink,
             augmenter: None,
         }
@@ -290,18 +315,27 @@ impl<'a> AgentEventPublisher<'a> {
     ) -> Self {
         Self {
             run_id,
-            sequence: AtomicU64::new(1),
-            attempt_sequence: AtomicU32::new(1),
+            clock: AgentEventClock::default(),
             sink,
             augmenter: Some(augmenter),
         }
     }
 
     pub fn next_attempt(&self) -> AgentEventEmitter<'_> {
+        let attempt_id = {
+            let mut state = self
+                .clock
+                .state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let attempt_id = state.next_attempt;
+            state.next_attempt = state.next_attempt.saturating_add(1);
+            attempt_id
+        };
         AgentEventEmitter::new_with_augmenter(
             self.run_id,
-            self.attempt_sequence.fetch_add(1, Ordering::Relaxed),
-            &self.sequence,
+            attempt_id,
+            &self.clock,
             self.sink,
             self.augmenter,
         )
@@ -315,7 +349,7 @@ impl<'a> AgentEventPublisher<'a> {
         AgentEventEmitter::new_with_augmenter(
             self.run_id,
             attempt_id,
-            &self.sequence,
+            &self.clock,
             self.sink,
             self.augmenter,
         )
@@ -327,13 +361,13 @@ impl<'a> AgentEventEmitter<'a> {
     pub fn new(
         run_id: &'a str,
         attempt_id: u32,
-        sequence: &'a AtomicU64,
+        clock: &'a AgentEventClock,
         sink: &'a dyn AgentEventSink,
     ) -> Self {
         Self {
             run_id,
             attempt_id,
-            sequence,
+            clock,
             sink,
             augmenter: None,
         }
@@ -342,34 +376,41 @@ impl<'a> AgentEventEmitter<'a> {
     fn new_with_augmenter(
         run_id: &'a str,
         attempt_id: u32,
-        sequence: &'a AtomicU64,
+        clock: &'a AgentEventClock,
         sink: &'a dyn AgentEventSink,
         augmenter: Option<&'a dyn AgentEventAugmenter>,
     ) -> Self {
         Self {
             run_id,
             attempt_id,
-            sequence,
+            clock,
             sink,
             augmenter,
         }
     }
 
     pub fn emit(&self, kind: AgentEventKind) {
+        let mut clock = self
+            .clock
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let additional = self
             .augmenter
             .map(|augmenter| augmenter.additional_events(self.attempt_id, &kind))
             .unwrap_or_default();
-        self.emit_one(kind);
+        self.emit_one(&mut clock, kind);
         for event in additional {
-            self.emit_one(event);
+            self.emit_one(&mut clock, event);
         }
     }
 
-    fn emit_one(&self, kind: AgentEventKind) {
+    fn emit_one(&self, clock: &mut AgentEventClockState, kind: AgentEventKind) {
+        let sequence = clock.next_sequence;
+        clock.next_sequence = clock.next_sequence.saturating_add(1);
         self.sink.emit(AgentEvent {
             run_id: self.run_id.to_owned(),
-            sequence: self.sequence.fetch_add(1, Ordering::Relaxed),
+            sequence,
             attempt_id: self.attempt_id,
             kind,
         });
@@ -557,5 +598,71 @@ mod tests {
         let encoded = serde_json::to_string(&event).unwrap();
         assert_eq!(serde_json::from_str::<AgentEvent>(&encoded).unwrap(), event);
         assert!(!encoded.contains("socket"));
+    }
+
+    #[test]
+    fn concurrent_emits_deliver_each_augmented_batch_in_sequence_order() {
+        #[derive(Default)]
+        struct RecordingSink(Mutex<Vec<AgentEvent>>);
+        impl AgentEventSink for RecordingSink {
+            fn emit(&self, event: AgentEvent) {
+                self.0.lock().unwrap().push(event);
+            }
+        }
+        struct EchoAugmenter;
+        impl AgentEventAugmenter for EchoAugmenter {
+            fn additional_events(&self, _: u32, kind: &AgentEventKind) -> Vec<AgentEventKind> {
+                match kind {
+                    AgentEventKind::OutputTextDelta { delta } => {
+                        vec![AgentEventKind::ArtifactTextDelta {
+                            artifact_type: "test".into(),
+                            field: "text".into(),
+                            item_index: None,
+                            delta: delta.clone(),
+                        }]
+                    }
+                    _ => Vec::new(),
+                }
+            }
+        }
+
+        let sink = RecordingSink::default();
+        let augmenter = EchoAugmenter;
+        let publisher = AgentEventPublisher::new_with_augmenter("run", &sink, &augmenter);
+        let first = publisher.next_attempt();
+        let second = publisher.next_attempt();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for index in 0..100 {
+                    first.emit(AgentEventKind::OutputTextDelta {
+                        delta: format!("a{index}"),
+                    });
+                }
+            });
+            scope.spawn(|| {
+                for index in 0..100 {
+                    second.emit(AgentEventKind::OutputTextDelta {
+                        delta: format!("b{index}"),
+                    });
+                }
+            });
+        });
+
+        let events = sink.0.lock().unwrap();
+        assert_eq!(events.len(), 400);
+        assert!(events
+            .iter()
+            .enumerate()
+            .all(|(index, event)| event.sequence == index as u64 + 1));
+        for batch in events.chunks_exact(2) {
+            assert_eq!(batch[0].attempt_id, batch[1].attempt_id);
+            let AgentEventKind::OutputTextDelta { delta: raw } = &batch[0].kind else {
+                panic!("batch must start with raw output");
+            };
+            let AgentEventKind::ArtifactTextDelta { delta, .. } = &batch[1].kind else {
+                panic!("raw output must be followed by its artifact delta");
+            };
+            assert_eq!(raw, delta);
+        }
     }
 }

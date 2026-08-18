@@ -1,17 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { onAgentEvent } from "../ipc";
-import { createAgentStream, reduceAgentEvent, type AgentStreamState } from "../lib/agentStream";
+import {
+  createAgentStream,
+  finishAgentStream,
+  reduceAgentEvent,
+  type AgentRunStatus,
+  type AgentStreamState,
+} from "../lib/agentStream";
 
 export function useAgentStream() {
   const [stream, setStream] = useState<AgentStreamState | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
   const generationRef = useRef(0);
 
-  const end = useCallback(() => {
+  const disconnect = useCallback(() => {
     generationRef.current += 1;
     unsubscribeRef.current?.();
     unsubscribeRef.current = null;
   }, []);
+
+  const finish = useCallback((status: Exclude<AgentRunStatus, "active">) => {
+    disconnect();
+    setStream((current) => current ? finishAgentStream(current, status) : current);
+  }, [disconnect]);
 
   const begin = useCallback(async (runId: string) => {
     generationRef.current += 1;
@@ -38,11 +49,11 @@ export function useAgentStream() {
   }, []);
 
   const reset = useCallback(() => {
-    end();
+    disconnect();
     setStream(null);
-  }, [end]);
+  }, [disconnect]);
 
-  useEffect(() => end, [end]);
+  useEffect(() => disconnect, [disconnect]);
 
-  return { stream, begin, end, reset };
+  return { stream, begin, finish, reset };
 }

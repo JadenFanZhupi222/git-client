@@ -35,6 +35,13 @@ describe("history stream draft", () => {
     stream.attempts[1].artifactText.push(artifact("summary", null, "Replacement"));
     expect(historyDraftFromStream(stream)?.summary).toBe("Replacement");
   });
+
+  it("hides a rejected draft during the retry backoff before the next attempt starts", () => {
+    const stream = withAttempts([
+      attempt(1, [artifact("summary", null, "Rejected answer")], "retrying"),
+    ]);
+    expect(historyDraftFromStream(stream)).toBeNull();
+  });
 });
 
 function withAttempts(attempts: AgentStreamState["attempts"]): AgentStreamState {

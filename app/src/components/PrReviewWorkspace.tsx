@@ -297,17 +297,17 @@ export function PrReviewWorkspace({
         output_language: outputLanguage,
       });
       cleanupListener();
-      agentStream.end();
       if (!mountedRef.current) return;
+      agentStream.finish("completed");
       setResult(next);
       setDrafts(sortFindings(next.findings).map((finding) => ({ finding, selected: true, comment: finding.draft_comment })));
       setPhase("results");
       setCancelling(false);
     } catch (reason) {
       cleanupListener();
-      agentStream.end();
       if (!mountedRef.current) return;
       const nextError = asIpcError(reason);
+      agentStream.finish(nextError.code === "CANCELLED" ? "cancelled" : "failed");
       setCancelling(false);
       if (nextError.code === "CANCELLED") {
         setError(null);

@@ -89,12 +89,13 @@ export function ChangePlanWorkspace({
       setMessages(Object.fromEntries(next.groups.map((group) => [group.id, group.commit_message])));
       setConfirmed(new Set());
       setPhase("results");
+      if (modelId) agentStream.finish("completed");
     } catch (reason) {
       if (!mountedRef.current || runIdRef.current !== runId) return;
       setError(asAgentError(reason));
       setPhase("results");
+      if (modelId) agentStream.finish("failed");
     } finally {
-      agentStream.end();
       if (runIdRef.current === runId) runIdRef.current = null;
     }
   }

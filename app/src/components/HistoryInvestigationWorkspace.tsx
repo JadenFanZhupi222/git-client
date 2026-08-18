@@ -100,11 +100,14 @@ export function HistoryInvestigationWorkspace({
       });
       if (!mountedRef.current || runIdRef.current !== runId) return;
       setResult(next);
+      agentStream.finish("completed");
     } catch (reason) {
       if (!mountedRef.current || runIdRef.current !== runId) return;
-      setError(asAgentError(reason));
+      const nextError = asAgentError(reason);
+      const cancelled = nextError.code === "CANCELLED";
+      setError(cancelled ? null : nextError);
+      agentStream.finish(cancelled ? "cancelled" : "failed");
     } finally {
-      agentStream.end();
       if (runIdRef.current === runId) runIdRef.current = null;
       if (mountedRef.current) setBusy(false);
     }
@@ -215,7 +218,6 @@ export function HistoryInvestigationWorkspace({
             <div className="mt-5">
               <AgentStreamPanel
                 stream={agentStream.stream}
-                active={busy}
                 preparingLabel={t("historyInvestigator.activity.preparingEvidence")}
               />
             </div>
@@ -317,7 +319,7 @@ export function HistoryInvestigationWorkspace({
 function StreamingHistoryAnswer({ draft }: { draft: HistoryStreamDraft }) {
   const t = useT();
   return (
-    <section className="mt-7" aria-label={t("historyInvestigator.streaming.label")} aria-live="polite">
+    <section className="mt-7" aria-label={t("historyInvestigator.streaming.label")}>
       <div className="flex flex-wrap items-center gap-2 border-b border-line pb-3">
         {draft.summary && (
           <h2 className="min-w-0 flex-1 text-[15px] font-semibold leading-relaxed text-fg">
@@ -325,7 +327,11 @@ function StreamingHistoryAnswer({ draft }: { draft: HistoryStreamDraft }) {
             {draft.findings.length === 0 && <StreamingCaret />}
           </h2>
         )}
-        <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10.5px] font-medium text-accent">
+        <span
+          className="rounded-full bg-accent/10 px-2 py-0.5 text-[10.5px] font-medium text-accent"
+          role="status"
+          aria-live="polite"
+        >
           {t("historyInvestigator.streaming.badge")}
         </span>
       </div>

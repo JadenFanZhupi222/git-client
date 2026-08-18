@@ -1,6 +1,7 @@
 import type { AgentEventDto, ReviewUsageDto } from "../bindings";
 
 export type AgentAttemptStatus = "starting" | "streaming" | "completed" | "retrying" | "failed";
+export type AgentRunStatus = "active" | "completed" | "failed" | "cancelled";
 
 export type AgentStreamTool = {
   callId: string;
@@ -30,12 +31,17 @@ export type AgentStreamAttempt = {
 
 export type AgentStreamState = {
   runId: string;
+  runStatus: AgentRunStatus;
   lastSequence: number;
   attempts: AgentStreamAttempt[];
 };
 
 export function createAgentStream(runId: string): AgentStreamState {
-  return { runId, lastSequence: 0, attempts: [] };
+  return { runId, runStatus: "active", lastSequence: 0, attempts: [] };
+}
+
+export function finishAgentStream(state: AgentStreamState, runStatus: Exclude<AgentRunStatus, "active">): AgentStreamState {
+  return { ...state, runStatus };
 }
 
 function emptyAttempt(attemptId: number): AgentStreamAttempt {
@@ -101,6 +107,15 @@ export function reduceAgentEvent(state: AgentStreamState, event: AgentEventDto):
       attempt.status = "streaming";
       break;
     }
+    case "artifact_text_reset": {
+      const part = attempt.artifactText.find((candidate) => (
+        candidate.artifactType === event.artifact_type
+        && candidate.field === event.artifact_field
+        && candidate.itemIndex === event.artifact_index
+      ));
+      if (part) part.text = "";
+      break;
+    }
     case "tool_call_started":
       if (event.call_id && !attempt.tools.some((tool) => tool.callId === event.call_id)) {
         attempt.tools.push({ callId: event.call_id, name: event.tool_name ?? "tool", arguments: "" });
@@ -127,6 +142,7 @@ export function reduceAgentEvent(state: AgentStreamState, event: AgentEventDto):
     case "model_attempt_failed":
       attempt.errorCode = event.error_code;
       attempt.status = event.will_retry ? "retrying" : "failed";
+      attempt.artifactText = [];
       break;
   }
 

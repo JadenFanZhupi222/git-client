@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEventDto } from "../bindings";
-import { createAgentStream, reduceAgentEvent } from "./agentStream";
+import { createAgentStream, finishAgentStream, reduceAgentEvent } from "./agentStream";
 
 function event(sequence: number, attemptId: number, eventType: string, fields: Partial<AgentEventDto> = {}): AgentEventDto {
   return {
@@ -66,13 +66,41 @@ describe("agent stream reducer", () => {
       artifact_index: null,
       delta: "was added",
     }));
+    state = reduceAgentEvent(state, event(3, 1, "artifact_text_reset", {
+      artifact_type: "history_investigation",
+      artifact_field: "summary",
+      artifact_index: null,
+    }));
+    state = reduceAgentEvent(state, event(4, 1, "artifact_text_delta", {
+      artifact_type: "history_investigation",
+      artifact_field: "summary",
+      artifact_index: null,
+      delta: "Replacement",
+    }));
 
     expect(state.attempts[0].text).toBe("");
     expect(state.attempts[0].artifactText).toEqual([{
       artifactType: "history_investigation",
       field: "summary",
       itemIndex: null,
-      text: "The guard was added",
+      text: "Replacement",
     }]);
+  });
+
+  it("clears rejected artifact prose during retry backoff and records the run terminal state", () => {
+    let state = createAgentStream("run-1");
+    state = reduceAgentEvent(state, event(1, 1, "artifact_text_delta", {
+      artifact_type: "history_investigation",
+      artifact_field: "summary",
+      delta: "Rejected",
+    }));
+    state = reduceAgentEvent(state, event(2, 1, "model_attempt_failed", {
+      error_code: "invalid_response",
+      will_retry: true,
+    }));
+
+    expect(state.attempts[0].artifactText).toEqual([]);
+    expect(state.attempts[0].status).toBe("retrying");
+    expect(finishAgentStream(state, "failed").runStatus).toBe("failed");
   });
 });

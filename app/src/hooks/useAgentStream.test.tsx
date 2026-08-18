@@ -12,7 +12,9 @@ function Harness() {
   return (
     <div>
       <button onClick={() => void stream.begin("run-1")}>begin</button>
+      <button onClick={() => stream.finish("failed")}>fail</button>
       <output>{stream.stream?.attempts[0]?.text ?? "empty"}</output>
+      <output aria-label="run status">{stream.stream?.runStatus ?? "none"}</output>
     </div>
   );
 }
@@ -59,6 +61,19 @@ describe("useAgentStream", () => {
     expect(screen.getByText("streamed")).toBeInTheDocument();
 
     view.unmount();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it("disconnects and records an explicit terminal state", async () => {
+    const unsubscribe = vi.fn();
+    ipc.onAgentEvent.mockResolvedValue(unsubscribe);
+    const user = userEvent.setup();
+    render(<Harness />);
+
+    await user.click(screen.getByRole("button", { name: "begin" }));
+    expect(screen.getByLabelText("run status")).toHaveTextContent("active");
+    await user.click(screen.getByRole("button", { name: "fail" }));
+    expect(screen.getByLabelText("run status")).toHaveTextContent("failed");
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 });

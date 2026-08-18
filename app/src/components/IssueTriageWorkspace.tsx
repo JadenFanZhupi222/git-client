@@ -179,17 +179,17 @@ export function IssueTriageWorkspace({
         output_language: outputLanguage,
       });
       cleanupListener();
-      agentStream.end();
       if (!mountedRef.current) return;
+      agentStream.finish("completed");
       setResult(next);
       setCacheStale(false);
       saveCachedResult(target, next);
       setPhase("results");
     } catch (reason) {
       cleanupListener();
-      agentStream.end();
       if (!mountedRef.current) return;
       const nextError = asIpcError(reason);
+      agentStream.finish(nextError.code === "CANCELLED" ? "cancelled" : "failed");
       setCancelling(false);
       setError(nextError.code === "CANCELLED" ? null : nextError);
       setCancelledRun(nextError.code === "CANCELLED" ? nextError : null);

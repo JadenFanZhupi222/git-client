@@ -778,6 +778,16 @@ impl From<review_agent::AgentEvent> for AgentEventDto {
                 dto.artifact_index = item_index;
                 dto.delta = Some(delta);
             }
+            review_agent::AgentEventKind::ArtifactTextReset {
+                artifact_type,
+                field,
+                item_index,
+            } => {
+                dto.event_type = "artifact_text_reset".into();
+                dto.artifact_type = Some(artifact_type);
+                dto.artifact_field = Some(field);
+                dto.artifact_index = item_index;
+            }
             review_agent::AgentEventKind::ToolCallStarted { call_id, name } => {
                 dto.event_type = "tool_call_started".into();
                 dto.call_id = Some(call_id);
@@ -975,6 +985,25 @@ mod review_dto_contract_tests {
                 "will_retry": true
             })
         );
+    }
+
+    #[test]
+    fn artifact_reset_uses_the_same_flat_target_fields_as_artifact_deltas() {
+        let dto = AgentEventDto::from(review_agent::AgentEvent {
+            run_id: "run-1".into(),
+            sequence: 8,
+            attempt_id: 1,
+            kind: review_agent::AgentEventKind::ArtifactTextReset {
+                artifact_type: "history_investigation".into(),
+                field: "finding_title".into(),
+                item_index: Some(2),
+            },
+        });
+        assert_eq!(dto.event_type, "artifact_text_reset");
+        assert_eq!(dto.artifact_type.as_deref(), Some("history_investigation"));
+        assert_eq!(dto.artifact_field.as_deref(), Some("finding_title"));
+        assert_eq!(dto.artifact_index, Some(2));
+        assert_eq!(dto.delta, None);
     }
 
     #[test]

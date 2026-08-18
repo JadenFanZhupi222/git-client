@@ -16,7 +16,7 @@ const HISTORY_ARTIFACT_TYPE = "history_investigation";
 export function historyDraftFromStream(stream: AgentStreamState | null): HistoryStreamDraft | null {
   const attempts = stream?.attempts;
   const attempt = attempts?.[attempts.length - 1];
-  if (!attempt) return null;
+  if (!attempt || attempt.status === "retrying" || attempt.status === "failed") return null;
 
   let summary = "";
   const findings: HistoryStreamFinding[] = [];

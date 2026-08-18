@@ -535,8 +535,7 @@ fn deepseek_usage(body: &Value) -> ModelUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AgentEvent, AgentEventSink, ModelOutput, ToolDefinition};
-    use std::sync::atomic::AtomicU64;
+    use crate::{AgentEvent, AgentEventClock, AgentEventSink, ModelOutput, ToolDefinition};
     use std::sync::Mutex;
     use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -769,8 +768,8 @@ mod tests {
             .await;
 
         let sink = RecordingSink::default();
-        let sequence = AtomicU64::new(1);
-        let emitter = AgentEventEmitter::new("run-deepseek", 1, &sequence, &sink);
+        let clock = AgentEventClock::default();
+        let emitter = AgentEventEmitter::new("run-deepseek", 1, &clock, &sink);
         let response = DeepSeekProvider::new_with_base_for_test("test-key", server.uri())
             .respond_stream(&request(Vec::new(), true), &emitter)
             .await
