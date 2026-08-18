@@ -19,3 +19,6 @@ node_modules
 
 # Desktop E2E repositories and captured logs
 app/.e2e-tmp/
+
+# Local Codex screenshots and verification artifacts
+.codex-artifacts/
