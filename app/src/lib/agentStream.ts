@@ -7,6 +7,12 @@ export type AgentStreamTool = {
   callId: string;
   name: string;
   arguments: string;
+  risk: string | null;
+  approvalId: string | null;
+  approvalSummary: string | null;
+  permission: "none" | "pending" | "allowed" | "denied";
+  execution: "pending" | "running" | "success" | "failed" | "denied";
+  errorCode: string | null;
 };
 
 export type AgentStreamArtifactText = {
@@ -57,6 +63,31 @@ function emptyAttempt(attemptId: number): AgentStreamAttempt {
     errorCode: null,
     status: "starting",
   };
+}
+
+function emptyTool(callId: string, name = "tool"): AgentStreamTool {
+  return {
+    callId,
+    name,
+    arguments: "",
+    risk: null,
+    approvalId: null,
+    approvalSummary: null,
+    permission: "none",
+    execution: "pending",
+    errorCode: null,
+  };
+}
+
+function findOrCreateTool(attempt: AgentStreamAttempt, callId: string, name?: string): AgentStreamTool {
+  let tool = attempt.tools.find((item) => item.callId === callId);
+  if (!tool) {
+    tool = emptyTool(callId, name);
+    attempt.tools.push(tool);
+  } else if (name) {
+    tool.name = name;
+  }
+  return tool;
 }
 
 export function reduceAgentEvent(state: AgentStreamState, event: AgentEventDto): AgentStreamState {
@@ -118,19 +149,52 @@ export function reduceAgentEvent(state: AgentStreamState, event: AgentEventDto):
     }
     case "tool_call_started":
       if (event.call_id && !attempt.tools.some((tool) => tool.callId === event.call_id)) {
-        attempt.tools.push({ callId: event.call_id, name: event.tool_name ?? "tool", arguments: "" });
+        attempt.tools.push(emptyTool(event.call_id, event.tool_name ?? "tool"));
       }
       attempt.status = "streaming";
       break;
     case "tool_arguments_delta": {
       if (!event.call_id) break;
-      let tool = attempt.tools.find((item) => item.callId === event.call_id);
-      if (!tool) {
-        tool = { callId: event.call_id, name: "tool", arguments: "" };
-        attempt.tools.push(tool);
-      }
+      const tool = findOrCreateTool(attempt, event.call_id);
       tool.arguments += event.delta ?? "";
       attempt.status = "streaming";
+      break;
+    }
+    case "tool_validation_failed": {
+      if (!event.call_id) break;
+      const tool = findOrCreateTool(attempt, event.call_id, event.tool_name ?? undefined);
+      tool.execution = "failed";
+      tool.errorCode = event.tool_error;
+      break;
+    }
+    case "tool_approval_requested": {
+      if (!event.call_id || !event.approval_id) break;
+      const tool = findOrCreateTool(attempt, event.call_id, event.tool_name ?? undefined);
+      tool.risk = event.risk;
+      tool.approvalId = event.approval_id;
+      tool.approvalSummary = event.approval_summary;
+      tool.permission = "pending";
+      break;
+    }
+    case "tool_approval_resolved": {
+      if (!event.call_id) break;
+      const tool = findOrCreateTool(attempt, event.call_id);
+      tool.permission = event.decision === "allow" ? "allowed" : "denied";
+      break;
+    }
+    case "tool_execution_started": {
+      if (!event.call_id) break;
+      const tool = findOrCreateTool(attempt, event.call_id, event.tool_name ?? undefined);
+      tool.risk = event.risk;
+      tool.execution = "running";
+      break;
+    }
+    case "tool_execution_completed": {
+      if (!event.call_id) break;
+      const tool = findOrCreateTool(attempt, event.call_id, event.tool_name ?? undefined);
+      tool.execution = event.tool_outcome === "success"
+        ? "success"
+        : event.tool_outcome === "denied" ? "denied" : "failed";
       break;
     }
     case "usage_updated":

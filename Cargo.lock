@@ -24,9 +24,11 @@ name = "agent-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "regex",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]

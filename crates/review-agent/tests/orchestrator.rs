@@ -444,8 +444,9 @@ async fn returns_tool_error_to_model_for_unknown_tool_then_finishes_review() {
     let model = FakeModel(Mutex::new(VecDeque::from([
         ModelResponse::tool_calls(
             vec![ToolCall {
+                call_id: "unknown".into(),
                 name: "shell".into(),
-                arguments: serde_json::json!({"_call_id":"unknown"}),
+                arguments: serde_json::json!({}),
             }],
             ReviewUsage::default(),
         ),
@@ -477,20 +478,24 @@ async fn rejects_oversized_read() {
 async fn rejects_malformed_or_extra_tool_arguments_without_source_io() {
     let calls = [
         ToolCall {
+            call_id: "bad1".into(),
             name: "list_repository_tree".into(),
-            arguments: serde_json::json!({"_call_id":"bad1", "prefix": 42}),
+            arguments: serde_json::json!({"prefix": 42}),
         },
         ToolCall {
+            call_id: "bad2".into(),
             name: "list_repository_tree".into(),
-            arguments: serde_json::json!({"_call_id":"bad2", "prefix": "src", "recursive": true}),
+            arguments: serde_json::json!({"prefix": "src", "recursive": true}),
         },
         ToolCall {
+            call_id: "bad3".into(),
             name: "read_file".into(),
-            arguments: serde_json::json!({"_call_id":"bad3", "path": "src/lib.rs", "start_line": 1, "end_line": 2, "bytes": true}),
+            arguments: serde_json::json!({"path": "src/lib.rs", "start_line": 1, "end_line": 2, "bytes": true}),
         },
         ToolCall {
+            call_id: "bad4".into(),
             name: "read_file".into(),
-            arguments: serde_json::json!({"_call_id":"bad4", "path": 7, "start_line": "1", "end_line": 2}),
+            arguments: serde_json::json!({"path": 7, "start_line": "1", "end_line": 2}),
         },
     ];
     for call in calls {
@@ -512,21 +517,25 @@ async fn rejects_malformed_or_extra_tool_arguments_without_source_io() {
 async fn rejects_missing_empty_or_duplicate_call_ids_before_source_io() {
     let responses = [
         vec![ToolCall {
+            call_id: String::new(),
             name: "list_repository_tree".into(),
             arguments: serde_json::json!({}),
         }],
         vec![ToolCall {
+            call_id: String::new(),
             name: "list_repository_tree".into(),
-            arguments: serde_json::json!({"_call_id":""}),
+            arguments: serde_json::json!({}),
         }],
         vec![
             ToolCall {
+                call_id: "same".into(),
                 name: "list_repository_tree".into(),
-                arguments: serde_json::json!({"_call_id":"same"}),
+                arguments: serde_json::json!({}),
             },
             ToolCall {
+                call_id: "same".into(),
                 name: "list_repository_tree".into(),
-                arguments: serde_json::json!({"_call_id":"same"}),
+                arguments: serde_json::json!({}),
             },
         ],
     ];
@@ -805,8 +814,9 @@ async fn trace_records_cancelled_and_error_exits_once_with_stable_codes() {
     let bad_model = FakeModel(Mutex::new(VecDeque::from([
         ModelResponse::tool_calls(
             vec![ToolCall {
+                call_id: "trace-error".into(),
                 name: "shell".into(),
-                arguments: serde_json::json!({"_call_id":"trace-error"}),
+                arguments: serde_json::json!({}),
             }],
             ReviewUsage::default(),
         ),

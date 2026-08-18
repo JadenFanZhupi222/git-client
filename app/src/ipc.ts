@@ -893,6 +893,16 @@ export function onAgentEvent(cb: (event: AgentEventDto) => void): Promise<() => 
   return listen<AgentEventDto>("agent-event", (event) => cb(event.payload));
 }
 
+export async function resolveToolApproval(
+  runId: string,
+  approvalId: string,
+  decision: "allow" | "deny",
+): Promise<void> {
+  await invoke("resolve_tool_approval", {
+    resolution: { run_id: runId, approval_id: approvalId, decision },
+  });
+}
+
 export async function listGithubIssues(
   target: IssueRepositoryTargetDto,
 ): Promise<IssueSummaryDto[]> {

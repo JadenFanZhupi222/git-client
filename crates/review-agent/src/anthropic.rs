@@ -223,14 +223,10 @@ fn push_blocks(messages: &mut Vec<Value>, role: &str, mut blocks: Vec<Value>) {
 }
 
 fn split_call_id(call: &ToolCall) -> Result<(String, Value), ProviderError> {
-    let mut arguments = call.arguments.clone();
-    let call_id = arguments
-        .as_object_mut()
-        .and_then(|object| object.remove("_call_id"))
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .filter(|call_id| !call_id.is_empty())
+    let call_id = (!call.call_id.is_empty())
+        .then(|| call.call_id.clone())
         .ok_or_else(|| ProviderError::InvalidResponse("function call id missing".into()))?;
-    Ok((call_id, arguments))
+    Ok((call_id, call.arguments.clone()))
 }
 
 fn build_client(
@@ -654,6 +650,9 @@ mod tests {
                     name: "read_file".into(),
                     description: "Read a file".into(),
                     input_schema: json!({"type":"object"}),
+                    risk: crate::ToolRisk::ReadOnly,
+                    timeout_ms: crate::default_tool_timeout_ms(),
+                    max_result_bytes: crate::default_tool_result_bytes(),
                 }]
             } else {
                 Vec::new()

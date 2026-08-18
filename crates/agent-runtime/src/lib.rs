@@ -5,6 +5,9 @@ use std::sync::Mutex;
 use std::time::Duration;
 use thiserror::Error;
 
+mod tool_runtime;
+pub use tool_runtime::*;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelUsage {
     pub input_tokens: u64,
@@ -114,6 +117,7 @@ pub enum TranscriptItem {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCall {
+    pub call_id: String,
     pub name: String,
     pub arguments: Value,
 }
@@ -122,12 +126,10 @@ impl ToolCall {
     pub fn with_call_id(
         name: impl Into<String>,
         call_id: impl Into<String>,
-        mut arguments: Value,
+        arguments: Value,
     ) -> Self {
-        if let Some(object) = arguments.as_object_mut() {
-            object.insert("_call_id".into(), Value::String(call_id.into()));
-        }
         Self {
+            call_id: call_id.into(),
             name: name.into(),
             arguments,
         }
@@ -139,6 +141,20 @@ pub struct ToolDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    #[serde(default)]
+    pub risk: ToolRisk,
+    #[serde(default = "default_tool_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default = "default_tool_result_bytes")]
+    pub max_result_bytes: usize,
+}
+
+pub const fn default_tool_timeout_ms() -> u64 {
+    30_000
+}
+
+pub const fn default_tool_result_bytes() -> usize {
+    64 * 1024
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -227,6 +243,36 @@ pub enum AgentEventKind {
     ToolArgumentsDelta {
         call_id: String,
         delta: String,
+    },
+    ToolValidationFailed {
+        call_id: String,
+        tool_name: Option<String>,
+        error: String,
+    },
+    ToolApprovalRequested {
+        approval_id: String,
+        call_id: String,
+        tool_name: String,
+        risk: ToolRisk,
+        summary: Option<String>,
+    },
+    ToolApprovalResolved {
+        approval_id: String,
+        call_id: String,
+        decision: PermissionDecision,
+    },
+    ToolExecutionStarted {
+        call_id: String,
+        tool_name: String,
+        risk: ToolRisk,
+    },
+    ToolExecutionCompleted {
+        call_id: String,
+        tool_name: String,
+        outcome: ToolOutcome,
+        duration_ms: u64,
+        content_bytes: usize,
+        truncated: bool,
     },
     UsageUpdated {
         usage: ModelUsage,

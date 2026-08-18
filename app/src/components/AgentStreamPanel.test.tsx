@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setLang } from "../lib/i18n";
 import type { AgentStreamState } from "../lib/agentStream";
 import { AgentStreamPanel } from "./AgentStreamPanel";
@@ -21,7 +21,17 @@ describe("AgentStreamPanel", () => {
         responseId: "response-1",
         text: "Partial answer",
         artifactText: [],
-        tools: [{ callId: "call-1", name: "read_file", arguments: "{\"path\":\"src/a.ts\"}" }],
+        tools: [{
+          callId: "call-1",
+          name: "read_file",
+          arguments: "{\"path\":\"src/a.ts\"}",
+          risk: null,
+          approvalId: null,
+          approvalSummary: null,
+          permission: "none",
+          execution: "pending",
+          errorCode: null,
+        }],
         usage: { input_tokens: 12, output_tokens: 3, tool_calls: 1 },
         errorCode: "rate_limited",
         status: "retrying",
@@ -68,5 +78,41 @@ describe("AgentStreamPanel", () => {
 
     view.rerender(<AgentStreamPanel stream={{ ...failed, runStatus: "cancelled" }} />);
     expect(screen.getByText("Run cancelled")).toBeInTheDocument();
+  });
+
+  it("submits only run, approval id, and one-shot allow or deny decisions", async () => {
+    const decide = vi.fn();
+    const user = userEvent.setup();
+    const stream: AgentStreamState = {
+      runId: "run-approval",
+      runStatus: "active",
+      lastSequence: 3,
+      attempts: [{
+        attemptId: 1,
+        providerId: "openai",
+        modelId: "gpt-5",
+        responseId: "response-1",
+        text: "",
+        artifactText: [],
+        tools: [{
+          callId: "call-1",
+          name: "filesystem.write",
+          arguments: "",
+          risk: "write",
+          approvalId: "approval-1",
+          approvalSummary: "Write one repository file",
+          permission: "pending",
+          execution: "pending",
+          errorCode: null,
+        }],
+        usage: null,
+        errorCode: null,
+        status: "streaming",
+      }],
+    };
+    render(<AgentStreamPanel stream={stream} onApprovalDecision={decide} />);
+    expect(screen.getByText("Write one repository file")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Allow once" }));
+    expect(decide).toHaveBeenCalledWith("run-approval", "approval-1", "allow");
   });
 });

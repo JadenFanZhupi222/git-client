@@ -1,9 +1,11 @@
 import type { AgentAttemptStatus, AgentRunStatus, AgentStreamState } from "../lib/agentStream";
 import { useT } from "../lib/i18n";
+import { resolveToolApproval } from "../ipc";
 
 type AgentStreamPanelProps = {
   stream: AgentStreamState | null;
   preparingLabel?: string;
+  onApprovalDecision?: (runId: string, approvalId: string, decision: "allow" | "deny") => void | Promise<void>;
 };
 
 const statusKey = {
@@ -14,9 +16,13 @@ const statusKey = {
   failed: "agentStream.status.failed",
 } as const;
 
-export function AgentStreamPanel({ stream, preparingLabel }: AgentStreamPanelProps) {
+export function AgentStreamPanel({ stream, preparingLabel, onApprovalDecision }: AgentStreamPanelProps) {
   const t = useT();
   if (!stream) return null;
+  const decideApproval = onApprovalDecision
+    ?? ((runId: string, approvalId: string, decision: "allow" | "deny") => (
+      resolveToolApproval(runId, approvalId, decision)
+    ));
   const latestStatus = stream.attempts[stream.attempts.length - 1]?.status;
 
   return (
@@ -51,9 +57,32 @@ export function AgentStreamPanel({ stream, preparingLabel }: AgentStreamPanelPro
               {attempt.tools.length > 0 && (
                 <ul className="mt-2 space-y-1.5">
                   {attempt.tools.map((tool) => (
-                    <li key={tool.callId} className="flex min-w-0 items-center gap-2 text-[10.5px] text-fg-muted">
-                      <span className="size-1 shrink-0 rounded-full bg-accent" aria-hidden="true" />
-                      <span className="truncate">{t("agentStream.toolCall", { name: tool.name })}</span>
+                    <li key={tool.callId} className="text-[10.5px] text-fg-muted">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="size-1 shrink-0 rounded-full bg-accent" aria-hidden="true" />
+                        <span className="truncate">{t("agentStream.toolCall", { name: tool.name })}</span>
+                      </div>
+                      {tool.permission === "pending" && tool.approvalId && (
+                        <div className="ml-3 mt-1.5 border-l border-warning/50 pl-2">
+                          <p className="text-fg-muted">{tool.approvalSummary ?? t("agentStream.approvalRequired")}</p>
+                          <div className="mt-1.5 flex gap-1.5">
+                            <button
+                              type="button"
+                              className="rounded border border-line px-2 py-0.5 text-[10px] text-fg hover:border-accent"
+                              onClick={() => void decideApproval(stream.runId, tool.approvalId!, "allow")}
+                            >
+                              {t("agentStream.approve")}
+                            </button>
+                            <button
+                              type="button"
+                              className="rounded border border-line px-2 py-0.5 text-[10px] text-fg-muted hover:border-danger"
+                              onClick={() => void decideApproval(stream.runId, tool.approvalId!, "deny")}
+                            >
+                              {t("agentStream.deny")}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>

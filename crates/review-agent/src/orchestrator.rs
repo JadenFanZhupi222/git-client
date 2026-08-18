@@ -384,12 +384,7 @@ impl<'a> ReviewOrchestrator<'a> {
                                 });
                             }
                         }
-                        let call_id = call
-                            .arguments
-                            .get("_call_id")
-                            .and_then(Value::as_str)
-                            .expect("call ids were validated")
-                            .to_owned();
+                        let call_id = call.call_id.clone();
                         transcript.push(TranscriptItem::ToolResult {
                             name: call.name,
                             call_id,
@@ -490,9 +485,7 @@ fn tool_cache_key(call: &ToolCall) -> Option<String> {
     if !matches!(call.name.as_str(), "list_repository_tree" | "read_file") {
         return None;
     }
-    let mut arguments = call.arguments.clone();
-    arguments.as_object_mut()?.remove("_call_id");
-    serde_json::to_string(&arguments)
+    serde_json::to_string(&call.arguments)
         .ok()
         .map(|arguments| format!("{}:{arguments}", call.name))
 }
@@ -536,10 +529,7 @@ fn strict_arguments<'a>(
     })?;
     if object
         .keys()
-        .any(|key| key != "_call_id" && !allowed.iter().any(|allowed_key| key == allowed_key))
-        || object
-            .get("_call_id")
-            .is_some_and(|call_id| !call_id.is_string())
+        .any(|key| !allowed.iter().any(|allowed_key| key == allowed_key))
     {
         return Err(ReviewError::InvalidModelOutput(
             "tool arguments contain unknown or malformed fields".into(),
@@ -550,11 +540,8 @@ fn strict_arguments<'a>(
 
 fn validate_call_ids(calls: &[ToolCall], seen: &mut HashSet<String>) -> Result<(), ReviewError> {
     for call in calls {
-        let call_id = call
-            .arguments
-            .get("_call_id")
-            .and_then(Value::as_str)
-            .filter(|call_id| !call_id.is_empty())
+        let call_id = (!call.call_id.is_empty())
+            .then_some(call.call_id.as_str())
             .ok_or_else(|| ReviewError::InvalidModelOutput("function call id missing".into()))?;
         if !seen.insert(call_id.to_owned()) {
             return Err(ReviewError::InvalidModelOutput(
@@ -575,6 +562,9 @@ fn review_tool_definitions() -> Vec<ToolDefinition> {
                 "properties": {"prefix": {"type": "string"}},
                 "additionalProperties": false
             }),
+            risk: ToolRisk::ReadOnly,
+            timeout_ms: default_tool_timeout_ms(),
+            max_result_bytes: default_tool_result_bytes(),
         },
         ToolDefinition {
             name: "read_file".into(),
@@ -589,6 +579,9 @@ fn review_tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["path", "start_line", "end_line"],
                 "additionalProperties": false
             }),
+            risk: ToolRisk::ReadOnly,
+            timeout_ms: default_tool_timeout_ms(),
+            max_result_bytes: default_tool_result_bytes(),
         },
     ]
 }

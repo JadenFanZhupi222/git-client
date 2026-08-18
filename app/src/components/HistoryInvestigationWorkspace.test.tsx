@@ -279,6 +279,15 @@ function agentEvent(
     usage: null,
     error_code: null,
     will_retry: null,
+    approval_id: null,
+    risk: null,
+    approval_summary: null,
+    decision: null,
+    tool_outcome: null,
+    duration_ms: null,
+    content_bytes: null,
+    truncated: null,
+    tool_error: null,
     ...fields,
   };
 }

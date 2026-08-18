@@ -191,6 +191,32 @@ pub struct AgentEventDto {
     pub usage: Option<ReviewUsageDto>,
     pub error_code: Option<String>,
     pub will_retry: Option<bool>,
+    pub approval_id: Option<String>,
+    pub risk: Option<String>,
+    pub approval_summary: Option<String>,
+    pub decision: Option<String>,
+    pub tool_outcome: Option<String>,
+    #[ts(type = "number | null")]
+    pub duration_ms: Option<u64>,
+    pub content_bytes: Option<usize>,
+    pub truncated: Option<bool>,
+    pub tool_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub enum ToolApprovalDecisionDto {
+    Allow,
+    Deny,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ToolApprovalResolutionDto {
+    pub run_id: String,
+    pub approval_id: String,
+    pub decision: ToolApprovalDecisionDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -748,6 +774,15 @@ impl From<review_agent::AgentEvent> for AgentEventDto {
             usage: None,
             error_code: None,
             will_retry: None,
+            approval_id: None,
+            risk: None,
+            approval_summary: None,
+            decision: None,
+            tool_outcome: None,
+            duration_ms: None,
+            content_bytes: None,
+            truncated: None,
+            tool_error: None,
         };
         match event.kind {
             review_agent::AgentEventKind::ModelAttemptStarted {
@@ -798,6 +833,66 @@ impl From<review_agent::AgentEvent> for AgentEventDto {
                 dto.call_id = Some(call_id);
                 dto.delta = Some(delta);
             }
+            review_agent::AgentEventKind::ToolValidationFailed {
+                call_id,
+                tool_name,
+                error,
+            } => {
+                dto.event_type = "tool_validation_failed".into();
+                dto.call_id = Some(call_id);
+                dto.tool_name = tool_name;
+                dto.tool_error = Some(error);
+            }
+            review_agent::AgentEventKind::ToolApprovalRequested {
+                approval_id,
+                call_id,
+                tool_name,
+                risk,
+                summary,
+            } => {
+                dto.event_type = "tool_approval_requested".into();
+                dto.approval_id = Some(approval_id);
+                dto.call_id = Some(call_id);
+                dto.tool_name = Some(tool_name);
+                dto.risk = Some(tool_risk_name(risk).into());
+                dto.approval_summary = summary;
+            }
+            review_agent::AgentEventKind::ToolApprovalResolved {
+                approval_id,
+                call_id,
+                decision,
+            } => {
+                dto.event_type = "tool_approval_resolved".into();
+                dto.approval_id = Some(approval_id);
+                dto.call_id = Some(call_id);
+                dto.decision = Some(permission_decision_name(decision).into());
+            }
+            review_agent::AgentEventKind::ToolExecutionStarted {
+                call_id,
+                tool_name,
+                risk,
+            } => {
+                dto.event_type = "tool_execution_started".into();
+                dto.call_id = Some(call_id);
+                dto.tool_name = Some(tool_name);
+                dto.risk = Some(tool_risk_name(risk).into());
+            }
+            review_agent::AgentEventKind::ToolExecutionCompleted {
+                call_id,
+                tool_name,
+                outcome,
+                duration_ms,
+                content_bytes,
+                truncated,
+            } => {
+                dto.event_type = "tool_execution_completed".into();
+                dto.call_id = Some(call_id);
+                dto.tool_name = Some(tool_name);
+                dto.tool_outcome = Some(tool_outcome_name(outcome).into());
+                dto.duration_ms = Some(duration_ms);
+                dto.content_bytes = Some(content_bytes);
+                dto.truncated = Some(truncated);
+            }
             review_agent::AgentEventKind::UsageUpdated { usage } => {
                 dto.event_type = "usage_updated".into();
                 dto.usage = Some(usage.into());
@@ -824,6 +919,34 @@ impl From<review_agent::AgentEvent> for AgentEventDto {
             }
         }
         dto
+    }
+}
+
+fn tool_risk_name(risk: review_agent::ToolRisk) -> &'static str {
+    match risk {
+        review_agent::ToolRisk::ReadOnly => "read_only",
+        review_agent::ToolRisk::Write => "write",
+        review_agent::ToolRisk::Destructive => "destructive",
+        review_agent::ToolRisk::External => "external",
+    }
+}
+
+fn permission_decision_name(decision: review_agent::PermissionDecision) -> &'static str {
+    match decision {
+        review_agent::PermissionDecision::Allow => "allow",
+        review_agent::PermissionDecision::Deny => "deny",
+        review_agent::PermissionDecision::Ask => "deny",
+    }
+}
+
+fn tool_outcome_name(outcome: review_agent::ToolOutcome) -> &'static str {
+    match outcome {
+        review_agent::ToolOutcome::Success => "success",
+        review_agent::ToolOutcome::Denied => "denied",
+        review_agent::ToolOutcome::Failed => "failed",
+        review_agent::ToolOutcome::Timeout => "timeout",
+        review_agent::ToolOutcome::Cancelled => "cancelled",
+        review_agent::ToolOutcome::InvalidInput => "invalid_input",
     }
 }
 impl From<review_agent::ReviewRunResult> for ReviewRunResultDto {
@@ -983,8 +1106,39 @@ mod review_dto_contract_tests {
                 "usage": null,
                 "error_code": "rate_limited",
                 "will_retry": true
+                ,"approval_id": null
+                ,"risk": null
+                ,"approval_summary": null
+                ,"decision": null
+                ,"tool_outcome": null
+                ,"duration_ms": null
+                ,"content_bytes": null
+                ,"truncated": null
+                ,"tool_error": null
             })
         );
+    }
+
+    #[test]
+    fn tool_approval_event_exposes_only_sanitized_metadata() {
+        let dto = AgentEventDto::from(review_agent::AgentEvent {
+            run_id: "run-1".into(),
+            sequence: 9,
+            attempt_id: 1,
+            kind: review_agent::AgentEventKind::ToolApprovalRequested {
+                approval_id: "approval-1".into(),
+                call_id: "call-1".into(),
+                tool_name: "filesystem.write".into(),
+                risk: review_agent::ToolRisk::Write,
+                summary: Some("Write one repository file".into()),
+            },
+        });
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(json.contains("tool_approval_requested"));
+        assert!(json.contains("Write one repository file"));
+        for forbidden in ["arguments", "result", "prompt", "api_key", "provider_body"] {
+            assert!(!json.contains(forbidden));
+        }
     }
 
     #[test]

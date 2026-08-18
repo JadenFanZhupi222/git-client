@@ -125,12 +125,8 @@ impl DeepSeekProvider {
                 TranscriptItem::AssistantToolCalls(calls) => {
                     let mut tool_calls = Vec::new();
                     for call in calls {
-                        let mut arguments = call.arguments.clone();
-                        let call_id = arguments
-                            .as_object_mut()
-                            .and_then(|object| object.remove("_call_id"))
-                            .and_then(|value| value.as_str().map(str::to_owned))
-                            .filter(|call_id| !call_id.is_empty())
+                        let call_id = (!call.call_id.is_empty())
+                            .then(|| call.call_id.clone())
                             .ok_or_else(|| {
                                 ProviderError::InvalidResponse("function call id missing".into())
                             })?;
@@ -139,7 +135,7 @@ impl DeepSeekProvider {
                             "type": "function",
                             "function": {
                                 "name": call.name,
-                                "arguments": arguments.to_string()
+                                "arguments": call.arguments.to_string()
                             }
                         }));
                     }
@@ -548,6 +544,9 @@ mod tests {
                     name: "read_file".into(),
                     description: "Read a file".into(),
                     input_schema: json!({"type": "object"}),
+                    risk: crate::ToolRisk::ReadOnly,
+                    timeout_ms: crate::default_tool_timeout_ms(),
+                    max_result_bytes: crate::default_tool_result_bytes(),
                 }]
             } else {
                 Vec::new()
