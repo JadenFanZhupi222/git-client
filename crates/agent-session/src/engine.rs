@@ -91,6 +91,7 @@ pub struct AgentSliceRequest {
     pub working_summary: Option<String>,
     pub progress: ProgressTracker,
     pub slice_index: u32,
+    pub execution_sequence: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -301,6 +302,7 @@ impl SessionEngine {
                     None,
                     ProgressTracker::default(),
                     0,
+                    0,
                 ),
             ) => result.map_err(|_| SessionEngineError::Timeout).and_then(|result| result),
         };
@@ -363,6 +365,7 @@ impl SessionEngine {
                 request.working_summary,
                 request.progress,
                 request.slice_index,
+                request.execution_sequence,
             ) => result,
         };
         let abort = self.sessions.abort_turn(&lease);
@@ -392,6 +395,7 @@ impl SessionEngine {
         working_summary: Option<String>,
         mut progress: ProgressTracker,
         slice_index: u32,
+        execution_sequence: u64,
     ) -> Result<LoopOutcome, SessionEngineError> {
         if cancellation.is_cancelled() {
             return Err(SessionEngineError::Cancelled);
@@ -425,7 +429,10 @@ impl SessionEngine {
         run_limits.deadline = Some(run_started + self.config.max_run_duration);
         let mut run = ToolRun::new(lease.run_id.clone(), run_limits, Arc::clone(&cancellation));
         if mode == LoopMode::DurableSlice {
-            run = run.with_execution_namespace(format!("{}:slice:{slice_index}", lease.run_id));
+            run = run.with_execution_namespace(format!(
+                "{}:slice:{slice_index}:checkpoint:{execution_sequence}",
+                lease.run_id
+            ));
         }
         if let Some(policy) = request.run_policy.clone() {
             run = run.with_policy(policy);
@@ -2018,6 +2025,7 @@ mod tests {
                         working_summary: None,
                         progress: ProgressTracker::default(),
                         slice_index,
+                        execution_sequence: u64::from(slice_index),
                     },
                     Arc::new(NeverCancel),
                 )
@@ -2039,6 +2047,7 @@ mod tests {
                     working_summary: None,
                     progress: ProgressTracker::default(),
                     slice_index: 33,
+                    execution_sequence: 33,
                 },
                 Arc::new(NeverCancel),
             )

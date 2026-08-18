@@ -48,6 +48,9 @@ pub enum BlockReason {
     AmbiguousToolEffect,
     NoProgress,
     VerifierRejected,
+    CompletionCandidateInvalid,
+    ModelResponseInvalid,
+    RuntimeInvariant,
     CheckpointCorrupt,
     StorageLocked,
     RunawayGuard,
@@ -244,6 +247,14 @@ pub struct WorkingEvidence {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentCheckpoint {
     pub slice_index: u32,
+    #[serde(default)]
+    pub checkpoint_sequence: u64,
+    #[serde(default)]
+    pub slice_usage: ModelUsage,
+    #[serde(default)]
+    pub slice_active_ms: u64,
+    #[serde(default)]
+    pub slice_tool_result_bytes: usize,
     pub working_summary: String,
     pub recent_transcript: Vec<agent_runtime::TranscriptItem>,
     pub evidence: Vec<WorkingEvidence>,
@@ -263,6 +274,10 @@ impl AgentCheckpoint {
     pub fn empty(repository_digest: impl Into<String>, now_ms: u64) -> Self {
         Self {
             slice_index: 0,
+            checkpoint_sequence: 0,
+            slice_usage: ModelUsage::default(),
+            slice_active_ms: 0,
+            slice_tool_result_bytes: 0,
             working_summary: String::new(),
             recent_transcript: Vec::new(),
             evidence: Vec::new(),
@@ -294,6 +309,12 @@ impl AgentCheckpoint {
         for evidence in self.evidence.iter_mut().rev().skip(2) {
             evidence.content = None;
         }
+    }
+
+    pub fn reset_slice_counters(&mut self) {
+        self.slice_usage = ModelUsage::default();
+        self.slice_active_ms = 0;
+        self.slice_tool_result_bytes = 0;
     }
 }
 
@@ -392,6 +413,7 @@ impl AgentGoal {
         self.checkpoint.working_summary.clear();
         self.checkpoint.next_actions.clear();
         self.checkpoint.verifier_gaps.clear();
+        self.checkpoint.reset_slice_counters();
         for evidence in &mut self.checkpoint.evidence {
             evidence.content = None;
         }
@@ -1061,6 +1083,27 @@ mod tests {
         assert_eq!(limits.max_output_tokens, 16_000);
         assert!(limits.runaway_model_rounds > 64);
         assert!(limits.runaway_tool_calls > 128);
+    }
+
+    #[test]
+    fn logical_slice_counters_survive_atomic_checkpoints_and_reset_at_boundaries() {
+        let mut checkpoint = AgentCheckpoint::empty("workspace", 1);
+        checkpoint.checkpoint_sequence = 7;
+        checkpoint.slice_usage = ModelUsage {
+            input_tokens: 42,
+            output_tokens: 3,
+            tool_calls: 1,
+            ..ModelUsage::default()
+        };
+        checkpoint.slice_active_ms = 900;
+        checkpoint.slice_tool_result_bytes = 512;
+
+        checkpoint.reset_slice_counters();
+
+        assert_eq!(checkpoint.checkpoint_sequence, 7);
+        assert_eq!(checkpoint.slice_usage, ModelUsage::default());
+        assert_eq!(checkpoint.slice_active_ms, 0);
+        assert_eq!(checkpoint.slice_tool_result_bytes, 0);
     }
 
     #[test]

@@ -21,6 +21,7 @@ import { Button } from "./ui/Button";
 
 const CONSENT_KEY = "versionarc.agent.provider-consent.v1";
 const TERMINAL = new Set(["completed", "failed", "cancelled"]);
+const STREAMING = new Set(["queued", "running", "awaiting_approval", "pausing"]);
 
 export function AgentWorkspace({ repo, onConfigureCredential = () => undefined }: {
   repo: string;
@@ -55,6 +56,8 @@ export function AgentWorkspace({ repo, onConfigureCredential = () => undefined }
       agentStream.finish("cancelled");
     } else if (nextGoal?.status === "failed") {
       agentStream.finish("failed");
+    } else if (!nextGoal || !STREAMING.has(nextGoal.status)) {
+      agentStream.reset();
     }
     return snapshot;
   }
@@ -74,7 +77,7 @@ export function AgentWorkspace({ repo, onConfigureCredential = () => undefined }
         setSelectedModelId((current) => compatible.some((model) => model.id === current)
           ? current
           : (nextSession.active_goal?.model_id ?? compatible[0]?.id ?? ""));
-        if (nextSession.active_goal && !TERMINAL.has(nextSession.active_goal.status)) {
+        if (nextSession.active_goal && STREAMING.has(nextSession.active_goal.status)) {
           void agentStream.begin(nextSession.active_goal.goal_id);
         }
       })

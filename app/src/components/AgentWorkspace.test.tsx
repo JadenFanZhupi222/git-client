@@ -175,6 +175,7 @@ describe("AgentWorkspace durable Goals", () => {
     });
     const restartView = render(<AgentWorkspace repo={"D:\\repo"} />);
     expect(await screen.findByText(/Checkpoint restored/)).toBeInTheDocument();
+    expect(ipc.onAgentEvent).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Resume" }));
     await waitFor(() => expect(ipc.resumeAgentGoal).toHaveBeenCalledWith(expect.objectContaining({
       goal_id: "goal-test",
@@ -199,6 +200,21 @@ describe("AgentWorkspace durable Goals", () => {
       new_limit_micros: 2_500_000,
     })));
     budgetView.unmount();
+  });
+
+  it("does not show a stale live stream for a blocked Goal", async () => {
+    ipc.getAgentSession.mockResolvedValue({
+      ...emptySession,
+      active_goal: goal({
+        status: "blocked",
+        block_reason: "completion_candidate_invalid",
+        revision: 8,
+      }),
+    });
+    render(<AgentWorkspace repo={"D:\\repo"} />);
+    expect(await screen.findByText(/Blocked: completion candidate invalid/)).toBeInTheDocument();
+    expect(screen.queryByText(/Connecting to model output/)).not.toBeInTheDocument();
+    expect(ipc.onAgentEvent).not.toHaveBeenCalled();
   });
 
   it("refuses session reset while a Goal is nonterminal", async () => {
