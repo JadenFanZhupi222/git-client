@@ -1,20 +1,12 @@
 use crate::{
-    AgentEventEmitter, AgentEventKind, AgentEventSink, CancelSignal, ModelProvider, ModelRequest,
-    ModelResponse, NoopAgentEventSink, ProviderError, RetryPolicy,
+    AgentEventKind, AgentEventPublisher, CancelSignal, ModelProvider, ModelRequest, ModelResponse,
+    NoopAgentEventSink, ProviderError, RetryPolicy,
 };
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 #[derive(Debug)]
 pub(crate) enum ProviderCallError {
     Cancelled,
     Provider(ProviderError),
-}
-
-pub(crate) struct ProviderEventContext<'a> {
-    pub run_id: &'a str,
-    pub sequence: &'a AtomicU64,
-    pub attempt_sequence: &'a AtomicU32,
-    pub sink: &'a dyn AgentEventSink,
 }
 
 pub(crate) async fn respond_with_retry(
@@ -24,14 +16,7 @@ pub(crate) async fn respond_with_retry(
     jitter_key: &str,
     attempts: &mut u32,
 ) -> Result<ModelResponse, ProviderCallError> {
-    let sequence = AtomicU64::new(1);
-    let attempt_sequence = AtomicU32::new(1);
-    let event_context = ProviderEventContext {
-        run_id: jitter_key,
-        sequence: &sequence,
-        attempt_sequence: &attempt_sequence,
-        sink: &NoopAgentEventSink,
-    };
+    let event_context = AgentEventPublisher::new(jitter_key, &NoopAgentEventSink);
     respond_with_retry_and_events(model, request, cancel, attempts, &event_context).await
 }
 
@@ -40,7 +25,7 @@ pub(crate) async fn respond_with_retry_and_events(
     request: &ModelRequest,
     cancel: &dyn CancelSignal,
     attempts: &mut u32,
-    event_context: &ProviderEventContext<'_>,
+    event_context: &AgentEventPublisher<'_>,
 ) -> Result<ModelResponse, ProviderCallError> {
     let policy = RetryPolicy::default();
     let mut attempt = 1_u8;
@@ -49,15 +34,7 @@ pub(crate) async fn respond_with_retry_and_events(
             return Err(ProviderCallError::Cancelled);
         }
         *attempts = attempts.saturating_add(1);
-        let attempt_id = event_context
-            .attempt_sequence
-            .fetch_add(1, Ordering::Relaxed);
-        let events = AgentEventEmitter::new(
-            event_context.run_id,
-            attempt_id,
-            event_context.sequence,
-            event_context.sink,
-        );
+        let events = event_context.next_attempt();
         let descriptor = model.descriptor();
         events.emit(AgentEventKind::ModelAttemptStarted {
             provider_id: descriptor.provider_id,
@@ -80,7 +57,7 @@ pub(crate) async fn respond_with_retry_and_events(
                     error: (&error).into(),
                     will_retry: true,
                 });
-                let delay = policy.delay_after(attempt, event_context.run_id);
+                let delay = policy.delay_after(attempt, event_context.run_id());
                 tokio::select! {
                     biased;
                     _ = cancel.cancelled() => return Err(ProviderCallError::Cancelled),
@@ -102,7 +79,9 @@ pub(crate) async fn respond_with_retry_and_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ModelOutput, ModelUsage, ProviderDescriptor, ResponseFormat, TranscriptItem};
+    use crate::{
+        AgentEventSink, ModelOutput, ModelUsage, ProviderDescriptor, ResponseFormat, TranscriptItem,
+    };
     use async_trait::async_trait;
     use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
@@ -204,14 +183,7 @@ mod tests {
             Ok(ModelResponse::final_text("ok", ModelUsage::default())),
         ])));
         let sink = RecordingSink::default();
-        let sequence = AtomicU64::new(10);
-        let attempt_sequence = AtomicU32::new(4);
-        let event_context = ProviderEventContext {
-            run_id: "run-stream",
-            sequence: &sequence,
-            attempt_sequence: &attempt_sequence,
-            sink: &sink,
-        };
+        let event_context = AgentEventPublisher::new("run-stream", &sink);
         let mut attempts = 0;
 
         respond_with_retry_and_events(
@@ -230,7 +202,7 @@ mod tests {
                 .iter()
                 .map(|event| event.sequence)
                 .collect::<Vec<_>>(),
-            (10..17).collect::<Vec<_>>()
+            (1..8).collect::<Vec<_>>()
         );
         assert_eq!(
             events
@@ -240,7 +212,7 @@ mod tests {
                     _ => None,
                 })
                 .collect::<Vec<_>>(),
-            vec![4, 5]
+            vec![1, 2]
         );
         assert!(matches!(
             events[2].kind,

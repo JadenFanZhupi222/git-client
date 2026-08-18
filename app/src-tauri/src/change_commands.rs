@@ -1,3 +1,4 @@
+use crate::agent_events::AppAgentEventEmitter;
 use crate::credentials::read_credential;
 use crate::review_commands::{
     ReviewRunRegistry, agent_error, map_review_credential_error, review_error,
@@ -10,8 +11,9 @@ use ipc_types::{
     CommitChangeGroupInputDto, IpcError, ReviewUsageDto,
 };
 use review_agent::{
-    ChangeEvidence, ChangeEvidenceFile, ChangePlanResult, ChangeWarningSeverity, MAX_CHANGE_FILES,
-    MAX_CHANGE_PATCH_BYTES, build_local_change_plan, enhance_change_plan, is_sensitive_change_path,
+    AgentEventPublisher, ChangeEvidence, ChangeEvidenceFile, ChangePlanResult,
+    ChangeWarningSeverity, MAX_CHANGE_FILES, MAX_CHANGE_PATCH_BYTES, build_local_change_plan,
+    enhance_change_plan_with_events, is_sensitive_change_path,
 };
 use std::collections::BTreeSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -182,6 +184,7 @@ fn collect_change_evidence(context: &RepoContext) -> Result<ChangeEvidence, IpcE
 
 #[tauri::command]
 pub(crate) async fn analyze_change_plan(
+    app: tauri::AppHandle,
     registry: tauri::State<'_, RepoRegistry>,
     runs: tauri::State<'_, ReviewRunRegistry>,
     input: ChangePlanInputDto,
@@ -224,12 +227,15 @@ pub(crate) async fn analyze_change_plan(
                         let model = review_agent::create_model_provider(credential, &model_id)
                             .map_err(review_error)
                             .map_err(|error| agent_error(error, &diagnostic_id))?;
-                        enhance_change_plan(
+                        let sink = AppAgentEventEmitter(app.clone());
+                        let events = AgentEventPublisher::new(&input.run_id, &sink);
+                        enhance_change_plan_with_events(
                             model.as_ref(),
                             &cancellation,
                             &input.run_id,
                             &evidence,
                             plan,
+                            &events,
                         )
                         .await
                         .map(change_plan_result_dto)

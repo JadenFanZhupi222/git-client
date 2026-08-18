@@ -2,7 +2,7 @@
 
 **Status:** Accepted for implementation  
 **Date:** 2026-08-18  
-**Stage:** S1 of the Agent Platform v2 roadmap
+**Stage:** S1-S2 of the Agent Platform v2 roadmap
 
 ## 1. Decision
 
@@ -155,7 +155,23 @@ S1 is accepted when:
 - cancellation still interrupts an in-flight provider future;
 - formatting, Clippy, workspace Rust tests, dependency boundaries, frontend tests, and frontend production build all pass.
 
-## 12. Follow-on stages
+## 12. S2 delivery bridge
+
+S2 exposes the S1 protocol without weakening final-response authority:
+
+- one run-scoped publisher owns sequence and attempt counters across all model rounds;
+- Tauri emits a flat, forward-compatible `agent-event` DTO with no credentials, prompts, tool results, or raw provider errors;
+- listeners subscribe before invoking a workflow, filter by run ID and sequence, and are removed on completion, replacement, or unmount;
+- the React reducer retains each attempt independently, appends text and tool-argument fragments, replaces cumulative usage, and ignores duplicate, stale, or foreign events;
+- PR/MR review, issue triage, model-enhanced change planning, and history investigation share the same stream panel;
+- the existing cancellation actions stop provider streaming and retry backoff, while a new run resets the speculative stream state;
+- partial text remains observational and is never used as a workflow result or executable tool input.
+
+The panel follows the existing dense VersionArc visual system: compact activity rows, bounded scroll areas, existing color tokens, restrained status motion, and an `aria-live` region for incremental text. It does not introduce a separate chatbot shell or display hidden reasoning.
+
+S2 is accepted when the IPC DTO shape is contract-tested, the reducer proves ordering/retry/tool assembly, listener cleanup is tested, the shared panel is component-tested, and the complete Rust and frontend verification suite passes.
+
+## 13. Follow-on stages
 
 - **S2:** Tauri event bridge, React stream store, rendering, stop/retry UX.
 - **S3:** generic tool registry and permission contract.
@@ -166,7 +182,7 @@ S1 is accepted when:
 - **S8:** production traces, evals, budgets, and observability.
 - **S9+:** computer use, multi-agent orchestration, and advanced governance.
 
-## 13. Protocol references
+## 14. Protocol references
 
 - [OpenAI Responses streaming](https://developers.openai.com/api/docs/guides/streaming-responses)
 - [Anthropic streaming Messages](https://platform.claude.com/docs/en/build-with-claude/streaming)

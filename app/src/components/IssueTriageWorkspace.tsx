@@ -20,8 +20,10 @@ import type {
 } from "../bindings";
 import { useLang, useT } from "../lib/i18n";
 import { estimatedRunCost, formatEstimatedCost } from "../lib/agentCost";
+import { useAgentStream } from "../hooks/useAgentStream";
 import { CheckIcon, CloseIcon, SpinnerIcon } from "./icons";
 import { AgentModelPicker } from "./AgentModelPicker";
+import { AgentStreamPanel } from "./AgentStreamPanel";
 
 const CONSENT_KEY = "issue-triage-consent-v1";
 const CACHE_PREFIX = "issue-triage-result-v1";
@@ -67,6 +69,7 @@ export function IssueTriageWorkspace({
   const [publishId, setPublishId] = useState<string | null>(null);
   const [publishSnapshot, setPublishSnapshot] = useState<IssueSnapshotDto | null>(null);
   const [publishResult, setPublishResult] = useState<IssueTriagePublishResultDto | null>(null);
+  const agentStream = useAgentStream();
 
   const busy = phase === "running" || phase === "publishing";
   const estimatedTokens = useMemo(() => {
@@ -166,6 +169,7 @@ export function IssueTriageWorkspace({
         return;
       }
       unsubscribeRef.current = unsubscribe;
+      await agentStream.begin(runId);
       const next = await startIssueTriage({
         run_id: runId,
         target,
@@ -175,6 +179,7 @@ export function IssueTriageWorkspace({
         output_language: outputLanguage,
       });
       cleanupListener();
+      agentStream.end();
       if (!mountedRef.current) return;
       setResult(next);
       setCacheStale(false);
@@ -182,6 +187,7 @@ export function IssueTriageWorkspace({
       setPhase("results");
     } catch (reason) {
       cleanupListener();
+      agentStream.end();
       if (!mountedRef.current) return;
       const nextError = asIpcError(reason);
       setCancelling(false);
@@ -328,11 +334,12 @@ export function IssueTriageWorkspace({
           )}
 
           {phase === "running" && (
-            <section className="grid min-h-56 place-items-center text-center" aria-live="polite">
+            <section className="flex min-h-56 flex-col items-center justify-center gap-5 py-5 text-center" aria-live="polite">
               <div className="flex flex-col items-center">
                 <SpinnerIcon width={24} height={24} />
                 <p className="mt-3 text-sm text-fg">{progressLabel(progress, t)}</p>
               </div>
+              <AgentStreamPanel stream={agentStream.stream} />
             </section>
           )}
 

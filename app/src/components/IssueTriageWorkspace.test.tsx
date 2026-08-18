@@ -8,6 +8,7 @@ const ipc = vi.hoisted(() => ({
   listReviewModels: vi.fn(),
   credentialStatus: vi.fn(),
   onReviewProgress: vi.fn(),
+  onAgentEvent: vi.fn(),
   publishIssueTriage: vi.fn(),
   startIssueTriage: vi.fn(),
   cancelIssueTriage: vi.fn(),
@@ -71,6 +72,7 @@ describe("IssueTriageWorkspace", () => {
     ipc.listReviewModels.mockResolvedValue([modelOption("deepseek-v4-flash", "DeepSeek V4 Flash")]);
     ipc.credentialStatus.mockResolvedValue(false);
     ipc.onReviewProgress.mockResolvedValue(vi.fn());
+    ipc.onAgentEvent.mockResolvedValue(vi.fn());
     ipc.startIssueTriage.mockResolvedValue(result);
     ipc.cancelIssueTriage.mockResolvedValue(undefined);
     ipc.publishIssueTriage.mockResolvedValue({

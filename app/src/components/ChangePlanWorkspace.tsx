@@ -12,7 +12,9 @@ import {
   listReviewModels,
 } from "../ipc";
 import { useT } from "../lib/i18n";
+import { useAgentStream } from "../hooks/useAgentStream";
 import { AgentModelPicker } from "./AgentModelPicker";
+import { AgentStreamPanel } from "./AgentStreamPanel";
 import { AlertIcon, CheckIcon, CloseIcon, CommitIcon, RefreshIcon, SpinnerIcon } from "./icons";
 import { useToast } from "./Toast";
 import { Button } from "./ui/Button";
@@ -46,6 +48,7 @@ export function ChangePlanWorkspace({
   const [selectedModelId, setSelectedModelId] = useState("");
   const [showEnhancement, setShowEnhancement] = useState(false);
   const [consented, setConsented] = useState(() => localStorage.getItem(MODEL_CONSENT_KEY) === "accepted");
+  const agentStream = useAgentStream();
 
   useEffect(() => {
     mountedRef.current = true;
@@ -78,6 +81,8 @@ export function ChangePlanWorkspace({
     setPhase("loading");
     setError(null);
     try {
+      if (modelId) await agentStream.begin(runId);
+      else agentStream.reset();
       const next = await analyzeChangePlan({ run_id: runId, repo_path: repo, model_id: modelId });
       if (!mountedRef.current || runIdRef.current !== runId) return;
       setPlan(next);
@@ -89,6 +94,7 @@ export function ChangePlanWorkspace({
       setError(asAgentError(reason));
       setPhase("results");
     } finally {
+      agentStream.end();
       if (runIdRef.current === runId) runIdRef.current = null;
     }
   }
@@ -192,6 +198,11 @@ export function ChangePlanWorkspace({
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {phase === "loading" && agentStream.stream && (
+          <div className="mx-auto w-full max-w-4xl px-5 pt-5">
+            <AgentStreamPanel stream={agentStream.stream} />
+          </div>
+        )}
         {phase === "loading" && !plan ? (
           <div className="grid h-full place-items-center text-xs text-fg-muted">
             <span className="flex items-center gap-2"><SpinnerIcon width={14} height={14} />{t("changePlan.analyzing")}</span>

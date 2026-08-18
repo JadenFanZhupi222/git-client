@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -251,6 +251,37 @@ pub struct AgentEventEmitter<'a> {
     attempt_id: u32,
     sequence: &'a AtomicU64,
     sink: &'a dyn AgentEventSink,
+}
+
+pub struct AgentEventPublisher<'a> {
+    run_id: &'a str,
+    sequence: AtomicU64,
+    attempt_sequence: AtomicU32,
+    sink: &'a dyn AgentEventSink,
+}
+
+impl<'a> AgentEventPublisher<'a> {
+    pub fn new(run_id: &'a str, sink: &'a dyn AgentEventSink) -> Self {
+        Self {
+            run_id,
+            sequence: AtomicU64::new(1),
+            attempt_sequence: AtomicU32::new(1),
+            sink,
+        }
+    }
+
+    pub fn next_attempt(&self) -> AgentEventEmitter<'_> {
+        AgentEventEmitter::new(
+            self.run_id,
+            self.attempt_sequence.fetch_add(1, Ordering::Relaxed),
+            &self.sequence,
+            self.sink,
+        )
+    }
+
+    pub fn run_id(&self) -> &str {
+        self.run_id
+    }
 }
 
 impl<'a> AgentEventEmitter<'a> {

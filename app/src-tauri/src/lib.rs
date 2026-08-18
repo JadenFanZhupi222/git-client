@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::Emitter;
 
+mod agent_events;
 mod change_commands;
 mod credentials;
 mod history_commands;

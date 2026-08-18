@@ -173,6 +173,25 @@ pub struct ReviewProgressEventDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct AgentEventDto {
+    pub run_id: String,
+    #[ts(type = "number")]
+    pub sequence: u64,
+    pub attempt_id: u32,
+    pub event_type: String,
+    pub provider_id: Option<String>,
+    pub model_id: Option<String>,
+    pub response_id: Option<String>,
+    pub delta: Option<String>,
+    pub call_id: Option<String>,
+    pub tool_name: Option<String>,
+    pub usage: Option<ReviewUsageDto>,
+    pub error_code: Option<String>,
+    pub will_retry: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct ChangePlanInputDto {
     pub run_id: String,
     pub repo_path: String,
@@ -706,6 +725,79 @@ impl From<review_agent::ReviewUsage> for ReviewUsageDto {
         }
     }
 }
+
+impl From<review_agent::AgentEvent> for AgentEventDto {
+    fn from(event: review_agent::AgentEvent) -> Self {
+        let mut dto = Self {
+            run_id: event.run_id,
+            sequence: event.sequence,
+            attempt_id: event.attempt_id,
+            event_type: String::new(),
+            provider_id: None,
+            model_id: None,
+            response_id: None,
+            delta: None,
+            call_id: None,
+            tool_name: None,
+            usage: None,
+            error_code: None,
+            will_retry: None,
+        };
+        match event.kind {
+            review_agent::AgentEventKind::ModelAttemptStarted {
+                provider_id,
+                model_id,
+            } => {
+                dto.event_type = "model_attempt_started".into();
+                dto.provider_id = Some(provider_id);
+                dto.model_id = Some(model_id);
+            }
+            review_agent::AgentEventKind::ModelResponseStarted { response_id } => {
+                dto.event_type = "model_response_started".into();
+                dto.response_id = response_id;
+            }
+            review_agent::AgentEventKind::OutputTextDelta { delta } => {
+                dto.event_type = "output_text_delta".into();
+                dto.delta = Some(delta);
+            }
+            review_agent::AgentEventKind::ToolCallStarted { call_id, name } => {
+                dto.event_type = "tool_call_started".into();
+                dto.call_id = Some(call_id);
+                dto.tool_name = Some(name);
+            }
+            review_agent::AgentEventKind::ToolArgumentsDelta { call_id, delta } => {
+                dto.event_type = "tool_arguments_delta".into();
+                dto.call_id = Some(call_id);
+                dto.delta = Some(delta);
+            }
+            review_agent::AgentEventKind::UsageUpdated { usage } => {
+                dto.event_type = "usage_updated".into();
+                dto.usage = Some(usage.into());
+            }
+            review_agent::AgentEventKind::ModelResponseCompleted => {
+                dto.event_type = "model_response_completed".into();
+            }
+            review_agent::AgentEventKind::ModelAttemptFailed { error, will_retry } => {
+                dto.event_type = "model_attempt_failed".into();
+                dto.error_code = Some(
+                    match error {
+                        review_agent::AgentErrorCode::CredentialMissing => "credential_missing",
+                        review_agent::AgentErrorCode::AuthenticationFailed => {
+                            "authentication_failed"
+                        }
+                        review_agent::AgentErrorCode::RateLimited => "rate_limited",
+                        review_agent::AgentErrorCode::Network => "network",
+                        review_agent::AgentErrorCode::OutputTruncated => "output_truncated",
+                        review_agent::AgentErrorCode::InvalidResponse => "invalid_response",
+                    }
+                    .into(),
+                );
+                dto.will_retry = Some(will_retry);
+            }
+        }
+        dto
+    }
+}
 impl From<review_agent::ReviewRunResult> for ReviewRunResultDto {
     fn from(v: review_agent::ReviewRunResult) -> Self {
         Self {
@@ -831,6 +923,37 @@ mod review_dto_contract_tests {
         for forbidden in ["token", "key", "prompt", "content", "patch"] {
             assert!(!json.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn agent_event_dto_has_a_stable_flat_streaming_shape() {
+        let dto = AgentEventDto::from(review_agent::AgentEvent {
+            run_id: "run-1".into(),
+            sequence: 7,
+            attempt_id: 2,
+            kind: review_agent::AgentEventKind::ModelAttemptFailed {
+                error: review_agent::AgentErrorCode::RateLimited,
+                will_retry: true,
+            },
+        });
+        assert_eq!(
+            serde_json::to_value(dto).unwrap(),
+            serde_json::json!({
+                "run_id": "run-1",
+                "sequence": 7,
+                "attempt_id": 2,
+                "event_type": "model_attempt_failed",
+                "provider_id": null,
+                "model_id": null,
+                "response_id": null,
+                "delta": null,
+                "call_id": null,
+                "tool_name": null,
+                "usage": null,
+                "error_code": "rate_limited",
+                "will_retry": true
+            })
+        );
     }
 
     #[test]

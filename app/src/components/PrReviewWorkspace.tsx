@@ -25,6 +25,7 @@ import type {
 } from "../bindings";
 import { useLang, useT } from "../lib/i18n";
 import { estimatedRunCost, formatEstimatedCost } from "../lib/agentCost";
+import { useAgentStream } from "../hooks/useAgentStream";
 import {
   clearCachedReview,
   loadCachedReview,
@@ -33,6 +34,7 @@ import {
 } from "../lib/prReviewCache";
 import { CheckIcon, CloseIcon, SpinnerIcon } from "./icons";
 import { AgentModelPicker } from "./AgentModelPicker";
+import { AgentStreamPanel } from "./AgentStreamPanel";
 
 const CONSENT_KEY = "pr-review-consent-v1";
 const MAX_FILES = 30;
@@ -86,6 +88,7 @@ export function PrReviewWorkspace({
   const [drafts, setDrafts] = useState<FindingDraft[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [published, setPublished] = useState<PublishedReviewDto | null>(null);
+  const agentStream = useAgentStream();
 
   const busy = phase === "running" || submitting;
   const getPreflightRequest = platform === "gitlab" ? getGitlabReviewPreflight : getReviewPreflight;
@@ -284,6 +287,7 @@ export function PrReviewWorkspace({
         return;
       }
       unsubscribeRef.current = unsubscribe;
+      await agentStream.begin(runId);
       const next = await startReviewRequest({
         run_id: runId,
         target,
@@ -293,6 +297,7 @@ export function PrReviewWorkspace({
         output_language: outputLanguage,
       });
       cleanupListener();
+      agentStream.end();
       if (!mountedRef.current) return;
       setResult(next);
       setDrafts(sortFindings(next.findings).map((finding) => ({ finding, selected: true, comment: finding.draft_comment })));
@@ -300,6 +305,7 @@ export function PrReviewWorkspace({
       setCancelling(false);
     } catch (reason) {
       cleanupListener();
+      agentStream.end();
       if (!mountedRef.current) return;
       const nextError = asIpcError(reason);
       setCancelling(false);
@@ -461,8 +467,9 @@ export function PrReviewWorkspace({
           )}
 
           {phase === "running" && (
-            <section className="grid min-h-44 place-items-center text-center" aria-live="polite">
+            <section className="flex min-h-44 flex-col items-center justify-center gap-5 py-5 text-center" aria-live="polite">
               <div className="flex flex-col items-center"><SpinnerIcon width={24} height={24} /><p className="mt-3 text-sm text-fg">{progressLabel(progress, t)}</p></div>
+              <AgentStreamPanel stream={agentStream.stream} />
             </section>
           )}
 

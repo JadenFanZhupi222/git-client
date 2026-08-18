@@ -102,6 +102,7 @@ pub struct ReviewOrchestrator<'a> {
     trace: &'a dyn TraceSink,
     cancel: &'a dyn CancelSignal,
     progress: Option<&'a dyn ProgressSink>,
+    agent_events: Option<&'a AgentEventPublisher<'a>>,
 }
 
 #[derive(Default)]
@@ -124,6 +125,7 @@ impl<'a> ReviewOrchestrator<'a> {
             trace,
             cancel,
             progress: None,
+            agent_events: None,
         }
     }
 
@@ -140,7 +142,13 @@ impl<'a> ReviewOrchestrator<'a> {
             trace,
             cancel,
             progress: Some(progress),
+            agent_events: None,
         }
+    }
+
+    pub fn with_agent_events(mut self, events: &'a AgentEventPublisher<'a>) -> Self {
+        self.agent_events = Some(events);
+        self
     }
 
     pub async fn run(&self, input: ReviewRunInput) -> Result<ReviewRunResult, ReviewError> {
@@ -268,14 +276,25 @@ impl<'a> ReviewOrchestrator<'a> {
                 response_schema: Some(crate::review_output::review_output_schema()),
                 max_output_tokens: 8192,
             };
-            let response = crate::provider_retry::respond_with_retry(
-                self.model,
-                &request,
-                self.cancel,
-                &input.run_id,
-                &mut telemetry.provider_attempts,
-            )
-            .await
+            let response = if let Some(events) = self.agent_events {
+                crate::provider_retry::respond_with_retry_and_events(
+                    self.model,
+                    &request,
+                    self.cancel,
+                    &mut telemetry.provider_attempts,
+                    events,
+                )
+                .await
+            } else {
+                crate::provider_retry::respond_with_retry(
+                    self.model,
+                    &request,
+                    self.cancel,
+                    &input.run_id,
+                    &mut telemetry.provider_attempts,
+                )
+                .await
+            }
             .map_err(|error| match error {
                 crate::provider_retry::ProviderCallError::Cancelled => ReviewError::Cancelled,
                 crate::provider_retry::ProviderCallError::Provider(error) => {

@@ -9,6 +9,7 @@ const ipc = vi.hoisted(() => ({
   credentialStatus: vi.fn(),
   investigateRepositoryHistory: vi.fn(),
   listReviewModels: vi.fn(),
+  onAgentEvent: vi.fn(),
 }));
 vi.mock("../ipc", () => ipc);
 
@@ -56,6 +57,7 @@ describe("HistoryInvestigationWorkspace", () => {
     ipc.credentialStatus.mockResolvedValue(true);
     ipc.listReviewModels.mockResolvedValue([model]);
     ipc.investigateRepositoryHistory.mockResolvedValue(result);
+    ipc.onAgentEvent.mockResolvedValue(vi.fn());
   });
 
   it("requires consent and sends the selected file as bounded evidence scope", async () => {

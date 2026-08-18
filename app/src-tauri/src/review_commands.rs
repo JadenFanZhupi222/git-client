@@ -1,3 +1,4 @@
+use crate::agent_events::AppAgentEventEmitter;
 use crate::credentials::read_credential;
 use async_trait::async_trait;
 use ipc_types::{
@@ -72,6 +73,7 @@ struct ReviewCommandService<'a> {
     trace: &'a dyn review_agent::TraceSink,
     registry: &'a ReviewRunRegistry,
     platform: ReviewPlatform,
+    agent_events: Option<&'a dyn review_agent::AgentEventSink>,
 }
 
 impl<'a> ReviewCommandService<'a> {
@@ -89,6 +91,7 @@ impl<'a> ReviewCommandService<'a> {
             trace,
             registry,
             platform: ReviewPlatform::Github,
+            agent_events: None,
         }
     }
 
@@ -107,7 +110,13 @@ impl<'a> ReviewCommandService<'a> {
             trace,
             registry,
             platform,
+            agent_events: None,
         }
+    }
+
+    fn with_agent_events(mut self, sink: &'a dyn review_agent::AgentEventSink) -> Self {
+        self.agent_events = Some(sink);
+        self
     }
 
     fn progress(&self, run_id: &str, stage: &str) {
@@ -192,16 +201,22 @@ impl<'a> ReviewCommandService<'a> {
                 emitter: self.progress,
                 run_id: &run_id,
             };
-            let result = ReviewOrchestrator::new_with_progress(
+            let orchestrator = ReviewOrchestrator::new_with_progress(
                 model.as_ref(),
                 source.as_ref(),
                 self.trace,
                 &cancel,
                 &tool_progress,
-            )
-            .run(input.into())
-            .await
-            .map_err(review_error)?;
+            );
+            let event_publisher = self
+                .agent_events
+                .map(|sink| review_agent::AgentEventPublisher::new(&run_id, sink));
+            let orchestrator = if let Some(events) = event_publisher.as_ref() {
+                orchestrator.with_agent_events(events)
+            } else {
+                orchestrator
+            };
+            let result = orchestrator.run(input.into()).await.map_err(review_error)?;
             self.progress(&run_id, "generating_drafts");
             Ok(result.into())
         }
@@ -276,6 +291,7 @@ struct IssueCommandService<'a> {
     progress: &'a dyn ProgressEmitter,
     trace: Option<&'a dyn review_agent::TraceSink>,
     registry: &'a ReviewRunRegistry,
+    agent_events: Option<&'a dyn review_agent::AgentEventSink>,
 }
 
 impl<'a> IssueCommandService<'a> {
@@ -291,6 +307,7 @@ impl<'a> IssueCommandService<'a> {
             progress,
             trace: None,
             registry,
+            agent_events: None,
         }
     }
 
@@ -307,7 +324,13 @@ impl<'a> IssueCommandService<'a> {
             progress,
             trace: Some(trace),
             registry,
+            agent_events: None,
         }
+    }
+
+    fn with_agent_events(mut self, sink: &'a dyn review_agent::AgentEventSink) -> Self {
+        self.agent_events = Some(sink);
+        self
     }
 
     fn progress(&self, run_id: &str, stage: &str) {
@@ -386,20 +409,25 @@ impl<'a> IssueCommandService<'a> {
                 .issue_model(&input.model_id, key)
                 .map_err(review_error)?;
             self.progress(&run_id, "analyzing_issue");
-            let result = if let Some(trace) = self.trace {
+            let orchestrator = if let Some(trace) = self.trace {
                 IssueTriageOrchestrator::new_with_trace(
                     model.as_ref(),
                     source.as_ref(),
                     &cancel,
                     trace,
                 )
-                .run(input.into())
-                .await
             } else {
                 IssueTriageOrchestrator::new(model.as_ref(), source.as_ref(), &cancel)
-                    .run(input.into())
-                    .await
             };
+            let event_publisher = self
+                .agent_events
+                .map(|sink| review_agent::AgentEventPublisher::new(&run_id, sink));
+            let orchestrator = if let Some(events) = event_publisher.as_ref() {
+                orchestrator.with_agent_events(events)
+            } else {
+                orchestrator
+            };
+            let result = orchestrator.run(input.into()).await;
             Ok(result.map_err(review_error)?.into())
         }
         .await;
@@ -822,7 +850,8 @@ pub(crate) async fn start_pr_review(
         .map_err(|error| agent_error(error, &diagnostic_id))?
         .join("review-agent-trace.json");
     let trace = SanitizedTraceStore::new(trace_path);
-    let emitter = AppProgressEmitter(app);
+    let emitter = AppProgressEmitter(app.clone());
+    let agent_events = AppAgentEventEmitter(app);
     ReviewCommandService::new(
         &KeyringCredentialReader,
         &ProductionBackendFactory,
@@ -830,6 +859,7 @@ pub(crate) async fn start_pr_review(
         &trace,
         &state,
     )
+    .with_agent_events(&agent_events)
     .start(input)
     .await
 }
@@ -852,7 +882,8 @@ pub(crate) async fn start_gitlab_mr_review(
         .map_err(|error| agent_error(error, &diagnostic_id))?
         .join("gitlab-review-agent-trace.json");
     let trace = SanitizedTraceStore::new(trace_path);
-    let emitter = AppProgressEmitter(app);
+    let emitter = AppProgressEmitter(app.clone());
+    let agent_events = AppAgentEventEmitter(app);
     ReviewCommandService::new_for_platform(
         &KeyringCredentialReader,
         &ProductionBackendFactory,
@@ -861,6 +892,7 @@ pub(crate) async fn start_gitlab_mr_review(
         &state,
         ReviewPlatform::Gitlab,
     )
+    .with_agent_events(&agent_events)
     .start(input)
     .await
 }
@@ -954,7 +986,8 @@ pub(crate) async fn start_issue_triage(
         .map_err(|error| agent_error(error, &diagnostic_id))?
         .join("review-agent-trace.json");
     let trace = SanitizedTraceStore::new(trace_path);
-    let emitter = AppProgressEmitter(app);
+    let emitter = AppProgressEmitter(app.clone());
+    let agent_events = AppAgentEventEmitter(app);
     IssueCommandService::new_with_trace(
         &KeyringCredentialReader,
         &ProductionBackendFactory,
@@ -962,6 +995,7 @@ pub(crate) async fn start_issue_triage(
         &trace,
         &state,
     )
+    .with_agent_events(&agent_events)
     .start(input)
     .await
 }
@@ -1274,6 +1308,14 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct RecordingAgentSink(Mutex<Vec<review_agent::AgentEvent>>);
+    impl review_agent::AgentEventSink for RecordingAgentSink {
+        fn emit(&self, event: review_agent::AgentEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
     fn fake_factory(
         responses: Vec<Result<review_agent::ModelResponse, review_agent::ProviderError>>,
     ) -> FakeFactory {
@@ -1363,6 +1405,7 @@ mod tests {
             )),
         ]);
         let emitter = RecordingEmitter::default();
+        let agent_events = RecordingAgentSink::default();
         let registry = ReviewRunRegistry::default();
         let service = ReviewCommandService::new(
             &FakeCredentials,
@@ -1370,7 +1413,8 @@ mod tests {
             &emitter,
             &NoopTraceSink,
             &registry,
-        );
+        )
+        .with_agent_events(&agent_events);
         let preflight = service.preflight(target_dto()).await.unwrap();
         assert_eq!(preflight.head_sha, "abc");
         assert_eq!(preflight.files.len(), 1);
@@ -1392,6 +1436,24 @@ mod tests {
             ]
         );
         assert_eq!(events[2].tool_name.as_deref(), Some("list_repository_tree"));
+        drop(events);
+        let events = agent_events.0.lock().unwrap();
+        assert_eq!(events.len(), 8);
+        assert!(events.iter().all(|event| event.run_id == "success"));
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            (1..=8).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.attempt_id)
+                .collect::<Vec<_>>(),
+            [1, 1, 1, 1, 2, 2, 2, 2]
+        );
         drop(events);
         assert!(registry.register("success").is_ok());
     }

@@ -9,6 +9,7 @@ import { listen } from "@tauri-apps/api/event";
 // 后端改字段 → 重新生成 → 前端编译期报错。生成命令见 docs/HANDOFF.md。
 export type {
   AgentIpcErrorDto,
+  AgentEventDto,
   AheadBehindDto,
   BlameLineDto,
   BranchDeleteImpactDto,
@@ -86,6 +87,7 @@ export type {
 } from "./bindings";
 
 import type {
+  AgentEventDto,
   CredentialKindDto,
   PublishedReviewDto,
   ReviewModelOptionDto,
@@ -885,6 +887,10 @@ export async function submitGitlabMrReview(input: SubmitReviewDto): Promise<Publ
 
 export function onReviewProgress(cb: (progress: ReviewProgressEventDto) => void): Promise<() => void> {
   return listen<ReviewProgressEventDto>("review-progress", (event) => cb(event.payload));
+}
+
+export function onAgentEvent(cb: (event: AgentEventDto) => void): Promise<() => void> {
+  return listen<AgentEventDto>("agent-event", (event) => cb(event.payload));
 }
 
 export async function listGithubIssues(

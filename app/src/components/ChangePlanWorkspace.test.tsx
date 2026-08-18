@@ -10,6 +10,7 @@ const ipc = vi.hoisted(() => ({
   commitChangeGroup: vi.fn(),
   credentialStatus: vi.fn(),
   listReviewModels: vi.fn(),
+  onAgentEvent: vi.fn(),
 }));
 vi.mock("../ipc", () => ipc);
 
@@ -63,6 +64,7 @@ describe("ChangePlanWorkspace", () => {
       },
       pricing: null,
     }]);
+    ipc.onAgentEvent.mockResolvedValue(vi.fn());
   });
 
   it("runs locally by default and requires explicit confirmation before committing", async () => {

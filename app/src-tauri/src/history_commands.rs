@@ -1,3 +1,4 @@
+use crate::agent_events::AppAgentEventEmitter;
 use crate::credentials::read_credential;
 use crate::review_commands::{
     ReviewRunRegistry, agent_error, map_review_credential_error, review_error,
@@ -10,9 +11,10 @@ use ipc_types::{
     IpcError, ReviewUsageDto,
 };
 use review_agent::{
-    CancelSignal, HistoryBlameLine, HistoryConfidence, HistoryEvidence, HistoryEvidenceCommit,
-    HistoryEvidenceFile, HistoryInvestigationResult, MAX_HISTORY_COMMITS, MAX_HISTORY_PATCH_BYTES,
-    investigate_history, is_sensitive_change_path, validate_repository_path,
+    AgentEventPublisher, CancelSignal, HistoryBlameLine, HistoryConfidence, HistoryEvidence,
+    HistoryEvidenceCommit, HistoryEvidenceFile, HistoryInvestigationResult, MAX_HISTORY_COMMITS,
+    MAX_HISTORY_PATCH_BYTES, investigate_history_with_events, is_sensitive_change_path,
+    validate_repository_path,
 };
 use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -439,6 +441,7 @@ fn result_dto(result: HistoryInvestigationResult) -> HistoryInvestigationResultD
 
 #[tauri::command]
 pub(crate) async fn investigate_repository_history(
+    app: tauri::AppHandle,
     registry: tauri::State<'_, RepoRegistry>,
     runs: tauri::State<'_, ReviewRunRegistry>,
     input: HistoryInvestigationInputDto,
@@ -496,11 +499,19 @@ pub(crate) async fn investigate_repository_history(
         let model = review_agent::create_model_provider(credential, &input.model_id)
             .map_err(review_error)
             .map_err(|error| agent_error(error, &diagnostic_id))?;
-        investigate_history(model.as_ref(), &cancellation, &input.run_id, &evidence)
-            .await
-            .map(result_dto)
-            .map_err(review_error)
-            .map_err(|error| agent_error(error, &diagnostic_id))
+        let sink = AppAgentEventEmitter(app.clone());
+        let events = AgentEventPublisher::new(&input.run_id, &sink);
+        investigate_history_with_events(
+            model.as_ref(),
+            &cancellation,
+            &input.run_id,
+            &evidence,
+            &events,
+        )
+        .await
+        .map(result_dto)
+        .map_err(review_error)
+        .map_err(|error| agent_error(error, &diagnostic_id))
     }
     .await;
     runs.finish(&input.run_id);

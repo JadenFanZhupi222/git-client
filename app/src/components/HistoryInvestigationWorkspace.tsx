@@ -11,7 +11,9 @@ import {
   listReviewModels,
 } from "../ipc";
 import { useT } from "../lib/i18n";
+import { useAgentStream } from "../hooks/useAgentStream";
 import { AgentModelPicker } from "./AgentModelPicker";
+import { AgentStreamPanel } from "./AgentStreamPanel";
 import { AlertIcon, CloseIcon, HistoryIcon, SpinnerIcon } from "./icons";
 import { Button } from "./ui/Button";
 
@@ -43,6 +45,7 @@ export function HistoryInvestigationWorkspace({
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<HistoryInvestigationResultDto | null>(null);
   const [error, setError] = useState<AgentIpcErrorDto | null>(null);
+  const agentStream = useAgentStream();
 
   useEffect(() => {
     mountedRef.current = true;
@@ -84,6 +87,7 @@ export function HistoryInvestigationWorkspace({
     setBusy(true);
     setError(null);
     try {
+      await agentStream.begin(runId);
       const next = await investigateRepositoryHistory({
         run_id: runId,
         repo_path: repo,
@@ -97,6 +101,7 @@ export function HistoryInvestigationWorkspace({
       if (!mountedRef.current || runIdRef.current !== runId) return;
       setError(asAgentError(reason));
     } finally {
+      agentStream.end();
       if (runIdRef.current === runId) runIdRef.current = null;
       if (mountedRef.current) setBusy(false);
     }
@@ -202,6 +207,8 @@ export function HistoryInvestigationWorkspace({
               </div>
             </div>
           </div>
+
+          {busy && <div className="mt-5"><AgentStreamPanel stream={agentStream.stream} /></div>}
 
           {error && (
             <div className="mt-5 flex items-start gap-2 border-y border-danger/30 bg-danger/[0.06] px-3 py-2.5 text-xs text-danger" role="alert">

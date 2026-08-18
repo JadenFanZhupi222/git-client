@@ -63,6 +63,7 @@ export type { IssueTriagePublishResultDto } from "./IssueTriagePublishResultDto"
 export type { IssueTriageProposalDto } from "./IssueTriageProposalDto";
 export type { IssueTriageResultDto } from "./IssueTriageResultDto";
 export type { AgentIpcErrorDto } from "./AgentIpcErrorDto";
+export type { AgentEventDto } from "./AgentEventDto";
 export type { ChangeCommitGroupDto } from "./ChangeCommitGroupDto";
 export type { ChangeGroupCommitResultDto } from "./ChangeGroupCommitResultDto";
 export type { ChangePlanFileDto } from "./ChangePlanFileDto";

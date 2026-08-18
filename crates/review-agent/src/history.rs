@@ -1,6 +1,6 @@
 use crate::{
-    CancelSignal, ModelOutput, ModelProvider, ModelRequest, ProviderError, ResponseFormat,
-    ReviewError, ReviewUsage, StructuredOutputSupport, TranscriptItem,
+    AgentEventPublisher, CancelSignal, ModelOutput, ModelProvider, ModelRequest, ProviderError,
+    ResponseFormat, ReviewError, ReviewUsage, StructuredOutputSupport, TranscriptItem,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -114,6 +114,26 @@ pub async fn investigate_history(
     run_id: &str,
     evidence: &HistoryEvidence,
 ) -> Result<HistoryInvestigationResult, ReviewError> {
+    investigate_history_inner(model, cancel, run_id, evidence, None).await
+}
+
+pub async fn investigate_history_with_events(
+    model: &dyn ModelProvider,
+    cancel: &dyn CancelSignal,
+    run_id: &str,
+    evidence: &HistoryEvidence,
+    events: &AgentEventPublisher<'_>,
+) -> Result<HistoryInvestigationResult, ReviewError> {
+    investigate_history_inner(model, cancel, run_id, evidence, Some(events)).await
+}
+
+async fn investigate_history_inner(
+    model: &dyn ModelProvider,
+    cancel: &dyn CancelSignal,
+    run_id: &str,
+    evidence: &HistoryEvidence,
+    events: Option<&AgentEventPublisher<'_>>,
+) -> Result<HistoryInvestigationResult, ReviewError> {
     validate_evidence(evidence)?;
     let descriptor = model.descriptor();
     if descriptor.provider_id != "unknown"
@@ -142,15 +162,23 @@ pub async fn investigate_history(
         max_output_tokens: 4096,
     };
     let mut attempts = 0;
-    let response =
+    let response = if let Some(events) = events {
+        crate::provider_retry::respond_with_retry_and_events(
+            model,
+            &request,
+            cancel,
+            &mut attempts,
+            events,
+        )
+        .await
+    } else {
         crate::provider_retry::respond_with_retry(model, &request, cancel, run_id, &mut attempts)
             .await
-            .map_err(|error| match error {
-                crate::provider_retry::ProviderCallError::Cancelled => ReviewError::Cancelled,
-                crate::provider_retry::ProviderCallError::Provider(error) => {
-                    map_provider_error(error)
-                }
-            })?;
+    }
+    .map_err(|error| match error {
+        crate::provider_retry::ProviderCallError::Cancelled => ReviewError::Cancelled,
+        crate::provider_retry::ProviderCallError::Provider(error) => map_provider_error(error),
+    })?;
     let ModelOutput::FinalText { text } = response.output else {
         return Err(ReviewError::InvalidModelOutput(
             "history investigation model attempted a tool call".into(),

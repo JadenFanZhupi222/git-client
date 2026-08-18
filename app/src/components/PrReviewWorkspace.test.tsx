@@ -15,6 +15,7 @@ const ipc = vi.hoisted(() => ({
   submitPrReview: vi.fn(),
   submitGitlabMrReview: vi.fn(),
   onReviewProgress: vi.fn(),
+  onAgentEvent: vi.fn(),
 }));
 const opener = vi.hoisted(() => ({ openUrl: vi.fn() }));
 
@@ -99,6 +100,7 @@ describe("PrReviewWorkspace", () => {
     ipc.listReviewModels.mockReset();
     ipc.credentialStatus.mockReset();
     ipc.onReviewProgress.mockReset();
+    ipc.onAgentEvent.mockReset();
     ipc.startPrReview.mockReset();
     ipc.startGitlabMrReview.mockReset();
     ipc.cancelPrReview.mockReset();
@@ -112,6 +114,7 @@ describe("PrReviewWorkspace", () => {
     ]);
     ipc.credentialStatus.mockResolvedValue(false);
     ipc.onReviewProgress.mockResolvedValue(vi.fn());
+    ipc.onAgentEvent.mockResolvedValue(vi.fn());
     ipc.startPrReview.mockResolvedValue(result);
     ipc.startGitlabMrReview.mockResolvedValue(result);
     ipc.cancelPrReview.mockResolvedValue(undefined);
