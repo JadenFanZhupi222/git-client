@@ -16,6 +16,7 @@ pub const DEEPSEEK_V4_FLASH_MODEL: &str = "deepseek-v4-flash";
 pub const DEEPSEEK_V4_PRO_MODEL: &str = "deepseek-v4-pro";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+const DEEPSEEK_NO_TOOL_FINAL_INSTRUCTION: &str = "No tools are available for this response. Do not emit DSML, tool_calls, invoke, function-call syntax, or any provider protocol markup. Return the final answer directly in the requested response format.";
 const PRICING_SOURCE_URL: &str = "https://api-docs.deepseek.com/quick_start/pricing";
 const PRICING_SOURCE_VERSION: &str = "deepseek-v4-models-and-pricing";
 const PRICING_CHECKED_AT: &str = "2026-08-07";
@@ -165,6 +166,12 @@ impl DeepSeekProvider {
                     }));
                 }
             }
+        }
+        if request.tools.is_empty() {
+            messages.push(json!({
+                "role": "system",
+                "content": DEEPSEEK_NO_TOOL_FINAL_INSTRUCTION
+            }));
         }
 
         let mut body = json!({
@@ -504,14 +511,26 @@ impl StreamedContentFilter {
                     }
                 }
                 StreamedContentMode::LineStart => {
-                    let candidate = self.pending.trim_start_matches([' ', '\t', '\r']);
-                    if candidate.is_empty()
-                        || DSML_ROOTS.iter().any(|root| root.starts_with(candidate))
-                    {
+                    let candidate = trim_protocol_leading(&self.pending);
+                    if candidate.is_empty() {
                         break;
                     }
-                    if DSML_ROOTS.iter().any(|root| candidate.starts_with(root)) {
-                        self.mode = StreamedContentMode::Protocol;
+                    if candidate.starts_with('<') {
+                        if let Some(end) = candidate.find('>') {
+                            self.mode = if looks_like_dsml_protocol(&candidate[..=end]) {
+                                StreamedContentMode::Protocol
+                            } else {
+                                StreamedContentMode::Text
+                            };
+                        } else if candidate.contains('\n') {
+                            self.mode = if looks_like_dsml_protocol(candidate) {
+                                StreamedContentMode::Protocol
+                            } else {
+                                StreamedContentMode::Text
+                            };
+                        } else {
+                            break;
+                        }
                     } else {
                         self.mode = StreamedContentMode::Text;
                     }
@@ -530,8 +549,6 @@ impl StreamedContentFilter {
         Some(std::mem::take(&mut self.pending))
     }
 }
-
-const DSML_ROOTS: [&str; 2] = ["<｜DSML", "<|DSML"];
 
 fn newline_end(text: &str) -> Option<usize> {
     text.find('\n').map(|index| index + 1)
@@ -667,23 +684,21 @@ const MAX_DSML_PARAMETERS: usize = 128;
 /// return the complete markup as text. Only a fully consumed, strictly formed
 /// block is recovered here; partial or orphaned protocol is never executable.
 fn parse_dsml_tool_calls(text: &str) -> Result<Option<Vec<ToolCall>>, ProviderError> {
-    let Some(candidate) = dsml_protocol_suffix(text) else {
-        return Ok(None);
+    let normalized = normalize_dsml_tags(text);
+    let Some(candidate) = dsml_protocol_suffix(&normalized) else {
+        return if looks_like_dsml_protocol(text) {
+            Err(ProviderError::InvalidResponse(
+                "incomplete provider tool protocol".into(),
+            ))
+        } else {
+            Ok(None)
+        };
     };
     let candidate = candidate.trim_end();
-    for marker in ["｜DSML｜", "|DSML|"] {
-        let open = format!("<{marker}tool_calls>");
-        let invoke = format!("<{marker}invoke ");
-        if candidate.starts_with(&open) {
-            return parse_dsml_block(candidate, marker).map(Some);
-        }
-        if candidate.starts_with(&invoke) {
-            return Err(ProviderError::InvalidResponse(
-                "incomplete provider tool protocol".into(),
-            ));
-        }
+    if candidate.starts_with("<|DSML|tool_calls>") {
+        return parse_dsml_block(candidate).map(Some);
     }
-    if candidate.starts_with("<｜DSML") || candidate.starts_with("<|DSML") {
+    if candidate.starts_with("<|DSML") {
         return Err(ProviderError::InvalidResponse(
             "incomplete provider tool protocol".into(),
         ));
@@ -694,8 +709,8 @@ fn parse_dsml_tool_calls(text: &str) -> Result<Option<Vec<ToolCall>>, ProviderEr
 fn dsml_protocol_suffix(text: &str) -> Option<&str> {
     let mut line = text;
     loop {
-        let candidate = line.trim_start_matches([' ', '\t', '\r']);
-        if DSML_ROOTS.iter().any(|root| candidate.starts_with(root)) {
+        let candidate = trim_protocol_leading(line);
+        if candidate.starts_with("<|DSML") {
             return Some(candidate);
         }
         let (_, remaining) = line.split_once('\n')?;
@@ -704,25 +719,112 @@ fn dsml_protocol_suffix(text: &str) -> Option<&str> {
 }
 
 fn dsml_has_text_prefix(text: &str) -> bool {
-    dsml_protocol_suffix(text).is_some_and(|suffix| {
-        let prefix_bytes = text.len().saturating_sub(suffix.len());
-        !text[..prefix_bytes].trim().is_empty()
+    let normalized = normalize_dsml_tags(text);
+    dsml_protocol_suffix(&normalized).is_some_and(|suffix| {
+        let prefix_bytes = normalized.len().saturating_sub(suffix.len());
+        !normalized[..prefix_bytes].trim().is_empty()
     })
 }
 
-fn parse_dsml_block(text: &str, marker: &str) -> Result<Vec<ToolCall>, ProviderError> {
-    let open = format!("<{marker}tool_calls>");
-    let close = format!("</{marker}tool_calls>");
-    let invoke_open = format!("<{marker}invoke name=\"");
-    let invoke_close = format!("</{marker}invoke>");
-    let parameter_open = format!("<{marker}parameter name=\"");
-    let parameter_close = format!("</{marker}parameter>");
-    let mut remaining = text.strip_prefix(&open).ok_or_else(invalid_dsml)?;
+fn trim_protocol_leading(text: &str) -> &str {
+    text.trim_start_matches(|character: char| {
+        character.is_whitespace() || is_ignored_protocol_format(character)
+    })
+}
+
+fn looks_like_dsml_protocol(text: &str) -> bool {
+    let compact = text
+        .chars()
+        .filter_map(|character| {
+            if character.is_whitespace() || is_ignored_protocol_format(character) {
+                None
+            } else if is_vertical_line(character) {
+                Some('|')
+            } else {
+                Some(character.to_ascii_lowercase())
+            }
+        })
+        .collect::<String>();
+    compact.contains('<')
+        && compact.contains("dsml")
+        && (compact.contains("tool_calls")
+            || compact.contains("invoke")
+            || compact.contains("parameter"))
+}
+
+fn normalize_dsml_tags(text: &str) -> String {
+    let mut normalized = String::with_capacity(text.len());
+    let mut remaining = text;
+    while let Some(open) = remaining.find('<') {
+        normalized.push_str(&remaining[..open]);
+        let tag = &remaining[open..];
+        let Some(close) = tag.find('>') else {
+            normalized.push_str(tag);
+            return normalized;
+        };
+        let (tag, tail) = tag.split_at(close + 1);
+        if looks_like_dsml_protocol(tag) {
+            normalized.push_str(&normalize_dsml_tag(tag));
+        } else {
+            normalized.push_str(tag);
+        }
+        remaining = tail;
+    }
+    normalized.push_str(remaining);
+    normalized
+}
+
+fn normalize_dsml_tag(tag: &str) -> String {
+    let mut normalized = String::with_capacity(tag.len());
+    let mut quoted = false;
+    for character in tag.chars() {
+        if is_ignored_protocol_format(character) {
+            continue;
+        }
+        let character = if is_vertical_line(character) {
+            '|'
+        } else {
+            character
+        };
+        if character == '"' {
+            quoted = !quoted;
+            normalized.push(character);
+        } else if !quoted && character.is_whitespace() {
+            continue;
+        } else {
+            normalized.push(character);
+        }
+    }
+    normalized
+}
+
+fn is_vertical_line(character: char) -> bool {
+    matches!(
+        character,
+        '|' | '｜' | '∣' | '丨' | '︱' | '￨' | '¦' | 'ǀ' | '│' | '❘' | '⏐' | '‖' | '∥'
+    )
+}
+
+fn is_ignored_protocol_format(character: char) -> bool {
+    matches!(
+        character,
+        '\u{feff}' | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}'
+    )
+}
+
+fn parse_dsml_block(text: &str) -> Result<Vec<ToolCall>, ProviderError> {
+    const OPEN: &str = "<|DSML|tool_calls>";
+    const CLOSE: &str = "</|DSML|tool_calls>";
+    const INVOKE_OPEN: &str = "<|DSML|invokename=\"";
+    const INVOKE_CLOSE: &str = "</|DSML|invoke>";
+    const PARAMETER_OPEN: &str = "<|DSML|parametername=\"";
+    const PARAMETER_CLOSE: &str = "</|DSML|parameter>";
+    let mut remaining = text.strip_prefix(OPEN).ok_or_else(invalid_dsml)?;
     let mut calls = Vec::new();
 
     loop {
         remaining = remaining.trim_start();
-        if let Some(tail) = remaining.strip_prefix(&close) {
+        if let Some(tail) = remaining.strip_prefix(CLOSE) {
             if !tail.trim().is_empty() || calls.is_empty() {
                 return Err(invalid_dsml());
             }
@@ -732,7 +834,7 @@ fn parse_dsml_block(text: &str, marker: &str) -> Result<Vec<ToolCall>, ProviderE
             return Err(invalid_dsml());
         }
         remaining = remaining
-            .strip_prefix(&invoke_open)
+            .strip_prefix(INVOKE_OPEN)
             .ok_or_else(invalid_dsml)?;
         let (name, tail) = remaining.split_once("\">").ok_or_else(invalid_dsml)?;
         if name.is_empty()
@@ -747,7 +849,7 @@ fn parse_dsml_block(text: &str, marker: &str) -> Result<Vec<ToolCall>, ProviderE
 
         loop {
             remaining = remaining.trim_start();
-            if let Some(tail) = remaining.strip_prefix(&invoke_close) {
+            if let Some(tail) = remaining.strip_prefix(INVOKE_CLOSE) {
                 remaining = tail;
                 break;
             }
@@ -755,10 +857,10 @@ fn parse_dsml_block(text: &str, marker: &str) -> Result<Vec<ToolCall>, ProviderE
                 return Err(invalid_dsml());
             }
             remaining = remaining
-                .strip_prefix(&parameter_open)
+                .strip_prefix(PARAMETER_OPEN)
                 .ok_or_else(invalid_dsml)?;
             let (parameter_name, tail) = remaining
-                .split_once("\" string=\"")
+                .split_once("\"string=\"")
                 .ok_or_else(invalid_dsml)?;
             if parameter_name.is_empty() || arguments.contains_key(parameter_name) {
                 return Err(invalid_dsml());
@@ -770,7 +872,7 @@ fn parse_dsml_block(text: &str, marker: &str) -> Result<Vec<ToolCall>, ProviderE
             } else {
                 return Err(invalid_dsml());
             };
-            let (encoded, tail) = tail.split_once(&parameter_close).ok_or_else(invalid_dsml)?;
+            let (encoded, tail) = tail.split_once(PARAMETER_CLOSE).ok_or_else(invalid_dsml)?;
             let value = if is_string {
                 Value::String(encoded.to_owned())
             } else {
@@ -930,6 +1032,12 @@ mod tests {
 
         let body = provider.request_body(&request(history, false)).unwrap();
         assert!(body.get("tools").is_none());
+        let messages = body.get("messages").and_then(Value::as_array).unwrap();
+        assert_eq!(messages.last().unwrap()["role"], "system");
+        assert_eq!(
+            messages.last().unwrap()["content"],
+            DEEPSEEK_NO_TOOL_FINAL_INSTRUCTION
+        );
     }
 
     #[test]
@@ -1090,11 +1198,37 @@ mod tests {
                 Err(ProviderError::InvalidResponse(_))
             ));
         }
+        assert!(matches!(
+            parse_dsml_tool_calls("The repository mentions <｜DSML｜tool_calls> in its docs."),
+            Err(ProviderError::InvalidResponse(_))
+        ));
         assert_eq!(
-            parse_dsml_tool_calls("The repository mentions <｜DSML｜tool_calls> in its docs.")
-                .unwrap(),
+            parse_dsml_tool_calls("The repository discusses the DSML format.").unwrap(),
             None
         );
+
+        let variant = concat!(
+            "\u{feff}< ∣ DSML ∣ tool_calls >\n",
+            "< ∣ DSML ∣ invoke   name = \"filesystem_list_wire\" >\n",
+            "< ∣ DSML ∣ parameter name = \"path\" string = \"true\" >src</ ∣ DSML ∣ parameter >\n",
+            "</ ∣ DSML ∣ invoke >\n",
+            "</ ∣ DSML ∣ tool_calls >"
+        );
+        let calls = parse_dsml_tool_calls(variant).unwrap().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "filesystem_list_wire");
+        assert_eq!(calls[0].arguments["path"], "src");
+    }
+
+    #[test]
+    fn streamed_filter_hides_spaced_unicode_dsml_variants() {
+        let mut filter = StreamedContentFilter::default();
+        assert_eq!(
+            filter.push("Visible explanation.\n\u{200b}< ∣ DS"),
+            Some("Visible explanation.\n".into())
+        );
+        assert_eq!(filter.push("ML ∣ tool_calls >secret protocol"), None);
+        assert_eq!(filter.finish(), None);
     }
 
     #[tokio::test]
@@ -1352,7 +1486,7 @@ mod tests {
                 _ => None,
             })
             .collect::<String>();
-        assert_eq!(streamed_text, "I will inspect the host composition.\n\n");
+        assert_eq!(streamed_text, "I will inspect the host composition.\n");
         assert!(!streamed_text.contains("DSML"));
     }
 }
