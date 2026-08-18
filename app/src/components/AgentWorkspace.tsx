@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { AgentGoalSnapshotDto, AgentIpcErrorDto, AgentSessionSnapshotDto, CredentialKindDto, ReviewModelOptionDto } from "../bindings";
 import {
   cancelAgentGoal,
@@ -266,7 +268,7 @@ export function AgentWorkspace({ repo, onConfigureCredential = () => undefined }
                   {steeringEchoes.map((content, index) => <Message key={`steering-${index}`} role="user" content={content} pending />)}
                 </div>
               )}
-              {agentStream.stream && <div className="mt-6"><AgentStreamPanel stream={agentStream.stream} /></div>}
+              {agentStream.stream && (!goal || STREAMING.has(goal.status)) && <div className="mt-6"><AgentStreamPanel stream={agentStream.stream} /></div>}
               {goal && !TERMINAL.has(goal.status) && (
                 <div className="mt-4 flex flex-wrap items-center gap-2 border-y border-line py-3 text-[11px] text-fg-muted">
                   {goal.status === "running" || goal.status === "queued" || goal.status === "pausing" ? <SpinnerIcon width={12} height={12} /> : null}
@@ -321,7 +323,35 @@ export function AgentWorkspace({ repo, onConfigureCredential = () => undefined }
 function Message({ role, content, pending = false }: { role: string; content: string; pending?: boolean }) {
   const t = useT();
   const isUser = role === "user";
-  return <article className={isUser ? "ml-auto max-w-[78%]" : "mr-auto max-w-[88%]"}><div className={`mb-1 text-[10px] font-semibold uppercase tracking-wide ${isUser ? "text-right text-fg-subtle" : "text-accent"}`}>{isUser ? t("agentWorkspace.you") : t("agentWorkspace.agent")}</div><div className={`whitespace-pre-wrap break-words rounded-xl px-3.5 py-2.5 text-[12.5px] leading-6 ${isUser ? "rounded-br-sm bg-accent text-white" : "rounded-bl-sm border border-line bg-elevated text-fg"} ${pending ? "opacity-70" : ""}`}>{content}</div></article>;
+  return <article className={isUser ? "ml-auto max-w-[78%]" : "mr-auto max-w-[88%]"}><div className={`mb-1 text-[10px] font-semibold uppercase tracking-wide ${isUser ? "text-right text-fg-subtle" : "text-accent"}`}>{isUser ? t("agentWorkspace.you") : t("agentWorkspace.agent")}</div><div className={`break-words rounded-xl px-3.5 py-2.5 text-[12.5px] leading-6 ${isUser ? "whitespace-pre-wrap rounded-br-sm bg-accent text-white" : "rounded-bl-sm border border-line bg-elevated text-fg"} ${pending ? "opacity-70" : ""}`}>{isUser ? content : <AssistantMarkdown content={content} />}</div></article>;
+}
+
+function AssistantMarkdown({ content }: { content: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      skipHtml
+      components={{
+        h1: ({ children }) => <h1 className="mb-3 mt-1 text-lg font-semibold leading-tight text-fg">{children}</h1>,
+        h2: ({ children }) => <h2 className="mb-2 mt-5 text-base font-semibold leading-tight text-fg">{children}</h2>,
+        h3: ({ children }) => <h3 className="mb-2 mt-4 text-sm font-semibold text-fg">{children}</h3>,
+        p: ({ children }) => <p className="my-2 leading-6 first:mt-0 last:mb-0">{children}</p>,
+        ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-5">{children}</ul>,
+        ol: ({ children }) => <ol className="my-2 list-decimal space-y-1 pl-5">{children}</ol>,
+        li: ({ children }) => <li className="pl-0.5">{children}</li>,
+        blockquote: ({ children }) => <blockquote className="my-3 border-l-2 border-accent/50 pl-3 text-fg-muted">{children}</blockquote>,
+        a: ({ children, href }) => <a href={href} target="_blank" rel="noreferrer noopener" className="text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent">{children}</a>,
+        hr: () => <hr className="my-4 border-line" />,
+        pre: ({ children }) => <pre className="my-3 max-w-full overflow-x-auto rounded-lg border border-line bg-canvas px-3 py-2 font-mono text-[11px] leading-5 [&>code]:bg-transparent [&>code]:p-0">{children}</pre>,
+        code: ({ children, className }) => <code className={`${className ?? ""} rounded bg-canvas px-1 py-0.5 font-mono text-[11px]`}>{children}</code>,
+        table: ({ children }) => <div className="my-3 overflow-x-auto"><table className="w-full border-collapse text-left text-[11px]">{children}</table></div>,
+        th: ({ children }) => <th className="border border-line bg-canvas px-2 py-1.5 font-semibold">{children}</th>,
+        td: ({ children }) => <td className="border border-line px-2 py-1.5 align-top">{children}</td>,
+      }}
+    >
+      {content}
+    </ReactMarkdown>
+  );
 }
 
 function goalStatusLabel(goal: AgentGoalSnapshotDto): string {

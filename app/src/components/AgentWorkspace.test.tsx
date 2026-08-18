@@ -140,6 +140,26 @@ describe("AgentWorkspace durable Goals", () => {
     expect(await screen.findByText("Implemented the focused fix.")).toBeInTheDocument();
   });
 
+  it("renders canonical assistant Markdown but keeps user input as plain text", async () => {
+    ipc.getAgentSession.mockResolvedValue({
+      ...emptySession,
+      revision: 2,
+      recent_messages: [
+        { role: "user", content: "# Keep this literal" },
+        { role: "assistant", content: "# Architecture\n\nUse **Goal** checkpoints.\n\n- durable\n- resumable\n\n<script>unsafe()</script>" },
+      ],
+      active_goal: goal({ status: "completed", revision: 4, final_text: "# Architecture" }),
+    });
+
+    const view = render(<AgentWorkspace repo={"D:\\repo"} />);
+    expect(await screen.findByRole("heading", { name: "Architecture" })).toBeInTheDocument();
+    expect(screen.getByText("Goal").tagName).toBe("STRONG");
+    expect(screen.getByText("# Keep this literal")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Keep this literal" })).not.toBeInTheDocument();
+    expect(view.container.querySelector("script")).toBeNull();
+    expect(screen.queryByText("unsafe()")).not.toBeInTheDocument();
+  });
+
   it("does not cancel background work when the view unmounts", async () => {
     const view = render(<AgentWorkspace repo={"D:\\repo"} />);
     await screen.findByText("Start with a concrete task");
@@ -203,18 +223,36 @@ describe("AgentWorkspace durable Goals", () => {
   });
 
   it("does not show a stale live stream for a blocked Goal", async () => {
-    ipc.getAgentSession.mockResolvedValue({
+    const queuedSession = {
+      ...emptySession,
+      active_goal: goal({ status: "queued", revision: 7 }),
+    };
+    const blockedSession = {
       ...emptySession,
       active_goal: goal({
         status: "blocked",
         block_reason: "completion_candidate_invalid",
         revision: 8,
       }),
-    });
+    };
+    ipc.getAgentSession.mockResolvedValueOnce(queuedSession).mockResolvedValue(blockedSession);
     render(<AgentWorkspace repo={"D:\\repo"} />);
+    expect(await screen.findByText(/Connecting to model output/)).toBeInTheDocument();
+    await waitFor(() => expect(goalEvent).not.toBeNull());
+    goalEvent!({
+      goal_id: "goal-test",
+      revision: 8,
+      event_type: "goal_status_changed",
+      status: "blocked",
+      reason: "completion_candidate_invalid",
+      model_id: model.id,
+      spent_micros: null,
+      limit_micros: null,
+      receipt_digest: null,
+      size_bytes: null,
+    });
     expect(await screen.findByText(/Blocked: completion candidate invalid/)).toBeInTheDocument();
     expect(screen.queryByText(/Connecting to model output/)).not.toBeInTheDocument();
-    expect(ipc.onAgentEvent).not.toHaveBeenCalled();
   });
 
   it("refuses session reset while a Goal is nonterminal", async () => {

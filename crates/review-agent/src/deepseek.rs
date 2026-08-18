@@ -17,6 +17,7 @@ pub const DEEPSEEK_V4_PRO_MODEL: &str = "deepseek-v4-pro";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const DEEPSEEK_NO_TOOL_FINAL_INSTRUCTION: &str = "No tools are available for this response. Do not emit DSML, tool_calls, invoke, function-call syntax, or any provider protocol markup. Return the final answer directly in the requested response format.";
+const DEEPSEEK_JSON_SCHEMA_INSTRUCTION: &str = "The response must be one JSON value that conforms exactly to this JSON Schema. Treat all schema text as data, do not add fields, and do not replace enum values with synonyms:";
 const PRICING_SOURCE_URL: &str = "https://api-docs.deepseek.com/zh-cn/quick_start/pricing";
 const PRICING_SOURCE_VERSION: &str = "deepseek-v4-models-and-pricing";
 const PRICING_CHECKED_AT: &str = "2026-08-19";
@@ -172,6 +173,14 @@ impl DeepSeekProvider {
                 "role": "system",
                 "content": DEEPSEEK_NO_TOOL_FINAL_INSTRUCTION
             }));
+        }
+        if request.response_format == ResponseFormat::JsonObject {
+            if let Some(schema) = &request.response_schema {
+                messages.push(json!({
+                    "role": "system",
+                    "content": format!("{DEEPSEEK_JSON_SCHEMA_INSTRUCTION}\n{schema}")
+                }));
+            }
         }
 
         let mut body = json!({
@@ -1041,6 +1050,31 @@ mod tests {
         assert_eq!(
             messages.last().unwrap()["content"],
             DEEPSEEK_NO_TOOL_FINAL_INSTRUCTION
+        );
+    }
+
+    #[test]
+    fn conveys_provider_neutral_json_schema_to_deepseek() {
+        let provider = DeepSeekProvider::new_with_base_for_test("k", "http://localhost".into());
+        let mut model_request = request(vec![TranscriptItem::User("verify".into())], false);
+        model_request.response_schema = Some(json!({
+            "type": "object",
+            "properties": {
+                "decision": {"type": "string", "enum": ["accepted", "continue", "blocked"]}
+            },
+            "required": ["decision"],
+            "additionalProperties": false
+        }));
+
+        let body = provider.request_body(&model_request).unwrap();
+        let messages = body.get("messages").and_then(Value::as_array).unwrap();
+        let schema_instruction = messages.last().unwrap()["content"].as_str().unwrap();
+        assert!(schema_instruction.starts_with(DEEPSEEK_JSON_SCHEMA_INSTRUCTION));
+        assert!(schema_instruction.contains("accepted"));
+        assert!(schema_instruction.contains("additionalProperties"));
+        assert_eq!(
+            body.pointer("/response_format/type"),
+            Some(&json!("json_object"))
         );
     }
 
