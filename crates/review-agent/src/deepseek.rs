@@ -311,6 +311,7 @@ impl ModelProvider for DeepSeekProvider {
         let mut started = false;
         let mut completed = false;
         let mut content = String::new();
+        let mut content_mode = StreamedContentMode::Undecided;
         let mut finish_reason = None;
         let mut usage = Value::Null;
         let mut last_usage = None;
@@ -348,9 +349,22 @@ impl ModelProvider for DeepSeekProvider {
             if let Some(part) = delta.get("content").and_then(Value::as_str) {
                 if !part.is_empty() {
                     content.push_str(part);
-                    events.emit(AgentEventKind::OutputTextDelta {
-                        delta: part.to_owned(),
-                    });
+                    match content_mode {
+                        StreamedContentMode::Undecided => {
+                            content_mode = classify_streamed_content(&content);
+                            if content_mode == StreamedContentMode::Text {
+                                events.emit(AgentEventKind::OutputTextDelta {
+                                    delta: content.clone(),
+                                });
+                            }
+                        }
+                        StreamedContentMode::Text => {
+                            events.emit(AgentEventKind::OutputTextDelta {
+                                delta: part.to_owned(),
+                            });
+                        }
+                        StreamedContentMode::Protocol => {}
+                    }
                 }
             }
             if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
@@ -458,6 +472,34 @@ struct StreamingToolCall {
     started: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamedContentMode {
+    Undecided,
+    Text,
+    Protocol,
+}
+
+fn classify_streamed_content(content: &str) -> StreamedContentMode {
+    let candidate = content.trim_start();
+    if candidate.is_empty() {
+        return StreamedContentMode::Undecided;
+    }
+    for prefix in [
+        "<｜DSML｜tool_calls>",
+        "<｜DSML｜invoke ",
+        "<|DSML|tool_calls>",
+        "<|DSML|invoke ",
+    ] {
+        if candidate.starts_with(prefix) {
+            return StreamedContentMode::Protocol;
+        }
+        if prefix.starts_with(candidate) {
+            return StreamedContentMode::Undecided;
+        }
+    }
+    StreamedContentMode::Text
+}
+
 fn map_status(status: StatusCode) -> Result<(), ProviderError> {
     let result = match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(ProviderError::AuthFailed),
@@ -561,12 +603,150 @@ fn parse_response(body: Value) -> Result<ModelResponse, ProviderError> {
         .and_then(Value::as_str)
         .filter(|content| !content.trim().is_empty())
     {
-        Ok(ModelResponse::final_text(text, usage))
+        match parse_dsml_tool_calls(text)? {
+            Some(calls) => {
+                tracing::warn!(
+                    provider = "deepseek",
+                    tool_calls = calls.len(),
+                    "recovered complete DSML tool calls from text output"
+                );
+                Ok(ModelResponse::tool_calls(calls, usage))
+            }
+            None => Ok(ModelResponse::final_text(text, usage)),
+        }
     } else {
         Err(ProviderError::InvalidResponse(
             "no tool calls or final output".into(),
         ))
     }
+}
+
+const MAX_DSML_TOOL_CALLS: usize = 64;
+const MAX_DSML_PARAMETERS: usize = 128;
+
+/// DeepSeek V4 natively encodes tool calls as DSML. The hosted compatibility
+/// layer normally converts them into `message.tool_calls`, but can occasionally
+/// return the complete markup as text. Only a fully consumed, strictly formed
+/// block is recovered here; partial or orphaned protocol is never executable.
+fn parse_dsml_tool_calls(text: &str) -> Result<Option<Vec<ToolCall>>, ProviderError> {
+    let candidate = text.trim();
+    for marker in ["｜DSML｜", "|DSML|"] {
+        let open = format!("<{marker}tool_calls>");
+        let invoke = format!("<{marker}invoke ");
+        if candidate.starts_with(&open) {
+            return parse_dsml_block(candidate, marker).map(Some);
+        }
+        if candidate.starts_with(&invoke) {
+            return Err(ProviderError::InvalidResponse(
+                "incomplete provider tool protocol".into(),
+            ));
+        }
+    }
+    if candidate.starts_with("<｜DSML") || candidate.starts_with("<|DSML") {
+        return Err(ProviderError::InvalidResponse(
+            "incomplete provider tool protocol".into(),
+        ));
+    }
+    Ok(None)
+}
+
+fn parse_dsml_block(text: &str, marker: &str) -> Result<Vec<ToolCall>, ProviderError> {
+    let open = format!("<{marker}tool_calls>");
+    let close = format!("</{marker}tool_calls>");
+    let invoke_open = format!("<{marker}invoke name=\"");
+    let invoke_close = format!("</{marker}invoke>");
+    let parameter_open = format!("<{marker}parameter name=\"");
+    let parameter_close = format!("</{marker}parameter>");
+    let mut remaining = text.strip_prefix(&open).ok_or_else(invalid_dsml)?;
+    let mut calls = Vec::new();
+
+    loop {
+        remaining = remaining.trim_start();
+        if let Some(tail) = remaining.strip_prefix(&close) {
+            if !tail.trim().is_empty() || calls.is_empty() {
+                return Err(invalid_dsml());
+            }
+            return Ok(calls);
+        }
+        if calls.len() >= MAX_DSML_TOOL_CALLS {
+            return Err(invalid_dsml());
+        }
+        remaining = remaining
+            .strip_prefix(&invoke_open)
+            .ok_or_else(invalid_dsml)?;
+        let (name, tail) = remaining.split_once("\">").ok_or_else(invalid_dsml)?;
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return Err(invalid_dsml());
+        }
+        remaining = tail;
+        let mut arguments = serde_json::Map::new();
+
+        loop {
+            remaining = remaining.trim_start();
+            if let Some(tail) = remaining.strip_prefix(&invoke_close) {
+                remaining = tail;
+                break;
+            }
+            if arguments.len() >= MAX_DSML_PARAMETERS {
+                return Err(invalid_dsml());
+            }
+            remaining = remaining
+                .strip_prefix(&parameter_open)
+                .ok_or_else(invalid_dsml)?;
+            let (parameter_name, tail) = remaining
+                .split_once("\" string=\"")
+                .ok_or_else(invalid_dsml)?;
+            if parameter_name.is_empty() || arguments.contains_key(parameter_name) {
+                return Err(invalid_dsml());
+            }
+            let (is_string, tail) = if let Some(tail) = tail.strip_prefix("true\">") {
+                (true, tail)
+            } else if let Some(tail) = tail.strip_prefix("false\">") {
+                (false, tail)
+            } else {
+                return Err(invalid_dsml());
+            };
+            let (encoded, tail) = tail.split_once(&parameter_close).ok_or_else(invalid_dsml)?;
+            let value = if is_string {
+                Value::String(encoded.to_owned())
+            } else {
+                serde_json::from_str(encoded.trim()).map_err(|_| invalid_dsml())?
+            };
+            arguments.insert(parameter_name.to_owned(), value);
+            remaining = tail;
+        }
+
+        let call_id = format!(
+            "call_dsml_{}_{:016x}",
+            calls.len(),
+            dsml_call_hash(name, &arguments)
+        );
+        calls.push(ToolCall::with_call_id(
+            name,
+            call_id,
+            Value::Object(arguments),
+        ));
+    }
+}
+
+fn invalid_dsml() -> ProviderError {
+    ProviderError::InvalidResponse("invalid provider tool protocol".into())
+}
+
+fn dsml_call_hash(name: &str, arguments: &serde_json::Map<String, Value>) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in name
+        .bytes()
+        .chain(serde_json::to_vec(arguments).unwrap_or_default())
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn deepseek_usage(body: &Value) -> ModelUsage {
@@ -817,6 +997,73 @@ mod tests {
         assert!(matches!(error, ProviderError::InvalidResponse(_)));
     }
 
+    #[test]
+    fn recovers_only_complete_dsml_tool_calls() {
+        let text = concat!(
+            "<｜DSML｜tool_calls>\n",
+            "<｜DSML｜invoke name=\"filesystem_list_wire\">\n",
+            "<｜DSML｜parameter name=\"path\" string=\"true\">crates/agent-session/src</｜DSML｜parameter>\n",
+            "<｜DSML｜parameter name=\"depth\" string=\"false\">2</｜DSML｜parameter>\n",
+            "</｜DSML｜invoke>\n",
+            "</｜DSML｜tool_calls>"
+        );
+        let calls = parse_dsml_tool_calls(text).unwrap().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "filesystem_list_wire");
+        assert_eq!(calls[0].arguments["path"], "crates/agent-session/src");
+        assert_eq!(calls[0].arguments["depth"], 2);
+        assert!(calls[0].call_id.starts_with("call_dsml_0_"));
+
+        for malformed in [
+            "<｜DSML｜invoke name=\"filesystem_list_wire\"></｜DSML｜invoke>",
+            "<｜DSML｜tool_calls><｜DSML｜invoke name=\"filesystem_list_wire\"><｜DSML｜parameter name=\"path\" string=\"true\">src</｜DSML｜invoke></｜DSML｜tool_calls>",
+            "<｜DSML｜tool_calls><｜DSML｜invoke name=\"filesystem_list_wire\"></｜DSML｜invoke></｜DSML｜tool_calls> trailing",
+        ] {
+            assert!(matches!(
+                parse_dsml_tool_calls(malformed),
+                Err(ProviderError::InvalidResponse(_))
+            ));
+        }
+        assert_eq!(
+            parse_dsml_tool_calls("The repository mentions <｜DSML｜tool_calls> in its docs.")
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn restores_complete_dsml_leaks_to_the_provider_neutral_contract() {
+        let server = MockServer::start().await;
+        let mut model_request = request(Vec::new(), true);
+        model_request.tools[0].name = "filesystem.list".into();
+        let wire_name = ProviderToolNames::new(&model_request)
+            .unwrap()
+            .wire("filesystem.list")
+            .unwrap()
+            .to_owned();
+        let leaked = format!(
+            "<｜DSML｜tool_calls><｜DSML｜invoke name=\"{wire_name}\"><｜DSML｜parameter name=\"path\" string=\"true\">crates</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>"
+        );
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"finish_reason": "stop", "message": {"content": leaked}}]
+            })))
+            .mount(&server)
+            .await;
+
+        let response = DeepSeekProvider::new_with_base_for_test("test-key", server.uri())
+            .respond(&model_request)
+            .await
+            .unwrap();
+        assert!(matches!(
+            response.output,
+            ModelOutput::ToolCalls { calls }
+                if calls[0].name == "filesystem.list"
+                    && calls[0].arguments["path"] == "crates"
+        ));
+    }
+
     #[tokio::test]
     async fn maps_http_statuses_invalid_json_and_timeout() {
         for (status, expected) in [
@@ -923,5 +1170,61 @@ mod tests {
             events.last().map(|event| &event.kind),
             Some(AgentEventKind::ModelResponseCompleted)
         ));
+    }
+
+    #[tokio::test]
+    async fn buffers_streamed_dsml_until_the_complete_call_is_validated() {
+        let server = MockServer::start().await;
+        let mut model_request = request(Vec::new(), true);
+        model_request.tools[0].name = "filesystem.list".into();
+        let wire_name = ProviderToolNames::new(&model_request)
+            .unwrap()
+            .wire("filesystem.list")
+            .unwrap()
+            .to_owned();
+        let first = "<｜DSM";
+        let second = format!(
+            "L｜tool_calls><｜DSML｜invoke name=\"{wire_name}\"><｜DSML｜parameter name=\"path\" string=\"true\">crates</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>"
+        );
+        let stream = [
+            json!({"id":"chat_dsml","choices":[{"delta":{"content":first},"finish_reason":null}],"usage":null}),
+            json!({"id":"chat_dsml","choices":[{"delta":{"content":second},"finish_reason":null}],"usage":null}),
+            json!({"id":"chat_dsml","choices":[{"delta":{},"finish_reason":"stop"}],"usage":null}),
+            json!({"id":"chat_dsml","choices":[],"usage":{"prompt_tokens":4,"completion_tokens":2}}),
+        ]
+        .into_iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect::<String>()
+            + "data: [DONE]\n\n";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(stream),
+            )
+            .mount(&server)
+            .await;
+
+        let sink = RecordingSink::default();
+        let clock = AgentEventClock::default();
+        let emitter = AgentEventEmitter::new("run-dsml", 1, &clock, &sink);
+        let response = DeepSeekProvider::new_with_base_for_test("test-key", server.uri())
+            .respond_stream(&model_request, &emitter)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            response.output,
+            ModelOutput::ToolCalls { calls }
+                if calls[0].name == "filesystem.list"
+                    && calls[0].arguments["path"] == "crates"
+        ));
+        assert!(!sink
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event.kind, AgentEventKind::OutputTextDelta { .. })));
     }
 }
