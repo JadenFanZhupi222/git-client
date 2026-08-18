@@ -1,12 +1,13 @@
 use crate::{
-    ModelCatalogEntry, ModelPricing, ModelProvider, ModelRequest, ModelResponse, ModelUsage,
-    ProviderCapabilities, ProviderDescriptor, ProviderError, ResponseFormat, ReviewError,
-    StructuredOutputSupport, ToolCall, ToolCallingSupport, TranscriptItem, UsageSupport,
+    AgentEventEmitter, AgentEventKind, ModelCatalogEntry, ModelPricing, ModelProvider,
+    ModelRequest, ModelResponse, ModelUsage, ProviderCapabilities, ProviderDescriptor,
+    ProviderError, ResponseFormat, ReviewError, StructuredOutputSupport, ToolCall,
+    ToolCallingSupport, TranscriptItem, UsageSupport,
 };
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
@@ -208,6 +209,14 @@ impl OpenAiProvider {
         }
         Ok(body)
     }
+
+    fn streaming_request_body(&self, request: &ModelRequest) -> Result<Value, ProviderError> {
+        let mut body = self.request_body(request)?;
+        body.as_object_mut()
+            .expect("Responses request body is an object")
+            .insert("stream".into(), Value::Bool(true));
+        Ok(body)
+    }
 }
 
 fn split_call_id(call: &ToolCall) -> Result<(String, Value), ProviderError> {
@@ -227,7 +236,7 @@ fn build_client(
 ) -> Result<Client, ReviewError> {
     Client::builder()
         .connect_timeout(connect_timeout)
-        .timeout(request_timeout)
+        .read_timeout(request_timeout)
         .build()
         .map_err(|_| ReviewError::NetworkError("could not initialize HTTP client".into()))
 }
@@ -273,6 +282,154 @@ impl ModelProvider for OpenAiProvider {
         let body = serde_json::from_slice::<Value>(&bytes)
             .map_err(|_| ProviderError::Network("service returned an invalid response".into()))?;
         parse_response(body)
+    }
+
+    async fn respond_stream(
+        &self,
+        request: &ModelRequest,
+        events: &AgentEventEmitter<'_>,
+    ) -> Result<ModelResponse, ProviderError> {
+        let response = self
+            .client
+            .post(format!("{}/responses", self.base_url.trim_end_matches('/')))
+            .bearer_auth(&self.api_key)
+            .json(&self.streaming_request_body(request)?)
+            .send()
+            .await
+            .map_err(|_| ProviderError::Network("request failed".into()))?;
+        map_status(response.status())?;
+
+        let mut terminal_response = None;
+        let mut terminal_error = None;
+        let mut item_call_ids = HashMap::<String, String>::new();
+        crate::sse::consume_sse(response.bytes_stream(), |event| {
+            let body = serde_json::from_str::<Value>(&event.data)
+                .map_err(|_| crate::sse::SseError::Protocol("invalid JSON event".into()))?;
+            match body.get("type").and_then(Value::as_str) {
+                Some("response.created") => {
+                    events.emit(AgentEventKind::ModelResponseStarted {
+                        response_id: body
+                            .pointer("/response/id")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                    });
+                }
+                Some("response.output_text.delta") => {
+                    if let Some(delta) = body.get("delta").and_then(Value::as_str) {
+                        if !delta.is_empty() {
+                            events.emit(AgentEventKind::OutputTextDelta {
+                                delta: delta.to_owned(),
+                            });
+                        }
+                    }
+                }
+                Some("response.output_item.added")
+                    if body.pointer("/item/type").and_then(Value::as_str)
+                        == Some("function_call") =>
+                {
+                    let item_id = body
+                        .pointer("/item/id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let call_id = body
+                        .pointer("/item/call_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let name = body
+                        .pointer("/item/name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    if !item_id.is_empty() && !call_id.is_empty() {
+                        if !item_call_ids.contains_key(item_id) && item_call_ids.len() >= 1024 {
+                            return Err(crate::sse::SseError::Protocol(
+                                "tool call count exceeded limit".into(),
+                            ));
+                        }
+                        item_call_ids.insert(item_id.to_owned(), call_id.to_owned());
+                    }
+                    if !call_id.is_empty() && !name.is_empty() {
+                        events.emit(AgentEventKind::ToolCallStarted {
+                            call_id: call_id.to_owned(),
+                            name: name.to_owned(),
+                        });
+                    }
+                }
+                Some("response.function_call_arguments.delta") => {
+                    let call_id = body
+                        .get("call_id")
+                        .and_then(Value::as_str)
+                        .or_else(|| {
+                            body.get("item_id")
+                                .and_then(Value::as_str)
+                                .and_then(|item_id| item_call_ids.get(item_id).map(String::as_str))
+                        })
+                        .unwrap_or_default();
+                    let delta = body
+                        .get("delta")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    if !call_id.is_empty() && !delta.is_empty() {
+                        events.emit(AgentEventKind::ToolArgumentsDelta {
+                            call_id: call_id.to_owned(),
+                            delta: delta.to_owned(),
+                        });
+                    }
+                }
+                Some("response.completed") => {
+                    terminal_response = body.get("response").cloned();
+                    return Ok(false);
+                }
+                Some("response.incomplete") => {
+                    terminal_error = Some(ProviderError::OutputTruncated);
+                    return Ok(false);
+                }
+                Some("response.failed" | "error") => {
+                    terminal_error = Some(ProviderError::InvalidResponse(
+                        "model response failed".into(),
+                    ));
+                    return Ok(false);
+                }
+                _ => {}
+            }
+            Ok(true)
+        })
+        .await
+        .map_err(map_sse_error)?;
+
+        if let Some(error) = terminal_error {
+            return Err(error);
+        }
+        let response = parse_response(terminal_response.ok_or_else(|| {
+            ProviderError::InvalidResponse("stream ended before completion".into())
+        })?)?;
+        events.emit(AgentEventKind::UsageUpdated {
+            usage: response.usage.clone(),
+        });
+        events.emit(AgentEventKind::ModelResponseCompleted);
+        Ok(response)
+    }
+}
+
+fn map_status(status: StatusCode) -> Result<(), ProviderError> {
+    match status {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(ProviderError::AuthFailed),
+        StatusCode::TOO_MANY_REQUESTS => Err(ProviderError::RateLimited),
+        status if status.is_server_error() => {
+            Err(ProviderError::Network("service request failed".into()))
+        }
+        status if !status.is_success() => Err(ProviderError::InvalidResponse(
+            "service rejected the request".into(),
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn map_sse_error(error: crate::sse::SseError) -> ProviderError {
+    match error {
+        crate::sse::SseError::Read(_) => {
+            ProviderError::Network("response body could not be read".into())
+        }
+        _ => ProviderError::InvalidResponse("invalid streaming response".into()),
     }
 }
 
@@ -374,7 +531,9 @@ fn parse_response(body: Value) -> Result<ModelResponse, ProviderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ModelOutput, ToolDefinition};
+    use crate::{AgentEvent, AgentEventSink, ModelOutput, ToolDefinition};
+    use std::sync::atomic::AtomicU64;
+    use std::sync::Mutex;
     use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -398,6 +557,15 @@ mod tests {
                 json!({"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}),
             ),
             max_output_tokens: 4096,
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingSink(Mutex<Vec<AgentEvent>>);
+
+    impl AgentEventSink for RecordingSink {
+        fn emit(&self, event: AgentEvent) {
+            self.0.lock().unwrap().push(event);
         }
     }
 
@@ -541,5 +709,102 @@ mod tests {
             .unwrap_err(),
             ProviderError::InvalidResponse(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn streams_text_and_reconstructs_the_canonical_response() {
+        let server = MockServer::start().await;
+        let stream = concat!(
+            "event: response.created\n",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"{\\\"summary\\\":\"}\n\n",
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"done\\\"}\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"{\\\"summary\\\":\\\"done\\\"}\"}]}],\"usage\":{\"input_tokens\":5,\"output_tokens\":2}}}\n\n"
+        );
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .and(body_partial_json(json!({"stream": true})))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(stream),
+            )
+            .mount(&server)
+            .await;
+
+        let sink = RecordingSink::default();
+        let sequence = AtomicU64::new(1);
+        let emitter = AgentEventEmitter::new("run-1", 1, &sequence, &sink);
+        let response = OpenAiProvider::new_with_base_for_test("test-key", server.uri())
+            .respond_stream(&request(false), &emitter)
+            .await
+            .unwrap();
+
+        assert_eq!(response.usage.input_tokens, 5);
+        assert!(matches!(
+            response.output,
+            ModelOutput::FinalText { ref text } if text == "{\"summary\":\"done\"}"
+        ));
+        let events = sink.0.lock().unwrap();
+        assert!(matches!(
+            events.first().map(|event| &event.kind),
+            Some(AgentEventKind::ModelResponseStarted { .. })
+        ));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event.kind, AgentEventKind::OutputTextDelta { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event.kind, AgentEventKind::UsageUpdated { .. }))
+                .count(),
+            1
+        );
+        assert!(matches!(
+            events.last().map(|event| &event.kind),
+            Some(AgentEventKind::ModelResponseCompleted)
+        ));
+    }
+
+    #[tokio::test]
+    async fn streams_tool_arguments_without_executing_partial_json() {
+        let server = MockServer::start().await;
+        let stream = concat!(
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_2\"}}\n\n",
+            "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"id\":\"item_1\",\"call_id\":\"call_1\",\"name\":\"read_file\"}}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"item_1\",\"delta\":\"{\\\"path\\\":\"}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"item_1\",\"delta\":\"\\\"src/lib.rs\\\"}\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"src/lib.rs\\\"}\"}],\"usage\":{\"input_tokens\":4,\"output_tokens\":3}}}\n\n"
+        );
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(stream))
+            .mount(&server)
+            .await;
+        let sink = RecordingSink::default();
+        let sequence = AtomicU64::new(1);
+        let emitter = AgentEventEmitter::new("run-tools", 1, &sequence, &sink);
+        let response = OpenAiProvider::new_with_base_for_test("test-key", server.uri())
+            .respond_stream(&request(true), &emitter)
+            .await
+            .unwrap();
+        assert!(matches!(
+            response.output,
+            ModelOutput::ToolCalls { calls } if calls[0].arguments["path"] == "src/lib.rs"
+        ));
+        let events = sink.0.lock().unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event.kind, AgentEventKind::ToolArgumentsDelta { .. }))
+                .count(),
+            2
+        );
     }
 }

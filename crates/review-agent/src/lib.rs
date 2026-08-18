@@ -11,6 +11,7 @@ mod orchestrator;
 mod provider_retry;
 mod providers;
 mod review_output;
+mod sse;
 mod trace;
 
 pub use agent_runtime::*;

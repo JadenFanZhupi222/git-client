@@ -1,7 +1,8 @@
 use crate::{
-    ModelCatalogEntry, ModelPricing, ModelProvider, ModelRequest, ModelResponse, ModelUsage,
-    ProviderCapabilities, ProviderDescriptor, ProviderError, ResponseFormat, ReviewError,
-    StructuredOutputSupport, ToolCall, ToolCallingSupport, TranscriptItem, UsageSupport,
+    AgentEventEmitter, AgentEventKind, ModelCatalogEntry, ModelPricing, ModelProvider,
+    ModelRequest, ModelResponse, ModelUsage, ProviderCapabilities, ProviderDescriptor,
+    ProviderError, ResponseFormat, ReviewError, StructuredOutputSupport, ToolCall,
+    ToolCallingSupport, TranscriptItem, UsageSupport,
 };
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode};
@@ -201,6 +202,16 @@ impl DeepSeekProvider {
         }
         Ok(body)
     }
+
+    fn streaming_request_body(&self, request: &ModelRequest) -> Result<Value, ProviderError> {
+        let mut body = self.request_body(request)?;
+        let object = body
+            .as_object_mut()
+            .expect("chat completion request body is an object");
+        object.insert("stream".into(), Value::Bool(true));
+        object.insert("stream_options".into(), json!({"include_usage": true}));
+        Ok(body)
+    }
 }
 
 fn build_client(
@@ -209,7 +220,7 @@ fn build_client(
 ) -> Result<Client, ReviewError> {
     Client::builder()
         .connect_timeout(connect_timeout)
-        .timeout(request_timeout)
+        .read_timeout(request_timeout)
         .build()
         .map_err(|_| ReviewError::NetworkError("could not initialize HTTP client".into()))
 }
@@ -254,20 +265,191 @@ impl ModelProvider for DeepSeekProvider {
             .map_err(|_| ProviderError::Network("service returned an invalid response".into()))?;
         parse_response(body)
     }
+
+    async fn respond_stream(
+        &self,
+        request: &ModelRequest,
+        events: &AgentEventEmitter<'_>,
+    ) -> Result<ModelResponse, ProviderError> {
+        let response = self
+            .client
+            .post(format!(
+                "{}/chat/completions",
+                self.base_url.trim_end_matches('/')
+            ))
+            .bearer_auth(&self.api_key)
+            .json(&self.streaming_request_body(request)?)
+            .send()
+            .await
+            .map_err(|_| ProviderError::Network("request failed".into()))?;
+        map_status(response.status())?;
+
+        let mut started = false;
+        let mut completed = false;
+        let mut content = String::new();
+        let mut finish_reason = None;
+        let mut usage = Value::Null;
+        let mut last_usage = None;
+        let mut tool_calls = Vec::<StreamingToolCall>::new();
+        crate::sse::consume_sse(response.bytes_stream(), |event| {
+            if event.data == "[DONE]" {
+                completed = true;
+                return Ok(false);
+            }
+            let body = serde_json::from_str::<Value>(&event.data)
+                .map_err(|_| crate::sse::SseError::Protocol("invalid JSON event".into()))?;
+            if !started {
+                started = true;
+                events.emit(AgentEventKind::ModelResponseStarted {
+                    response_id: body.get("id").and_then(Value::as_str).map(str::to_owned),
+                });
+            }
+            if body.get("usage").is_some_and(|value| !value.is_null()) {
+                usage = body.get("usage").cloned().unwrap_or(Value::Null);
+                let update = deepseek_usage(&body);
+                events.emit(AgentEventKind::UsageUpdated {
+                    usage: update.clone(),
+                });
+                last_usage = Some(update);
+            }
+            let Some(choice) = body.pointer("/choices/0") else {
+                return Ok(true);
+            };
+            if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
+                finish_reason = Some(reason.to_owned());
+            }
+            let Some(delta) = choice.get("delta") else {
+                return Ok(true);
+            };
+            if let Some(part) = delta.get("content").and_then(Value::as_str) {
+                if !part.is_empty() {
+                    content.push_str(part);
+                    events.emit(AgentEventKind::OutputTextDelta {
+                        delta: part.to_owned(),
+                    });
+                }
+            }
+            if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
+                for call in calls {
+                    let index = call
+                        .get("index")
+                        .and_then(Value::as_u64)
+                        .and_then(|index| usize::try_from(index).ok())
+                        .ok_or_else(|| {
+                            crate::sse::SseError::Protocol("missing tool call index".into())
+                        })?;
+                    if index >= 1024 {
+                        return Err(crate::sse::SseError::Protocol(
+                            "tool call index exceeded limit".into(),
+                        ));
+                    }
+                    if index > tool_calls.len() {
+                        return Err(crate::sse::SseError::Protocol(
+                            "tool calls arrived out of order".into(),
+                        ));
+                    }
+                    if index == tool_calls.len() {
+                        tool_calls.push(StreamingToolCall::default());
+                    }
+                    let target = &mut tool_calls[index];
+                    if let Some(id) = call.get("id").and_then(Value::as_str) {
+                        target.id.push_str(id);
+                    }
+                    if let Some(name) = call.pointer("/function/name").and_then(Value::as_str) {
+                        target.name.push_str(name);
+                    }
+                    if !target.started && !target.id.is_empty() && !target.name.is_empty() {
+                        target.started = true;
+                        events.emit(AgentEventKind::ToolCallStarted {
+                            call_id: target.id.clone(),
+                            name: target.name.clone(),
+                        });
+                    }
+                    if let Some(arguments) =
+                        call.pointer("/function/arguments").and_then(Value::as_str)
+                    {
+                        target.arguments.push_str(arguments);
+                        if !target.id.is_empty() && !arguments.is_empty() {
+                            events.emit(AgentEventKind::ToolArgumentsDelta {
+                                call_id: target.id.clone(),
+                                delta: arguments.to_owned(),
+                            });
+                        }
+                    }
+                }
+            }
+            Ok(true)
+        })
+        .await
+        .map_err(map_sse_error)?;
+
+        if !completed {
+            return Err(ProviderError::InvalidResponse(
+                "stream ended before completion".into(),
+            ));
+        }
+        let streamed_calls = tool_calls
+            .into_iter()
+            .filter(|call| {
+                !call.id.is_empty() || !call.name.is_empty() || !call.arguments.is_empty()
+            })
+            .map(|call| {
+                json!({
+                    "id": call.id,
+                    "type": "function",
+                    "function": {"name": call.name, "arguments": call.arguments}
+                })
+            })
+            .collect::<Vec<_>>();
+        let message = if streamed_calls.is_empty() {
+            json!({"content": content})
+        } else {
+            json!({"content": null, "tool_calls": streamed_calls})
+        };
+        let response = parse_response(json!({
+            "choices": [{"finish_reason": finish_reason, "message": message}],
+            "usage": usage
+        }))?;
+        if last_usage.as_ref() != Some(&response.usage) {
+            events.emit(AgentEventKind::UsageUpdated {
+                usage: response.usage.clone(),
+            });
+        }
+        events.emit(AgentEventKind::ModelResponseCompleted);
+        Ok(response)
+    }
+}
+
+#[derive(Default)]
+struct StreamingToolCall {
+    id: String,
+    name: String,
+    arguments: String,
+    started: bool,
+}
+
+fn map_status(status: StatusCode) -> Result<(), ProviderError> {
+    match status {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(ProviderError::AuthFailed),
+        StatusCode::TOO_MANY_REQUESTS => Err(ProviderError::RateLimited),
+        status if !status.is_success() => {
+            Err(ProviderError::Network("service request failed".into()))
+        }
+        _ => Ok(()),
+    }
+}
+
+fn map_sse_error(error: crate::sse::SseError) -> ProviderError {
+    match error {
+        crate::sse::SseError::Read(_) => {
+            ProviderError::Network("response body could not be read".into())
+        }
+        _ => ProviderError::InvalidResponse("invalid streaming response".into()),
+    }
 }
 
 fn parse_response(body: Value) -> Result<ModelResponse, ProviderError> {
-    let usage = ModelUsage {
-        input_tokens: body
-            .pointer("/usage/prompt_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        output_tokens: body
-            .pointer("/usage/completion_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        tool_calls: 0,
-    };
+    let usage = deepseek_usage(&body);
     let choice = body
         .pointer("/choices/0")
         .and_then(Value::as_object)
@@ -336,10 +518,26 @@ fn parse_response(body: Value) -> Result<ModelResponse, ProviderError> {
     }
 }
 
+fn deepseek_usage(body: &Value) -> ModelUsage {
+    ModelUsage {
+        input_tokens: body
+            .pointer("/usage/prompt_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        output_tokens: body
+            .pointer("/usage/completion_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        tool_calls: 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ModelOutput, ToolDefinition};
+    use crate::{AgentEvent, AgentEventSink, ModelOutput, ToolDefinition};
+    use std::sync::atomic::AtomicU64;
+    use std::sync::Mutex;
     use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -358,6 +556,15 @@ mod tests {
             response_format: ResponseFormat::JsonObject,
             response_schema: None,
             max_output_tokens: 8192,
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingSink(Mutex<Vec<AgentEvent>>);
+
+    impl AgentEventSink for RecordingSink {
+        fn emit(&self, event: AgentEvent) {
+            self.0.lock().unwrap().push(event);
         }
     }
 
@@ -534,6 +741,65 @@ mod tests {
                 .await
                 .unwrap_err(),
             ProviderError::Network(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn streams_indexed_tool_deltas_and_final_usage() {
+        let server = MockServer::start().await;
+        let stream = concat!(
+            "data: {\"id\":\"chat_1\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]},\"finish_reason\":null}],\"usage\":null}\n\n",
+            "data: {\"id\":\"chat_1\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"src/lib.rs\\\"}\"}}]},\"finish_reason\":null}],\"usage\":null}\n\n",
+            "data: {\"id\":\"chat_1\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"usage\":null}\n\n",
+            "data: {\"id\":\"chat_1\",\"choices\":[],\"usage\":{\"prompt_tokens\":6,\"completion_tokens\":3}}\n\n",
+            "data: [DONE]\n\n"
+        );
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_partial_json(json!({
+                "stream": true,
+                "stream_options": {"include_usage": true}
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(stream),
+            )
+            .mount(&server)
+            .await;
+
+        let sink = RecordingSink::default();
+        let sequence = AtomicU64::new(1);
+        let emitter = AgentEventEmitter::new("run-deepseek", 1, &sequence, &sink);
+        let response = DeepSeekProvider::new_with_base_for_test("test-key", server.uri())
+            .respond_stream(&request(Vec::new(), true), &emitter)
+            .await
+            .unwrap();
+
+        assert_eq!(response.usage.input_tokens, 6);
+        assert_eq!(response.usage.output_tokens, 3);
+        assert!(matches!(
+            response.output,
+            ModelOutput::ToolCalls { calls } if calls[0].arguments["path"] == "src/lib.rs"
+        ));
+        let events = sink.0.lock().unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event.kind, AgentEventKind::ToolArgumentsDelta { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event.kind, AgentEventKind::UsageUpdated { .. }))
+                .count(),
+            1
+        );
+        assert!(matches!(
+            events.last().map(|event| &event.kind),
+            Some(AgentEventKind::ModelResponseCompleted)
         ));
     }
 }

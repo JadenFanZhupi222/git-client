@@ -1625,17 +1625,21 @@ mod tests {
     #[tokio::test]
     async fn deepseek_issue_model_sends_no_tools_and_decodes_usage() {
         let server = MockServer::start().await;
+        let response = json!({
+            "id":"chat_issue",
+            "choices":[{"index":0,"finish_reason":"stop","delta":{"content":serde_json::to_string(&proposal()).unwrap()}}],
+            "usage":{"prompt_tokens":12,"completion_tokens":8}
+        });
+        let stream = format!("data: {response}\n\ndata: [DONE]\n\n");
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
             .and(header("authorization", "Bearer key"))
             .and(body_partial_json(json!({
                 "model":"deepseek-v4-flash",
-                "response_format":{"type":"json_object"}
+                "response_format":{"type":"json_object"},
+                "stream":true
             })))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "choices":[{"finish_reason":"stop","message":{"content":serde_json::to_string(&proposal()).unwrap()}}],
-                "usage":{"prompt_tokens":12,"completion_tokens":8}
-            })))
+            .respond_with(ResponseTemplate::new(200).set_body_string(stream))
             .mount(&server)
             .await;
         let model = crate::DeepSeekProvider::new_with_base_for_test("key", server.uri());

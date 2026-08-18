@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use thiserror::Error;
 
@@ -171,6 +172,112 @@ pub struct ModelResponse {
     pub usage: ModelUsage,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentErrorCode {
+    CredentialMissing,
+    AuthenticationFailed,
+    RateLimited,
+    Network,
+    OutputTruncated,
+    InvalidResponse,
+}
+
+impl From<&ProviderError> for AgentErrorCode {
+    fn from(error: &ProviderError) -> Self {
+        match error {
+            ProviderError::CredentialMissing => Self::CredentialMissing,
+            ProviderError::AuthFailed => Self::AuthenticationFailed,
+            ProviderError::RateLimited => Self::RateLimited,
+            ProviderError::Network(_) => Self::Network,
+            ProviderError::OutputTruncated => Self::OutputTruncated,
+            ProviderError::InvalidResponse(_) => Self::InvalidResponse,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentEventKind {
+    ModelAttemptStarted {
+        provider_id: String,
+        model_id: String,
+    },
+    ModelResponseStarted {
+        response_id: Option<String>,
+    },
+    OutputTextDelta {
+        delta: String,
+    },
+    ToolCallStarted {
+        call_id: String,
+        name: String,
+    },
+    ToolArgumentsDelta {
+        call_id: String,
+        delta: String,
+    },
+    UsageUpdated {
+        usage: ModelUsage,
+    },
+    ModelResponseCompleted,
+    ModelAttemptFailed {
+        error: AgentErrorCode,
+        will_retry: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentEvent {
+    pub run_id: String,
+    pub sequence: u64,
+    pub attempt_id: u32,
+    pub kind: AgentEventKind,
+}
+
+pub trait AgentEventSink: Send + Sync {
+    fn emit(&self, event: AgentEvent);
+}
+
+#[derive(Debug, Default)]
+pub struct NoopAgentEventSink;
+
+impl AgentEventSink for NoopAgentEventSink {
+    fn emit(&self, _: AgentEvent) {}
+}
+
+pub struct AgentEventEmitter<'a> {
+    run_id: &'a str,
+    attempt_id: u32,
+    sequence: &'a AtomicU64,
+    sink: &'a dyn AgentEventSink,
+}
+
+impl<'a> AgentEventEmitter<'a> {
+    pub fn new(
+        run_id: &'a str,
+        attempt_id: u32,
+        sequence: &'a AtomicU64,
+        sink: &'a dyn AgentEventSink,
+    ) -> Self {
+        Self {
+            run_id,
+            attempt_id,
+            sequence,
+            sink,
+        }
+    }
+
+    pub fn emit(&self, kind: AgentEventKind) {
+        self.sink.emit(AgentEvent {
+            run_id: self.run_id.to_owned(),
+            sequence: self.sequence.fetch_add(1, Ordering::Relaxed),
+            attempt_id: self.attempt_id,
+            kind,
+        });
+    }
+}
+
 impl ModelResponse {
     pub fn tool_calls(calls: Vec<ToolCall>, usage: ModelUsage) -> Self {
         Self {
@@ -261,6 +368,20 @@ pub trait ModelProvider: Send + Sync {
     fn descriptor(&self) -> ProviderDescriptor;
 
     async fn respond(&self, request: &ModelRequest) -> Result<ModelResponse, ProviderError>;
+
+    async fn respond_stream(
+        &self,
+        request: &ModelRequest,
+        events: &AgentEventEmitter<'_>,
+    ) -> Result<ModelResponse, ProviderError> {
+        events.emit(AgentEventKind::ModelResponseStarted { response_id: None });
+        let response = self.respond(request).await?;
+        events.emit(AgentEventKind::UsageUpdated {
+            usage: response.usage.clone(),
+        });
+        events.emit(AgentEventKind::ModelResponseCompleted);
+        Ok(response)
+    }
 }
 
 #[cfg(test)]
@@ -322,5 +443,21 @@ mod tests {
         assert!(diagnostic.starts_with("diag-"));
         assert!(!diagnostic.contains("run-secret"));
         assert_eq!(diagnostic, diagnostic_id("run-secret"));
+    }
+
+    #[test]
+    fn agent_event_contract_round_trips_without_provider_details() {
+        let event = AgentEvent {
+            run_id: "run-1".into(),
+            sequence: 7,
+            attempt_id: 2,
+            kind: AgentEventKind::ModelAttemptFailed {
+                error: AgentErrorCode::Network,
+                will_retry: true,
+            },
+        };
+        let encoded = serde_json::to_string(&event).unwrap();
+        assert_eq!(serde_json::from_str::<AgentEvent>(&encoded).unwrap(), event);
+        assert!(!encoded.contains("socket"));
     }
 }

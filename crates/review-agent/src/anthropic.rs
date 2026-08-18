@@ -1,12 +1,13 @@
 use crate::{
-    ModelCatalogEntry, ModelPricing, ModelProvider, ModelRequest, ModelResponse, ModelUsage,
-    ProviderCapabilities, ProviderDescriptor, ProviderError, ResponseFormat, ReviewError,
-    StructuredOutputSupport, ToolCall, ToolCallingSupport, TranscriptItem, UsageSupport,
+    AgentEventEmitter, AgentEventKind, ModelCatalogEntry, ModelPricing, ModelProvider,
+    ModelRequest, ModelResponse, ModelUsage, ProviderCapabilities, ProviderDescriptor,
+    ProviderError, ResponseFormat, ReviewError, StructuredOutputSupport, ToolCall,
+    ToolCallingSupport, TranscriptItem, UsageSupport,
 };
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 const ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com/v1";
@@ -192,6 +193,14 @@ impl AnthropicProvider {
         }
         Ok(body)
     }
+
+    fn streaming_request_body(&self, request: &ModelRequest) -> Result<Value, ProviderError> {
+        let mut body = self.request_body(request)?;
+        body.as_object_mut()
+            .expect("Messages request body is an object")
+            .insert("stream".into(), Value::Bool(true));
+        Ok(body)
+    }
 }
 
 fn push_blocks(messages: &mut Vec<Value>, role: &str, mut blocks: Vec<Value>) {
@@ -230,7 +239,7 @@ fn build_client(
 ) -> Result<Client, ReviewError> {
     Client::builder()
         .connect_timeout(connect_timeout)
-        .timeout(request_timeout)
+        .read_timeout(request_timeout)
         .build()
         .map_err(|_| ReviewError::NetworkError("could not initialize HTTP client".into()))
 }
@@ -278,6 +287,263 @@ impl ModelProvider for AnthropicProvider {
             .map_err(|_| ProviderError::Network("service returned an invalid response".into()))?;
         parse_response(body)
     }
+
+    async fn respond_stream(
+        &self,
+        request: &ModelRequest,
+        events: &AgentEventEmitter<'_>,
+    ) -> Result<ModelResponse, ProviderError> {
+        let response = self
+            .client
+            .post(format!("{}/messages", self.base_url.trim_end_matches('/')))
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .json(&self.streaming_request_body(request)?)
+            .send()
+            .await
+            .map_err(|_| ProviderError::Network("request failed".into()))?;
+        map_status(response.status())?;
+
+        let mut message = None;
+        let mut content = Vec::<Value>::new();
+        let mut tool_arguments = HashMap::<usize, String>::new();
+        let mut terminal_error = None;
+        let mut completed = false;
+        let mut last_usage = None;
+        crate::sse::consume_sse(response.bytes_stream(), |event| {
+            let body = serde_json::from_str::<Value>(&event.data)
+                .map_err(|_| crate::sse::SseError::Protocol("invalid JSON event".into()))?;
+            match body.get("type").and_then(Value::as_str) {
+                Some("message_start") => {
+                    message = body.get("message").cloned();
+                    let response_id = body
+                        .pointer("/message/id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                    events.emit(AgentEventKind::ModelResponseStarted { response_id });
+                    if let Some(started_message) = message.as_ref() {
+                        let usage = anthropic_usage(started_message);
+                        events.emit(AgentEventKind::UsageUpdated {
+                            usage: usage.clone(),
+                        });
+                        last_usage = Some(usage);
+                    }
+                }
+                Some("content_block_start") => {
+                    let index = event_index(&body)?;
+                    if index != content.len() {
+                        return Err(crate::sse::SseError::Protocol(
+                            "content blocks arrived out of order".into(),
+                        ));
+                    }
+                    let block = body.get("content_block").cloned().ok_or_else(|| {
+                        crate::sse::SseError::Protocol("missing content block".into())
+                    })?;
+                    if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+                        let call_id = block.get("id").and_then(Value::as_str).unwrap_or_default();
+                        let name = block
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        if !call_id.is_empty() && !name.is_empty() {
+                            events.emit(AgentEventKind::ToolCallStarted {
+                                call_id: call_id.to_owned(),
+                                name: name.to_owned(),
+                            });
+                        }
+                    }
+                    content.push(block);
+                }
+                Some("content_block_delta") => {
+                    let index = event_index(&body)?;
+                    let delta = body.get("delta").ok_or_else(|| {
+                        crate::sse::SseError::Protocol("missing content delta".into())
+                    })?;
+                    match delta.get("type").and_then(Value::as_str) {
+                        Some("text_delta") => {
+                            let part = delta
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
+                            if !part.is_empty() {
+                                let Some(block) =
+                                    content.get_mut(index).and_then(Value::as_object_mut)
+                                else {
+                                    return Err(crate::sse::SseError::Protocol(
+                                        "text delta has no content block".into(),
+                                    ));
+                                };
+                                let text = block
+                                    .get("text")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_owned()
+                                    + part;
+                                block.insert("text".into(), Value::String(text));
+                                events.emit(AgentEventKind::OutputTextDelta {
+                                    delta: part.to_owned(),
+                                });
+                            }
+                        }
+                        Some("input_json_delta") => {
+                            let part = delta
+                                .get("partial_json")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
+                            tool_arguments.entry(index).or_default().push_str(part);
+                            let call_id = content
+                                .get(index)
+                                .and_then(|block| block.get("id"))
+                                .and_then(Value::as_str)
+                                .unwrap_or_default();
+                            if !call_id.is_empty() && !part.is_empty() {
+                                events.emit(AgentEventKind::ToolArgumentsDelta {
+                                    call_id: call_id.to_owned(),
+                                    delta: part.to_owned(),
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Some("content_block_stop") => {
+                    let index = event_index(&body)?;
+                    if let Some(arguments) = tool_arguments.remove(&index) {
+                        if !arguments.trim().is_empty() {
+                            let input =
+                                serde_json::from_str::<Value>(&arguments).map_err(|_| {
+                                    crate::sse::SseError::Protocol("invalid tool arguments".into())
+                                })?;
+                            content
+                                .get_mut(index)
+                                .and_then(Value::as_object_mut)
+                                .ok_or_else(|| {
+                                    crate::sse::SseError::Protocol(
+                                        "tool delta has no content block".into(),
+                                    )
+                                })?
+                                .insert("input".into(), input);
+                        }
+                    }
+                }
+                Some("message_delta") => {
+                    let target =
+                        message
+                            .as_mut()
+                            .and_then(Value::as_object_mut)
+                            .ok_or_else(|| {
+                                crate::sse::SseError::Protocol("message delta before start".into())
+                            })?;
+                    if let Some(stop_reason) = body.pointer("/delta/stop_reason").cloned() {
+                        target.insert("stop_reason".into(), stop_reason);
+                    }
+                    if let Some(update) = body.get("usage").and_then(Value::as_object) {
+                        let usage = target
+                            .entry("usage")
+                            .or_insert_with(|| json!({}))
+                            .as_object_mut()
+                            .ok_or_else(|| {
+                                crate::sse::SseError::Protocol("invalid usage object".into())
+                            })?;
+                        usage.extend(update.clone());
+                    }
+                    let usage = anthropic_usage(
+                        message
+                            .as_ref()
+                            .expect("message was validated before applying its delta"),
+                    );
+                    if last_usage.as_ref() != Some(&usage) {
+                        events.emit(AgentEventKind::UsageUpdated {
+                            usage: usage.clone(),
+                        });
+                        last_usage = Some(usage);
+                    }
+                }
+                Some("message_stop") => {
+                    completed = true;
+                    return Ok(false);
+                }
+                Some("error") => {
+                    terminal_error = Some(
+                        if body.pointer("/error/type").and_then(Value::as_str)
+                            == Some("overloaded_error")
+                        {
+                            ProviderError::Network("service request failed".into())
+                        } else {
+                            ProviderError::InvalidResponse("model response failed".into())
+                        },
+                    );
+                    return Ok(false);
+                }
+                _ => {}
+            }
+            Ok(true)
+        })
+        .await
+        .map_err(map_sse_error)?;
+
+        if let Some(error) = terminal_error {
+            return Err(error);
+        }
+        if !completed {
+            return Err(ProviderError::InvalidResponse(
+                "stream ended before completion".into(),
+            ));
+        }
+        let mut message = message.ok_or_else(|| {
+            ProviderError::InvalidResponse("stream ended before message start".into())
+        })?;
+        message
+            .as_object_mut()
+            .ok_or_else(|| ProviderError::InvalidResponse("invalid message start".into()))?
+            .insert("content".into(), Value::Array(content));
+        let response = parse_response(message)?;
+        if last_usage.as_ref() != Some(&response.usage) {
+            events.emit(AgentEventKind::UsageUpdated {
+                usage: response.usage.clone(),
+            });
+        }
+        events.emit(AgentEventKind::ModelResponseCompleted);
+        Ok(response)
+    }
+}
+
+fn event_index(body: &Value) -> Result<usize, crate::sse::SseError> {
+    let index = body
+        .get("index")
+        .and_then(Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+        .ok_or_else(|| crate::sse::SseError::Protocol("missing content index".into()))?;
+    if index >= 1024 {
+        Err(crate::sse::SseError::Protocol(
+            "content index exceeded limit".into(),
+        ))
+    } else {
+        Ok(index)
+    }
+}
+
+fn map_status(status: StatusCode) -> Result<(), ProviderError> {
+    match status {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(ProviderError::AuthFailed),
+        StatusCode::TOO_MANY_REQUESTS => Err(ProviderError::RateLimited),
+        status if status.is_server_error() => {
+            Err(ProviderError::Network("service request failed".into()))
+        }
+        status if !status.is_success() => Err(ProviderError::InvalidResponse(
+            "service rejected the request".into(),
+        )),
+        _ => Ok(()),
+    }
+}
+
+fn map_sse_error(error: crate::sse::SseError) -> ProviderError {
+    match error {
+        crate::sse::SseError::Read(_) => {
+            ProviderError::Network("response body could not be read".into())
+        }
+        _ => ProviderError::InvalidResponse("invalid streaming response".into()),
+    }
 }
 
 fn parse_response(body: Value) -> Result<ModelResponse, ProviderError> {
@@ -292,22 +558,7 @@ fn parse_response(body: Value) -> Result<ModelResponse, ProviderError> {
         }
         _ => {}
     }
-    let input_tokens = [
-        "/usage/input_tokens",
-        "/usage/cache_creation_input_tokens",
-        "/usage/cache_read_input_tokens",
-    ]
-    .into_iter()
-    .filter_map(|pointer| body.pointer(pointer).and_then(Value::as_u64))
-    .sum();
-    let usage = ModelUsage {
-        input_tokens,
-        output_tokens: body
-            .pointer("/usage/output_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        tool_calls: 0,
-    };
+    let usage = anthropic_usage(&body);
     let content = body
         .get("content")
         .and_then(Value::as_array)
@@ -365,10 +616,31 @@ fn parse_response(body: Value) -> Result<ModelResponse, ProviderError> {
     }
 }
 
+fn anthropic_usage(body: &Value) -> ModelUsage {
+    let input_tokens = [
+        "/usage/input_tokens",
+        "/usage/cache_creation_input_tokens",
+        "/usage/cache_read_input_tokens",
+    ]
+    .into_iter()
+    .filter_map(|pointer| body.pointer(pointer).and_then(Value::as_u64))
+    .sum();
+    ModelUsage {
+        input_tokens,
+        output_tokens: body
+            .pointer("/usage/output_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        tool_calls: 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ModelOutput, ToolDefinition};
+    use crate::{AgentEvent, AgentEventSink, ModelOutput, ToolDefinition};
+    use std::sync::atomic::AtomicU64;
+    use std::sync::Mutex;
     use wiremock::matchers::{body_partial_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -392,6 +664,15 @@ mod tests {
                 json!({"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}),
             ),
             max_output_tokens: 4096,
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingSink(Mutex<Vec<AgentEvent>>);
+
+    impl AgentEventSink for RecordingSink {
+        fn emit(&self, event: AgentEvent) {
+            self.0.lock().unwrap().push(event);
         }
     }
 
@@ -510,6 +791,74 @@ mod tests {
             }))
             .unwrap_err(),
             ProviderError::InvalidResponse(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn streams_tool_json_and_reconstructs_a_message() {
+        let server = MockServer::start().await;
+        let stream = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":7,\"output_tokens\":1}}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tool_1\",\"name\":\"read_file\",\"input\":{}}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"src/lib.rs\\\"}\"}}\n\n",
+            "event: content_block_stop\n",
+            "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":4}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n"
+        );
+        Mock::given(method("POST"))
+            .and(path("/messages"))
+            .and(body_partial_json(json!({"stream": true})))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(stream),
+            )
+            .mount(&server)
+            .await;
+
+        let sink = RecordingSink::default();
+        let sequence = AtomicU64::new(1);
+        let emitter = AgentEventEmitter::new("run-anthropic", 1, &sequence, &sink);
+        let response = AnthropicProvider::new_with_base_for_test("test-key", server.uri())
+            .respond_stream(&request(true), &emitter)
+            .await
+            .unwrap();
+
+        assert_eq!(response.usage.input_tokens, 7);
+        assert_eq!(response.usage.output_tokens, 4);
+        assert!(matches!(
+            response.output,
+            ModelOutput::ToolCalls { calls } if calls[0].arguments["path"] == "src/lib.rs"
+        ));
+        let events = sink.0.lock().unwrap();
+        assert!(events
+            .iter()
+            .any(|event| matches!(event.kind, AgentEventKind::ToolCallStarted { .. })));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event.kind, AgentEventKind::ToolArgumentsDelta { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event.kind, AgentEventKind::UsageUpdated { .. }))
+                .count(),
+            2
+        );
+        assert!(matches!(
+            events.last().map(|event| &event.kind),
+            Some(AgentEventKind::ModelResponseCompleted)
         ));
     }
 }
