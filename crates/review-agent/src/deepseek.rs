@@ -1,6 +1,6 @@
 use crate::tool_names::ProviderToolNames;
 use crate::{
-    AgentEventEmitter, AgentEventKind, ModelCatalogEntry, ModelPricing, ModelProvider,
+    AgentEventEmitter, AgentEventKind, ModelCatalogEntry, ModelOutput, ModelPricing, ModelProvider,
     ModelRequest, ModelResponse, ModelUsage, ProviderCapabilities, ProviderDescriptor,
     ProviderError, ResponseFormat, ReviewError, StructuredOutputSupport, ToolCall,
     ToolCallingSupport, TranscriptItem, UsageSupport,
@@ -311,7 +311,7 @@ impl ModelProvider for DeepSeekProvider {
         let mut started = false;
         let mut completed = false;
         let mut content = String::new();
-        let mut content_mode = StreamedContentMode::Undecided;
+        let mut content_filter = StreamedContentFilter::default();
         let mut finish_reason = None;
         let mut usage = Value::Null;
         let mut last_usage = None;
@@ -349,21 +349,8 @@ impl ModelProvider for DeepSeekProvider {
             if let Some(part) = delta.get("content").and_then(Value::as_str) {
                 if !part.is_empty() {
                     content.push_str(part);
-                    match content_mode {
-                        StreamedContentMode::Undecided => {
-                            content_mode = classify_streamed_content(&content);
-                            if content_mode == StreamedContentMode::Text {
-                                events.emit(AgentEventKind::OutputTextDelta {
-                                    delta: content.clone(),
-                                });
-                            }
-                        }
-                        StreamedContentMode::Text => {
-                            events.emit(AgentEventKind::OutputTextDelta {
-                                delta: part.to_owned(),
-                            });
-                        }
-                        StreamedContentMode::Protocol => {}
+                    if let Some(delta) = content_filter.push(part) {
+                        events.emit(AgentEventKind::OutputTextDelta { delta });
                     }
                 }
             }
@@ -454,6 +441,11 @@ impl ModelProvider for DeepSeekProvider {
             "choices": [{"finish_reason": finish_reason, "message": message}],
             "usage": usage
         }))?)?;
+        if matches!(response.output, ModelOutput::FinalText { .. }) {
+            if let Some(delta) = content_filter.finish() {
+                events.emit(AgentEventKind::OutputTextDelta { delta });
+            }
+        }
         if last_usage.as_ref() != Some(&response.usage) {
             events.emit(AgentEventKind::UsageUpdated {
                 usage: response.usage.clone(),
@@ -472,32 +464,77 @@ struct StreamingToolCall {
     started: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum StreamedContentMode {
-    Undecided,
+    #[default]
+    LineStart,
     Text,
     Protocol,
 }
 
-fn classify_streamed_content(content: &str) -> StreamedContentMode {
-    let candidate = content.trim_start();
-    if candidate.is_empty() {
-        return StreamedContentMode::Undecided;
-    }
-    for prefix in [
-        "<｜DSML｜tool_calls>",
-        "<｜DSML｜invoke ",
-        "<|DSML|tool_calls>",
-        "<|DSML|invoke ",
-    ] {
-        if candidate.starts_with(prefix) {
-            return StreamedContentMode::Protocol;
+#[derive(Debug, Default)]
+struct StreamedContentFilter {
+    mode: StreamedContentMode,
+    pending: String,
+}
+
+impl StreamedContentFilter {
+    fn push(&mut self, part: &str) -> Option<String> {
+        if self.mode == StreamedContentMode::Protocol {
+            return None;
         }
-        if prefix.starts_with(candidate) {
-            return StreamedContentMode::Undecided;
+        self.pending.push_str(part);
+        let mut output = String::new();
+
+        loop {
+            match self.mode {
+                StreamedContentMode::Protocol => {
+                    self.pending.clear();
+                    break;
+                }
+                StreamedContentMode::Text => {
+                    if let Some(end) = newline_end(&self.pending) {
+                        output.push_str(&self.pending[..end]);
+                        self.pending.drain(..end);
+                        self.mode = StreamedContentMode::LineStart;
+                    } else {
+                        output.push_str(&self.pending);
+                        self.pending.clear();
+                        break;
+                    }
+                }
+                StreamedContentMode::LineStart => {
+                    let candidate = self.pending.trim_start_matches([' ', '\t', '\r']);
+                    if candidate.is_empty()
+                        || DSML_ROOTS.iter().any(|root| root.starts_with(candidate))
+                    {
+                        break;
+                    }
+                    if DSML_ROOTS.iter().any(|root| candidate.starts_with(root)) {
+                        self.mode = StreamedContentMode::Protocol;
+                    } else {
+                        self.mode = StreamedContentMode::Text;
+                    }
+                }
+            }
         }
+
+        (!output.is_empty()).then_some(output)
     }
-    StreamedContentMode::Text
+
+    fn finish(&mut self) -> Option<String> {
+        if self.mode == StreamedContentMode::Protocol || self.pending.is_empty() {
+            self.pending.clear();
+            return None;
+        }
+        Some(std::mem::take(&mut self.pending))
+    }
+}
+
+const DSML_ROOTS: [&str; 2] = ["<｜DSML", "<|DSML"];
+
+fn newline_end(text: &str) -> Option<usize> {
+    text.find('\n').map(|index| index + 1)
 }
 
 fn map_status(status: StatusCode) -> Result<(), ProviderError> {
@@ -608,6 +645,7 @@ fn parse_response(body: Value) -> Result<ModelResponse, ProviderError> {
                 tracing::warn!(
                     provider = "deepseek",
                     tool_calls = calls.len(),
+                    had_text_prefix = dsml_has_text_prefix(text),
                     "recovered complete DSML tool calls from text output"
                 );
                 Ok(ModelResponse::tool_calls(calls, usage))
@@ -629,7 +667,10 @@ const MAX_DSML_PARAMETERS: usize = 128;
 /// return the complete markup as text. Only a fully consumed, strictly formed
 /// block is recovered here; partial or orphaned protocol is never executable.
 fn parse_dsml_tool_calls(text: &str) -> Result<Option<Vec<ToolCall>>, ProviderError> {
-    let candidate = text.trim();
+    let Some(candidate) = dsml_protocol_suffix(text) else {
+        return Ok(None);
+    };
+    let candidate = candidate.trim_end();
     for marker in ["｜DSML｜", "|DSML|"] {
         let open = format!("<{marker}tool_calls>");
         let invoke = format!("<{marker}invoke ");
@@ -648,6 +689,25 @@ fn parse_dsml_tool_calls(text: &str) -> Result<Option<Vec<ToolCall>>, ProviderEr
         ));
     }
     Ok(None)
+}
+
+fn dsml_protocol_suffix(text: &str) -> Option<&str> {
+    let mut line = text;
+    loop {
+        let candidate = line.trim_start_matches([' ', '\t', '\r']);
+        if DSML_ROOTS.iter().any(|root| candidate.starts_with(root)) {
+            return Some(candidate);
+        }
+        let (_, remaining) = line.split_once('\n')?;
+        line = remaining;
+    }
+}
+
+fn dsml_has_text_prefix(text: &str) -> bool {
+    dsml_protocol_suffix(text).is_some_and(|suffix| {
+        let prefix_bytes = text.len().saturating_sub(suffix.len());
+        !text[..prefix_bytes].trim().is_empty()
+    })
 }
 
 fn parse_dsml_block(text: &str, marker: &str) -> Result<Vec<ToolCall>, ProviderError> {
@@ -1014,10 +1074,16 @@ mod tests {
         assert_eq!(calls[0].arguments["depth"], 2);
         assert!(calls[0].call_id.starts_with("call_dsml_0_"));
 
+        let prefixed = format!("I need one more repository read.\n\n{text}");
+        let calls = parse_dsml_tool_calls(&prefixed).unwrap().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "filesystem_list_wire");
+
         for malformed in [
             "<｜DSML｜invoke name=\"filesystem_list_wire\"></｜DSML｜invoke>",
             "<｜DSML｜tool_calls><｜DSML｜invoke name=\"filesystem_list_wire\"><｜DSML｜parameter name=\"path\" string=\"true\">src</｜DSML｜invoke></｜DSML｜tool_calls>",
             "<｜DSML｜tool_calls><｜DSML｜invoke name=\"filesystem_list_wire\"></｜DSML｜invoke></｜DSML｜tool_calls> trailing",
+            "I need one more repository read.\n<｜DSML｜invoke name=\"filesystem_list_wire\"></｜DSML｜invoke>",
         ] {
             assert!(matches!(
                 parse_dsml_tool_calls(malformed),
@@ -1226,5 +1292,67 @@ mod tests {
             .unwrap()
             .iter()
             .any(|event| matches!(event.kind, AgentEventKind::OutputTextDelta { .. })));
+    }
+
+    #[tokio::test]
+    async fn streams_prose_but_never_dsml_when_a_tool_block_follows_it() {
+        let server = MockServer::start().await;
+        let mut model_request = request(Vec::new(), true);
+        model_request.tools[0].name = "filesystem.list".into();
+        let wire_name = ProviderToolNames::new(&model_request)
+            .unwrap()
+            .wire("filesystem.list")
+            .unwrap()
+            .to_owned();
+        let first = "I will inspect the host composition.\n\n<｜DSM";
+        let second = format!(
+            "L｜tool_calls><｜DSML｜invoke name=\"{wire_name}\"><｜DSML｜parameter name=\"path\" string=\"true\">app/src-tauri</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜tool_calls>"
+        );
+        let stream = [
+            json!({"id":"chat_mixed","choices":[{"delta":{"content":first},"finish_reason":null}],"usage":null}),
+            json!({"id":"chat_mixed","choices":[{"delta":{"content":second},"finish_reason":null}],"usage":null}),
+            json!({"id":"chat_mixed","choices":[{"delta":{},"finish_reason":"stop"}],"usage":null}),
+            json!({"id":"chat_mixed","choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3}}),
+        ]
+        .into_iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect::<String>()
+            + "data: [DONE]\n\n";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(stream),
+            )
+            .mount(&server)
+            .await;
+
+        let sink = RecordingSink::default();
+        let clock = AgentEventClock::default();
+        let emitter = AgentEventEmitter::new("run-mixed-dsml", 1, &clock, &sink);
+        let response = DeepSeekProvider::new_with_base_for_test("test-key", server.uri())
+            .respond_stream(&model_request, &emitter)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            response.output,
+            ModelOutput::ToolCalls { calls }
+                if calls[0].name == "filesystem.list"
+                    && calls[0].arguments["path"] == "app/src-tauri"
+        ));
+        let streamed_text = sink
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match &event.kind {
+                AgentEventKind::OutputTextDelta { delta } => Some(delta.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(streamed_text, "I will inspect the host composition.\n\n");
+        assert!(!streamed_text.contains("DSML"));
     }
 }
