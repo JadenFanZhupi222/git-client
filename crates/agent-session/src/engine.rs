@@ -293,6 +293,7 @@ impl SessionEngine {
         let mut seen_call_ids = HashSet::new();
         let mut tool_calls = 0u32;
         let mut model_rounds = 0u32;
+        let mut tool_budget_exhausted = false;
 
         loop {
             run.begin_model_round().map_err(map_tool_error)?;
@@ -301,6 +302,7 @@ impl SessionEngine {
                 != agent_runtime::ToolCallingSupport::None
                 && model_rounds < self.config.tool_run.max_model_rounds
                 && tool_calls < self.config.tool_run.max_tool_calls;
+            let tools_enabled = tools_enabled && !tool_budget_exhausted;
             let tools = if tools_enabled {
                 all_tools.as_slice()
             } else {
@@ -361,7 +363,20 @@ impl SessionEngine {
                         )
                         .ok_or(SessionEngineError::Budget("tool_calls"))?;
                     if next_count > self.config.tool_run.max_tool_calls {
-                        return Err(SessionEngineError::Budget("tool_calls"));
+                        tracing::warn!(
+                            run_id = %router.run_id(),
+                            model_rounds,
+                            completed_tool_calls = tool_calls,
+                            requested_tool_calls = calls.len(),
+                            max_tool_calls = self.config.tool_run.max_tool_calls,
+                            "tool batch exceeded the remaining run budget"
+                        );
+                        tool_budget_exhausted = true;
+                        current.push(TranscriptItem::System(
+                            "The requested tool batch exceeded the remaining tool budget and was not executed. Tools are now disabled. Return the final answer using only the evidence already available."
+                                .into(),
+                        ));
+                        continue;
                     }
                     tool_calls = next_count;
                     current.push(TranscriptItem::AssistantToolCalls(calls.clone()));
@@ -879,6 +894,58 @@ mod tests {
             item,
             TranscriptItem::ToolResult { content, .. } if content.contains("rejected")
         )));
+    }
+
+    #[tokio::test]
+    async fn oversized_tool_batch_gets_one_final_round_without_partial_execution() {
+        let handler = Arc::new(CountingHandler::default());
+        let provider = fixture_provider(vec![
+            response(ModelOutput::ToolCalls {
+                calls: (0..5)
+                    .map(|index| {
+                        ToolCall::with_call_id(
+                            "echo",
+                            format!("call-{index}"),
+                            json!({"text": format!("value-{index}")}),
+                        )
+                    })
+                    .collect(),
+            }),
+            response(ModelOutput::FinalText {
+                text: "summary from existing evidence".into(),
+            }),
+        ]);
+        let sessions = sessions();
+        let engine = SessionEngine::new(
+            provider.clone(),
+            Arc::clone(&sessions),
+            registry(Arc::clone(&handler)),
+            policy(),
+            Arc::new(DenyAllApprovals),
+            Arc::new(NoopAgentEventSink),
+            config(3),
+        )
+        .unwrap();
+
+        let result = engine
+            .run_turn(
+                AgentTurnRequest::text("session", "run", "question", 256),
+                Arc::new(NeverCancel),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.final_text, "summary from existing evidence");
+        assert_eq!(result.usage.tool_calls, 0);
+        assert_eq!(handler.0.load(Ordering::Relaxed), 0);
+        let requests = provider.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].tools.is_empty());
+        assert!(requests[1].transcript.iter().any(|item| matches!(
+            item,
+            TranscriptItem::System(text) if text.contains("exceeded the remaining tool budget")
+        )));
+        assert_eq!(sessions.get("session").unwrap().revision, 1);
     }
 
     #[tokio::test]
