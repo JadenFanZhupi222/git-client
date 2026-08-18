@@ -1,7 +1,7 @@
 use crate::{
-    AgentEventPublisher, CancelSignal, ModelOutput, ModelProvider, ModelRequest, ProviderError,
-    ResponseFormat, ReviewError, ReviewUsage, StructuredOutputSupport, TraceEntry, TraceSink,
-    TranscriptItem,
+    AgentErrorCode, AgentEventKind, AgentEventPublisher, CancelSignal, ModelOutput, ModelProvider,
+    ModelRequest, ProviderError, ResponseFormat, ReviewError, ReviewUsage, StructuredOutputSupport,
+    TraceEntry, TraceSink, TranscriptItem,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -182,56 +182,81 @@ async fn investigate_history_inner(
             response_schema: Some(history_investigation_schema()),
             max_output_tokens: 4096,
         };
-        let response = if let Some(events) = events {
-            crate::provider_retry::respond_with_retry_and_events(
-                model,
-                &request,
-                cancel,
-                &mut attempts,
-                events,
-            )
-            .await
-        } else {
-            crate::provider_retry::respond_with_retry(
-                model,
-                &request,
-                cancel,
-                run_id,
-                &mut attempts,
-            )
-            .await
+        let mut contract_retry_used = false;
+        loop {
+            let mut current_request = request.clone();
+            if contract_retry_used {
+                strengthen_history_retry_prompt(&mut current_request);
+            }
+            let response = if let Some(events) = events {
+                crate::provider_retry::respond_with_retry_and_events_recovering_invalid(
+                    model,
+                    &current_request,
+                    cancel,
+                    &mut attempts,
+                    events,
+                    is_retryable_history_provider_error,
+                )
+                .await
+            } else {
+                crate::provider_retry::respond_with_retry_recovering_invalid(
+                    model,
+                    &current_request,
+                    cancel,
+                    run_id,
+                    &mut attempts,
+                    is_retryable_history_provider_error,
+                )
+                .await
+            }
+            .map_err(|error| match error {
+                crate::provider_retry::ProviderCallError::Cancelled => ReviewError::Cancelled,
+                crate::provider_retry::ProviderCallError::Provider(error) => {
+                    map_provider_error(error)
+                }
+            })?;
+            add_usage(&mut observed_usage, &response.usage);
+            let decoded = decode_history_response(evidence, response.output);
+            match decoded {
+                Ok(investigation) => {
+                    let findings = investigation
+                        .findings
+                        .into_iter()
+                        .map(|finding| grounded_finding(evidence, finding))
+                        .collect();
+                    return Ok(HistoryInvestigationResult {
+                        snapshot_id: evidence.snapshot_id.clone(),
+                        summary: investigation.summary,
+                        confidence: investigation.confidence,
+                        findings,
+                        caveats: investigation.caveats,
+                        search_terms: evidence.search_terms.clone(),
+                        evidence_sources: evidence.evidence_sources.clone(),
+                        evidence_commit_count: evidence.commits.len(),
+                        usage: observed_usage.clone(),
+                        model_id: descriptor.model_id.clone(),
+                        provider_attempts: attempts,
+                    });
+                }
+                Err(error) => {
+                    let will_retry = !contract_retry_used && is_retryable_history_contract_error(&error);
+                    if let Some(events) = events {
+                        events.emit_for_attempt(
+                            attempts,
+                            AgentEventKind::ModelAttemptFailed {
+                                error: AgentErrorCode::InvalidResponse,
+                                will_retry,
+                            },
+                        );
+                    }
+                    if will_retry {
+                        contract_retry_used = true;
+                        continue;
+                    }
+                    return Err(error);
+                }
+            }
         }
-        .map_err(|error| match error {
-            crate::provider_retry::ProviderCallError::Cancelled => ReviewError::Cancelled,
-            crate::provider_retry::ProviderCallError::Provider(error) => map_provider_error(error),
-        })?;
-        observed_usage = response.usage.clone();
-        let ModelOutput::FinalText { text } = response.output else {
-            return Err(ReviewError::InvalidModelOutput(
-                "history investigation model attempted a tool call".into(),
-            ));
-        };
-        let mut investigation = decode_investigation(&text)?;
-        normalize_commit_citations(evidence, &mut investigation);
-        validate_investigation(evidence, &investigation)?;
-        let findings = investigation
-            .findings
-            .into_iter()
-            .map(|finding| grounded_finding(evidence, finding))
-            .collect();
-        Ok(HistoryInvestigationResult {
-            snapshot_id: evidence.snapshot_id.clone(),
-            summary: investigation.summary,
-            confidence: investigation.confidence,
-            findings,
-            caveats: investigation.caveats,
-            search_terms: evidence.search_terms.clone(),
-            evidence_sources: evidence.evidence_sources.clone(),
-            evidence_commit_count: evidence.commits.len(),
-            usage: response.usage,
-            model_id: descriptor.model_id.clone(),
-            provider_attempts: attempts,
-        })
     }
     .await;
 
@@ -263,6 +288,53 @@ async fn investigate_history_inner(
     }
 
     result
+}
+
+fn decode_history_response(
+    evidence: &HistoryEvidence,
+    output: ModelOutput,
+) -> Result<ModelInvestigation, ReviewError> {
+    let ModelOutput::FinalText { text } = output else {
+        return Err(ReviewError::InvalidModelOutput(
+            "history investigation model attempted a tool call".into(),
+        ));
+    };
+    let mut investigation = decode_investigation(&text)?;
+    normalize_commit_citations(evidence, &mut investigation);
+    validate_investigation(evidence, &investigation)?;
+    Ok(investigation)
+}
+
+fn strengthen_history_retry_prompt(request: &mut ModelRequest) {
+    if let Some(TranscriptItem::System(prompt)) = request.transcript.first_mut() {
+        prompt.push_str(" A previous response could not be accepted because it was incomplete or did not match the required JSON contract. Return one complete JSON object now. Keep the response concise, include every required field, and stop immediately after the closing brace.");
+    }
+}
+
+fn is_retryable_history_provider_error(error: &ProviderError) -> bool {
+    match error {
+        ProviderError::OutputTruncated => true,
+        ProviderError::InvalidResponse(message) => matches!(
+            message.as_str(),
+            "stream ended before completion"
+                | "invalid streaming response"
+                | "missing response output"
+        ),
+        _ => false,
+    }
+}
+
+fn is_retryable_history_contract_error(error: &ReviewError) -> bool {
+    matches!(
+        safe_history_error_detail(error),
+        Some("response_not_json" | "history_response_not_object" | "structured_output_invalid")
+    )
+}
+
+fn add_usage(total: &mut ReviewUsage, usage: &ReviewUsage) {
+    total.input_tokens = total.input_tokens.saturating_add(usage.input_tokens);
+    total.output_tokens = total.output_tokens.saturating_add(usage.output_tokens);
+    total.tool_calls = total.tool_calls.saturating_add(usage.tool_calls);
 }
 
 pub fn safe_history_error_detail(error: &ReviewError) -> Option<&'static str> {
@@ -541,6 +613,7 @@ fn map_provider_error(error: ProviderError) -> ReviewError {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use std::collections::VecDeque;
     use std::sync::{Arc, Mutex};
 
     struct NeverCancel;
@@ -555,19 +628,7 @@ mod tests {
     #[async_trait]
     impl ModelProvider for FixtureModel {
         fn descriptor(&self) -> crate::ProviderDescriptor {
-            crate::ProviderDescriptor {
-                provider_id: "fixture".into(),
-                model_id: "fixture-history".into(),
-                capabilities: crate::ProviderCapabilities {
-                    structured_output: StructuredOutputSupport::JsonObject,
-                    tool_calling: crate::ToolCallingSupport::None,
-                    can_disable_tools: true,
-                    requires_reasoning_replay: false,
-                    context_window_tokens: 100_000,
-                    max_output_tokens: 4_096,
-                    usage: crate::UsageSupport::InputOutputTokens,
-                },
-            }
+            fixture_descriptor()
         }
 
         async fn respond(
@@ -586,6 +647,58 @@ mod tests {
         }
     }
 
+    struct SequenceFixtureModel {
+        responses: Mutex<VecDeque<String>>,
+        requests: Mutex<Vec<ModelRequest>>,
+    }
+
+    impl SequenceFixtureModel {
+        fn new(responses: impl IntoIterator<Item = String>) -> Self {
+            Self {
+                responses: Mutex::new(responses.into_iter().collect()),
+                requests: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ModelProvider for SequenceFixtureModel {
+        fn descriptor(&self) -> crate::ProviderDescriptor {
+            fixture_descriptor()
+        }
+
+        async fn respond(
+            &self,
+            request: &ModelRequest,
+        ) -> Result<crate::ModelResponse, ProviderError> {
+            self.requests.lock().unwrap().push(request.clone());
+            Ok(crate::ModelResponse::final_text(
+                self.responses.lock().unwrap().pop_front().unwrap(),
+                ReviewUsage {
+                    input_tokens: 20,
+                    output_tokens: 8,
+                    tool_calls: 0,
+                },
+            ))
+        }
+    }
+
+    fn fixture_descriptor() -> crate::ProviderDescriptor {
+        crate::ProviderDescriptor {
+            provider_id: "fixture".into(),
+            model_id: "fixture-history".into(),
+            capabilities: crate::ProviderCapabilities {
+                structured_output: StructuredOutputSupport::JsonObject,
+                tool_calling: crate::ToolCallingSupport::None,
+                can_disable_tools: true,
+                requires_reasoning_replay: false,
+                context_window_tokens: 100_000,
+                max_output_tokens: 4_096,
+                usage: crate::UsageSupport::InputOutputTokens,
+            },
+        }
+    }
+
     #[derive(Clone, Default)]
     struct RecordingTrace(Arc<Mutex<Vec<TraceEntry>>>);
 
@@ -594,6 +707,15 @@ mod tests {
         async fn record(&self, entry: TraceEntry) -> Result<(), ReviewError> {
             self.0.lock().unwrap().push(entry);
             Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingAgentSink(Mutex<Vec<crate::AgentEvent>>);
+
+    impl crate::AgentEventSink for RecordingAgentSink {
+        fn emit(&self, event: crate::AgentEvent) {
+            self.0.lock().unwrap().push(event);
         }
     }
 
@@ -653,6 +775,73 @@ mod tests {
         assert_eq!(result.findings[0].evidence_links.len(), 1);
         assert_eq!(result.evidence_sources, vec!["file_history", "pickaxe"]);
         assert_eq!(result.usage.input_tokens, 20);
+    }
+
+    #[tokio::test]
+    async fn retries_invalid_json_once_and_accumulates_usage() {
+        let model = SequenceFixtureModel::new([
+            "{\"summary\":\"incomplete".into(),
+            json!({
+                "summary": "The guard was added for empty repositories.",
+                "confidence": "high",
+                "findings": [{
+                    "title": "Empty repository guard",
+                    "explanation": "The commit message and patch add the fallback.",
+                    "commit_ids": ["abc1234"],
+                    "paths": ["src/lib.rs"]
+                }],
+                "caveats": []
+            })
+            .to_string(),
+        ]);
+        let sink = RecordingAgentSink::default();
+        let events = AgentEventPublisher::new("contract-retry", &sink);
+
+        let result = investigate_history_with_events(
+            &model,
+            &NeverCancel,
+            "contract-retry",
+            &evidence(),
+            &events,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.provider_attempts, 2);
+        assert_eq!(result.usage.input_tokens, 40);
+        assert_eq!(result.usage.output_tokens, 16);
+        let requests = model.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(matches!(
+            requests[1].transcript.first(),
+            Some(TranscriptItem::System(prompt)) if prompt.contains("previous response could not be accepted")
+        ));
+        let events = sink.0.lock().unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event.kind,
+            AgentEventKind::ModelAttemptFailed {
+                error: AgentErrorCode::InvalidResponse,
+                will_retry: true,
+            }
+        )));
+    }
+
+    #[test]
+    fn retries_only_transport_and_json_contract_failures() {
+        assert!(is_retryable_history_provider_error(
+            &ProviderError::OutputTruncated
+        ));
+        assert!(is_retryable_history_provider_error(
+            &ProviderError::InvalidResponse("stream ended before completion".into())
+        ));
+        assert!(!is_retryable_history_provider_error(
+            &ProviderError::AuthFailed
+        ));
+        assert!(!is_retryable_history_contract_error(
+            &ReviewError::InvalidModelOutput(
+                "history investigation cited evidence that was not supplied".into()
+            )
+        ));
     }
 
     #[test]

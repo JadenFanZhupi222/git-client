@@ -282,6 +282,10 @@ impl<'a> AgentEventPublisher<'a> {
     pub fn run_id(&self) -> &str {
         self.run_id
     }
+
+    pub fn emit_for_attempt(&self, attempt_id: u32, kind: AgentEventKind) {
+        AgentEventEmitter::new(self.run_id, attempt_id, &self.sequence, self.sink).emit(kind);
+    }
 }
 
 impl<'a> AgentEventEmitter<'a> {

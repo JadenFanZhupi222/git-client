@@ -17,7 +17,10 @@ pub(crate) async fn respond_with_retry(
     attempts: &mut u32,
 ) -> Result<ModelResponse, ProviderCallError> {
     let event_context = AgentEventPublisher::new(jitter_key, &NoopAgentEventSink);
-    respond_with_retry_and_events(model, request, cancel, attempts, &event_context).await
+    respond_with_retry_and_events_matching(model, request, cancel, attempts, &event_context, |_| {
+        false
+    })
+    .await
 }
 
 pub(crate) async fn respond_with_retry_and_events(
@@ -27,8 +30,62 @@ pub(crate) async fn respond_with_retry_and_events(
     attempts: &mut u32,
     event_context: &AgentEventPublisher<'_>,
 ) -> Result<ModelResponse, ProviderCallError> {
+    respond_with_retry_and_events_matching(model, request, cancel, attempts, event_context, |_| {
+        false
+    })
+    .await
+}
+
+pub(crate) async fn respond_with_retry_recovering_invalid(
+    model: &dyn ModelProvider,
+    request: &ModelRequest,
+    cancel: &dyn CancelSignal,
+    jitter_key: &str,
+    attempts: &mut u32,
+    recoverable_invalid: fn(&ProviderError) -> bool,
+) -> Result<ModelResponse, ProviderCallError> {
+    let event_context = AgentEventPublisher::new(jitter_key, &NoopAgentEventSink);
+    respond_with_retry_and_events_matching(
+        model,
+        request,
+        cancel,
+        attempts,
+        &event_context,
+        recoverable_invalid,
+    )
+    .await
+}
+
+pub(crate) async fn respond_with_retry_and_events_recovering_invalid(
+    model: &dyn ModelProvider,
+    request: &ModelRequest,
+    cancel: &dyn CancelSignal,
+    attempts: &mut u32,
+    event_context: &AgentEventPublisher<'_>,
+    recoverable_invalid: fn(&ProviderError) -> bool,
+) -> Result<ModelResponse, ProviderCallError> {
+    respond_with_retry_and_events_matching(
+        model,
+        request,
+        cancel,
+        attempts,
+        event_context,
+        recoverable_invalid,
+    )
+    .await
+}
+
+async fn respond_with_retry_and_events_matching(
+    model: &dyn ModelProvider,
+    request: &ModelRequest,
+    cancel: &dyn CancelSignal,
+    attempts: &mut u32,
+    event_context: &AgentEventPublisher<'_>,
+    recoverable_invalid: fn(&ProviderError) -> bool,
+) -> Result<ModelResponse, ProviderCallError> {
     let policy = RetryPolicy::default();
     let mut attempt = 1_u8;
+    let mut invalid_retry_used = false;
     loop {
         if cancel.is_cancelled() {
             return Err(ProviderCallError::Cancelled);
@@ -52,7 +109,12 @@ pub(crate) async fn respond_with_retry_and_events(
                 }
                 return Ok(response);
             }
-            Err(error) if error.is_transient() && attempt < policy.max_attempts => {
+            Err(error)
+                if attempt < policy.max_attempts
+                    && (error.is_transient()
+                        || (!invalid_retry_used && recoverable_invalid(&error))) =>
+            {
+                invalid_retry_used |= !error.is_transient();
                 events.emit(AgentEventKind::ModelAttemptFailed {
                     error: (&error).into(),
                     will_retry: true,
@@ -174,6 +236,39 @@ mod tests {
             error,
             ProviderCallError::Provider(ProviderError::InvalidResponse(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn workflow_can_retry_one_allowlisted_invalid_response() {
+        let provider = SequenceProvider(Mutex::new(VecDeque::from([
+            Err(ProviderError::OutputTruncated),
+            Ok(ModelResponse::final_text("ok", ModelUsage::default())),
+        ])));
+        let sink = RecordingSink::default();
+        let event_context = AgentEventPublisher::new("recover-invalid", &sink);
+        let mut attempts = 0;
+
+        let response = respond_with_retry_and_events_recovering_invalid(
+            &provider,
+            &request(),
+            &NeverCancel,
+            &mut attempts,
+            &event_context,
+            |error| matches!(error, ProviderError::OutputTruncated),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(attempts, 2);
+        assert!(matches!(response.output, ModelOutput::FinalText { .. }));
+        let events = sink.0.lock().unwrap();
+        assert!(events.iter().any(|event| matches!(
+            event.kind,
+            AgentEventKind::ModelAttemptFailed {
+                error: crate::AgentErrorCode::OutputTruncated,
+                will_retry: true,
+            }
+        )));
     }
 
     #[tokio::test]
