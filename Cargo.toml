@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/agent-runtime",
+    "crates/agent-tools",
     "crates/review-agent",
     "crates/git-core",
     "crates/git-engine",
@@ -27,7 +28,7 @@ chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 futures-util = "0.3"
 bytes = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "sync", "time", "process", "io-util", "net"] }
 regex = "1"
 fs2 = "0.4"
 tempfile = "3"
