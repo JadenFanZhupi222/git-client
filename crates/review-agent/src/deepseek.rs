@@ -122,6 +122,9 @@ impl DeepSeekProvider {
                 TranscriptItem::User(text) => {
                     messages.push(json!({"role": "user", "content": text}));
                 }
+                TranscriptItem::AssistantText(text) => {
+                    messages.push(json!({"role": "assistant", "content": text}));
+                }
                 TranscriptItem::AssistantToolCalls(calls) => {
                     let mut tool_calls = Vec::new();
                     for call in calls {
@@ -605,6 +608,7 @@ mod tests {
     fn maps_generic_request_and_omits_tools_when_disabled() {
         let provider = DeepSeekProvider::new_with_base_for_test("k", "http://localhost".into());
         let history = vec![
+            TranscriptItem::AssistantText("Earlier answer".into()),
             TranscriptItem::AssistantToolCalls(vec![crate::read_file_call(
                 "call-1",
                 "src/lib.rs",
@@ -622,10 +626,14 @@ mod tests {
             .request_body(&request(history.clone(), true))
             .unwrap();
         assert_eq!(
-            body.pointer("/messages/0/tool_calls/0/id"),
+            body.pointer("/messages/0/content"),
+            Some(&json!("Earlier answer"))
+        );
+        assert_eq!(
+            body.pointer("/messages/1/tool_calls/0/id"),
             Some(&json!("call-1"))
         );
-        assert_eq!(body.pointer("/messages/1/role"), Some(&json!("tool")));
+        assert_eq!(body.pointer("/messages/2/role"), Some(&json!("tool")));
         assert!(body.get("tools").is_some());
 
         let body = provider.request_body(&request(history, false)).unwrap();

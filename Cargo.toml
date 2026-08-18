@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/agent-runtime",
+    "crates/agent-session",
     "crates/agent-tools",
     "crates/review-agent",
     "crates/git-core",

@@ -892,7 +892,7 @@ impl ToolExecutor {
                 summary: tool
                     .handler
                     .summarize_arguments(&call.arguments)
-                    .map(|summary| redact_secrets(summary, &self.secret_literals))
+                    .map(|summary| redact_sensitive_text(summary, &self.secret_literals))
                     .map(|summary| truncate_utf8(summary, 512).0),
             };
             self.events.emit(ToolExecutionEvent::ApprovalRequested {
@@ -971,7 +971,7 @@ impl ToolExecutor {
             Ok(content) => (ToolOutcome::Success, tool.handler.sanitize_result(content)),
             Err(_) => (ToolOutcome::Failed, "Tool execution failed.".into()),
         };
-        let content = redact_secrets(content, &self.secret_literals);
+        let content = redact_sensitive_text(content, &self.secret_literals);
         let cap = tool
             .definition
             .max_result_bytes
@@ -1068,7 +1068,7 @@ impl ToolExecutionEvent {
     }
 }
 
-fn redact_secrets(mut content: String, secrets: &[String]) -> String {
+pub fn redact_sensitive_text(mut content: String, secrets: &[String]) -> String {
     content.retain(|character| character == '\n' || character == '\t' || !character.is_control());
     for secret in secrets {
         content = content.replace(secret, "[REDACTED]");

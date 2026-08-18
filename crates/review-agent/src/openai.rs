@@ -129,6 +129,10 @@ impl OpenAiProvider {
                     "role": "user",
                     "content": text
                 })),
+                TranscriptItem::AssistantText(text) => input.push(json!({
+                    "role": "assistant",
+                    "content": text
+                })),
                 TranscriptItem::AssistantToolCalls(calls) => {
                     for call in calls {
                         let (call_id, arguments) = split_call_id(call)?;
@@ -618,6 +622,7 @@ mod tests {
         let provider = OpenAiProvider::new_with_base_for_test("k", "http://localhost".into());
         let mut request = request(true);
         request.transcript.extend([
+            TranscriptItem::AssistantText("Earlier answer".into()),
             TranscriptItem::AssistantToolCalls(vec![ToolCall::with_call_id(
                 "read_file",
                 "call-1",
@@ -632,9 +637,14 @@ mod tests {
         ]);
         let body = provider.request_body(&request).unwrap();
         assert_eq!(body.pointer("/reasoning/effort"), Some(&json!("none")));
-        assert_eq!(body.pointer("/input/1/type"), Some(&json!("function_call")));
+        assert_eq!(body.pointer("/input/1/role"), Some(&json!("assistant")));
         assert_eq!(
-            body.pointer("/input/2/type"),
+            body.pointer("/input/1/content"),
+            Some(&json!("Earlier answer"))
+        );
+        assert_eq!(body.pointer("/input/2/type"), Some(&json!("function_call")));
+        assert_eq!(
+            body.pointer("/input/3/type"),
             Some(&json!("function_call_output"))
         );
         assert_eq!(

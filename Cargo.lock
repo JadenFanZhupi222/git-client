@@ -32,6 +32,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-session"
+version = "0.1.0"
+dependencies = [
+ "agent-runtime",
+ "agent-tools",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "agent-tools"
 version = "0.1.0"
 dependencies = [
@@ -96,6 +110,8 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 name = "app"
 version = "0.1.4"
 dependencies = [
+ "agent-session",
+ "agent-tools",
  "app-service",
  "async-trait",
  "git-core",

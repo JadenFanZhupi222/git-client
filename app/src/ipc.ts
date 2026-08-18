@@ -10,6 +10,10 @@ import { listen } from "@tauri-apps/api/event";
 export type {
   AgentIpcErrorDto,
   AgentEventDto,
+  AgentSessionMessageDto,
+  AgentSessionSnapshotDto,
+  AgentSessionTurnInputDto,
+  AgentSessionTurnResultDto,
   AheadBehindDto,
   BlameLineDto,
   BranchDeleteImpactDto,
@@ -88,6 +92,9 @@ export type {
 
 import type {
   AgentEventDto,
+  AgentSessionSnapshotDto,
+  AgentSessionTurnInputDto,
+  AgentSessionTurnResultDto,
   CredentialKindDto,
   PublishedReviewDto,
   ReviewModelOptionDto,
@@ -901,6 +908,24 @@ export async function resolveToolApproval(
   await invoke("resolve_tool_approval", {
     resolution: { run_id: runId, approval_id: approvalId, decision },
   });
+}
+
+export async function getAgentSession(repoPath: string): Promise<AgentSessionSnapshotDto> {
+  return await invoke<AgentSessionSnapshotDto>("get_agent_session", { repoPath });
+}
+
+export async function resetAgentSession(repoPath: string): Promise<AgentSessionSnapshotDto> {
+  return await invoke<AgentSessionSnapshotDto>("reset_agent_session", { repoPath });
+}
+
+export async function startAgentTurn(
+  input: AgentSessionTurnInputDto,
+): Promise<AgentSessionTurnResultDto> {
+  return await invoke<AgentSessionTurnResultDto>("start_agent_turn", { input });
+}
+
+export async function cancelAgentTurn(runId: string): Promise<void> {
+  await invoke("cancel_agent_turn", { runId });
 }
 
 export async function listGithubIssues(

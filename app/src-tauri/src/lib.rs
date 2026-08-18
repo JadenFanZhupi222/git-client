@@ -21,11 +21,15 @@ use std::time::Duration;
 use tauri::Emitter;
 
 mod agent_events;
+mod agent_session_commands;
 mod change_commands;
 mod credentials;
 mod history_commands;
 mod review_commands;
 use agent_events::{ToolApprovalRegistry, resolve_tool_approval};
+use agent_session_commands::{
+    AgentSessionState, cancel_agent_turn, get_agent_session, reset_agent_session, start_agent_turn,
+};
 use change_commands::{analyze_change_plan, cancel_change_plan, commit_change_group};
 use credentials::{clear_credential, credential_status, save_credential, test_credential};
 use history_commands::{cancel_history_investigation, investigate_repository_history};
@@ -1661,6 +1665,7 @@ pub fn run() {
         .manage(WatcherState::default())
         .manage(SearchGen::default())
         .manage(ReviewRunRegistry::default())
+        .manage(AgentSessionState::default())
         .manage(ToolApprovalRegistry::default());
 
     #[cfg(feature = "e2e")]
@@ -1762,6 +1767,10 @@ pub fn run() {
         start_gitlab_mr_review,
         cancel_pr_review,
         resolve_tool_approval,
+        get_agent_session,
+        reset_agent_session,
+        start_agent_turn,
+        cancel_agent_turn,
         submit_pr_review,
         submit_gitlab_mr_review,
         list_github_issues,
@@ -1873,6 +1882,10 @@ pub fn run() {
         start_gitlab_mr_review,
         cancel_pr_review,
         resolve_tool_approval,
+        get_agent_session,
+        reset_agent_session,
+        start_agent_turn,
+        cancel_agent_turn,
         submit_pr_review,
         submit_gitlab_mr_review,
         list_github_issues,

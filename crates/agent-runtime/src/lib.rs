@@ -106,6 +106,7 @@ pub struct ModelCatalogEntry {
 pub enum TranscriptItem {
     System(String),
     User(String),
+    AssistantText(String),
     AssistantToolCalls(Vec<ToolCall>),
     ToolResult {
         name: String,
@@ -583,6 +584,17 @@ mod tests {
         );
         assert_eq!(capabilities.usage, UsageSupport::None);
         assert_eq!(capabilities.context_window_tokens, 0);
+    }
+
+    #[test]
+    fn completed_assistant_text_round_trips_in_the_provider_neutral_transcript() {
+        let item = TranscriptItem::AssistantText("completed answer".into());
+        let encoded = serde_json::to_string(&item).unwrap();
+        assert_eq!(
+            serde_json::from_str::<TranscriptItem>(&encoded).unwrap(),
+            item
+        );
+        assert!(encoded.contains("assistant_text"));
     }
 
     #[test]

@@ -171,6 +171,14 @@ export const IssueIcon = (p: SVGProps<SVGSVGElement>) => (
   </svg>
 );
 
+// Agent: a small four-point spark inside an orbit, kept distinct from hosting icons.
+export const AgentIcon = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base} {...p}>
+    <path d="M8 2.25c.35 2.1 1.65 3.4 3.75 3.75C9.65 6.35 8.35 7.65 8 9.75 7.65 7.65 6.35 6.35 4.25 6 6.35 5.65 7.65 4.35 8 2.25Z" />
+    <path d="M3.25 9.5c.2 1.2.95 1.95 2.15 2.15-1.2.2-1.95.95-2.15 2.15-.2-1.2-.95-1.95-2.15-2.15 1.2-.2 1.95-.95 2.15-2.15ZM12.5 10.25c.15.9.7 1.45 1.6 1.6-.9.15-1.45.7-1.6 1.6-.15-.9-.7-1.45-1.6-1.6.9-.15 1.45-.7 1.6-1.6Z" />
+  </svg>
+);
+
 export const CloseIcon = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base} {...p}>
     <path d="M4 4l8 8M12 4l-8 8" />

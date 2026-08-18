@@ -119,6 +119,11 @@ impl AnthropicProvider {
                     "user",
                     vec![json!({"type":"text","text":text})],
                 ),
+                TranscriptItem::AssistantText(text) => push_blocks(
+                    &mut messages,
+                    "assistant",
+                    vec![json!({"type":"text","text":text})],
+                ),
                 TranscriptItem::AssistantToolCalls(calls) => {
                     let mut blocks = Vec::new();
                     for call in calls {
@@ -689,6 +694,7 @@ mod tests {
         let provider = AnthropicProvider::new_with_base_for_test("k", "http://localhost".into());
         let mut request = request(true);
         request.transcript.extend([
+            TranscriptItem::AssistantText("Earlier answer".into()),
             TranscriptItem::AssistantToolCalls(vec![ToolCall::with_call_id(
                 "read_file",
                 "call-1",
@@ -705,6 +711,14 @@ mod tests {
         assert_eq!(body.pointer("/thinking/type"), Some(&json!("disabled")));
         assert_eq!(
             body.pointer("/messages/1/content/0/type"),
+            Some(&json!("text"))
+        );
+        assert_eq!(
+            body.pointer("/messages/1/content/0/text"),
+            Some(&json!("Earlier answer"))
+        );
+        assert_eq!(
+            body.pointer("/messages/1/content/1/type"),
             Some(&json!("tool_use"))
         );
         assert_eq!(

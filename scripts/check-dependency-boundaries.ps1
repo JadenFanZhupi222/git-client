@@ -31,3 +31,17 @@ if ($toolTree -notmatch "(?m)^agent-runtime v") {
 }
 
 Write-Output "Agent tool dependency boundary passed: adapters depend inward on agent-runtime only."
+
+$sessionTreeLines = & cargo tree -p agent-session -e normal --prefix none --depth 1
+if ($LASTEXITCODE -ne 0) {
+    throw "cargo tree for agent-session failed with exit code $LASTEXITCODE"
+}
+$sessionTree = $sessionTreeLines -join [Environment]::NewLine
+if ($sessionTree -notmatch "(?m)^agent-runtime v") {
+    throw "agent-session must use the provider-neutral agent-runtime contract"
+}
+if ($sessionTree -match "(?m)^(agent-tools|review-agent|app-service|ipc-types|app) v") {
+    throw "agent-session production dependencies must not point to adapters or application crates"
+}
+
+Write-Output "Agent session dependency boundary passed: orchestration depends inward on agent-runtime only."

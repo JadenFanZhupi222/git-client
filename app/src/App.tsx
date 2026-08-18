@@ -7,7 +7,7 @@ import type { Tab } from "./components/TabBar";
 import { Sidebar } from "./components/Sidebar";
 import { useQueryClient } from "@tanstack/react-query";
 import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, checkoutBranch, initRepo, type IpcError } from "./ipc";
-import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon, MoreIcon, DropletIcon, CloudIcon, PlusIcon, FileDiffIcon, BlameIcon, SubmoduleIcon, WorktreeIcon, BranchIcon, SettingsIcon, IssueIcon } from "./components/icons";
+import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon, MoreIcon, DropletIcon, CloudIcon, PlusIcon, FileDiffIcon, BlameIcon, SubmoduleIcon, WorktreeIcon, BranchIcon, SettingsIcon, IssueIcon, AgentIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
 import { StashMenu } from "./components/StashMenu";
@@ -40,6 +40,7 @@ const GitlabCreateMrDialog = lazy(() => import("./components/GitlabCreateMrDialo
 const SettingsPanel = lazy(() => import("./components/SettingsPanel").then((m) => ({ default: m.SettingsPanel })));
 const PullRequestsView = lazy(() => import("./components/PullRequestsView").then((m) => ({ default: m.PullRequestsView })));
 const IssuesView = lazy(() => import("./components/IssuesView").then((m) => ({ default: m.IssuesView })));
+const AgentWorkspace = lazy(() => import("./components/AgentWorkspace").then((m) => ({ default: m.AgentWorkspace })));
 const GitlabMrPanel = lazy(() => import("./components/GitlabMrPanel").then((m) => ({ default: m.GitlabMrPanel })));
 const CloneDialog = lazy(() => import("./components/CloneDialog").then((m) => ({ default: m.CloneDialog })));
 const OpLogPanel = lazy(() => import("./components/OpLogPanel").then((m) => ({ default: m.OpLogPanel })));
@@ -334,6 +335,7 @@ export default function App() {
     { id: "blame", label: t("nav.blame") },
     { id: "pullRequests", label: t("nav.pullRequests") },
     { id: "issues", label: t("nav.issues") },
+    { id: "agent", label: t("nav.agent") },
   ];
   if (hasSubmodules) views.push({ id: "submodules", label: t("nav.submodules") });
   if (hasWorktrees) views.push({ id: "worktrees", label: t("nav.worktrees") });
@@ -345,6 +347,7 @@ export default function App() {
     blame: <BlameIcon width={15} height={15} />,
     pullRequests: <CloudIcon width={15} height={15} />,
     issues: <IssueIcon width={15} height={15} />,
+    agent: <AgentIcon width={15} height={15} />,
     submodules: <SubmoduleIcon width={15} height={15} />,
     worktrees: <WorktreeIcon width={15} height={15} />,
     sparse: <FolderIcon width={15} height={15} />,
@@ -766,7 +769,7 @@ export default function App() {
               message={t("common.lazyLoadFailed")}
               retryLabel={t("common.reload")}
             >
-              {tab === "changes" ? <ChangesView repo={repo} onConfigureCredential={setSettingsSection} /> : tab === "history" ? <HistoryView repo={repo} onConfigureCredential={setSettingsSection} /> : tab === "compare" ? <CompareView repo={repo} /> : tab === "pullRequests" ? <PullRequestsView remotes={remoteInfos} branch={branch} preferredRemote={selectedRemote} onCreatePullRequest={() => setGithubCreatePrOpen(true)} onConfigureToken={() => openSettingsFor(APP_SETTINGS_ENTRY_POINTS.githubPrPanel)} onConfigureCredential={setSettingsSection} /> : tab === "issues" ? <IssuesView remotes={remoteInfos} preferredRemote={selectedRemote} onConfigureCredential={setSettingsSection} /> : tab === "submodules" ? <SubmodulesView repo={repo} /> : tab === "worktrees" ? <WorktreesView repo={repo} /> : tab === "sparse" ? <SparseCheckoutView repo={repo} /> : <BlameView repo={repo} />}
+              {tab === "changes" ? <ChangesView repo={repo} onConfigureCredential={setSettingsSection} /> : tab === "history" ? <HistoryView repo={repo} onConfigureCredential={setSettingsSection} /> : tab === "compare" ? <CompareView repo={repo} /> : tab === "pullRequests" ? <PullRequestsView remotes={remoteInfos} branch={branch} preferredRemote={selectedRemote} onCreatePullRequest={() => setGithubCreatePrOpen(true)} onConfigureToken={() => openSettingsFor(APP_SETTINGS_ENTRY_POINTS.githubPrPanel)} onConfigureCredential={setSettingsSection} /> : tab === "issues" ? <IssuesView remotes={remoteInfos} preferredRemote={selectedRemote} onConfigureCredential={setSettingsSection} /> : tab === "agent" ? <AgentWorkspace repo={repo} onConfigureCredential={setSettingsSection} /> : tab === "submodules" ? <SubmodulesView repo={repo} /> : tab === "worktrees" ? <WorktreesView repo={repo} /> : tab === "sparse" ? <SparseCheckoutView repo={repo} /> : <BlameView repo={repo} />}
             </LazyBoundary>
           </div>
         </div>

@@ -480,6 +480,12 @@ impl CancelSignal for ReviewCancellation {
     }
 }
 
+impl review_agent::ToolCancellation for ReviewCancellation {
+    fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Acquire)
+    }
+}
+
 const MAX_PENDING_CANCELLATIONS: usize = 128;
 const PENDING_CANCELLATION_TTL: Duration = Duration::from_secs(60);
 

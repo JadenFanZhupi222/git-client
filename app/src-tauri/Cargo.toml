@@ -27,6 +27,8 @@ tokio = { version = "1", features = ["rt"] }
 keyring = "4.1.2"
 reqwest.workspace = true
 review-agent = { path = "../../crates/review-agent" }
+agent-session = { path = "../../crates/agent-session" }
+agent-tools = { path = "../../crates/agent-tools" }
 async-trait.workspace = true
 
 # 接入我们的分层 crate:命令层 → app-service → git-engine

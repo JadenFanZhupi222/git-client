@@ -221,6 +221,45 @@ pub struct ToolApprovalResolutionDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct AgentSessionTurnInputDto {
+    pub repo_path: String,
+    pub run_id: String,
+    pub model_id: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct AgentSessionTurnResultDto {
+    pub session_id: String,
+    pub run_id: String,
+    #[ts(type = "number")]
+    pub revision: u64,
+    pub final_text: String,
+    pub usage: ReviewUsageDto,
+    pub model_rounds: u32,
+    pub retrieval_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct AgentSessionMessageDto {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct AgentSessionSnapshotDto {
+    pub session_id: String,
+    #[ts(type = "number")]
+    pub revision: u64,
+    pub memory_summary: Option<String>,
+    pub recent_messages: Vec<AgentSessionMessageDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
 pub struct ChangePlanInputDto {
     pub run_id: String,
     pub repo_path: String,
