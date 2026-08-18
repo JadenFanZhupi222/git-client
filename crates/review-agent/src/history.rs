@@ -600,6 +600,12 @@ fn map_provider_error(error: ProviderError) -> ReviewError {
     match error {
         ProviderError::CredentialMissing => ReviewError::AiKeyMissing,
         ProviderError::AuthFailed => ReviewError::AuthFailed,
+        ProviderError::QuotaExceeded => {
+            ReviewError::NetworkError("provider quota exhausted".into())
+        }
+        ProviderError::InvalidRequest => {
+            ReviewError::InvalidModelOutput("provider rejected request".into())
+        }
         ProviderError::RateLimited => ReviewError::RateLimited,
         ProviderError::Network(message) => ReviewError::NetworkError(message),
         ProviderError::OutputTruncated => ReviewError::InvalidModelOutput(

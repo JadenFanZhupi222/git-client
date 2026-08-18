@@ -1,3 +1,4 @@
+use crate::tool_names::ProviderToolNames;
 use crate::{
     AgentEventEmitter, AgentEventKind, ModelCatalogEntry, ModelPricing, ModelProvider,
     ModelRequest, ModelResponse, ModelUsage, ProviderCapabilities, ProviderDescriptor,
@@ -113,6 +114,7 @@ impl DeepSeekProvider {
     }
 
     fn request_body(&self, request: &ModelRequest) -> Result<Value, ProviderError> {
+        let tool_names = ProviderToolNames::new(request)?;
         let mut messages = Vec::new();
         for item in &request.transcript {
             match item {
@@ -137,7 +139,7 @@ impl DeepSeekProvider {
                             "id": call_id,
                             "type": "function",
                             "function": {
-                                "name": call.name,
+                                "name": tool_names.wire(&call.name)?,
                                 "arguments": call.arguments.to_string()
                             }
                         }));
@@ -186,16 +188,16 @@ impl DeepSeekProvider {
                         .tools
                         .iter()
                         .map(|tool| {
-                            json!({
+                            Ok(json!({
                                 "type": "function",
                                 "function": {
-                                    "name": tool.name,
+                                    "name": tool_names.wire(&tool.name)?,
                                     "description": tool.description,
                                     "parameters": tool.input_schema
                                 }
-                            })
+                            }))
                         })
-                        .collect(),
+                        .collect::<Result<Vec<_>, ProviderError>>()?,
                 ),
             );
         }
@@ -235,6 +237,15 @@ impl ModelProvider for DeepSeekProvider {
     }
 
     async fn respond(&self, request: &ModelRequest) -> Result<ModelResponse, ProviderError> {
+        let tool_names = ProviderToolNames::new(request)?;
+        tracing::info!(
+            provider = "deepseek",
+            model = %self.model,
+            stream = false,
+            transcript_items = request.transcript.len(),
+            tool_definitions = request.tools.len(),
+            "model request started"
+        );
         let response = self
             .client
             .post(format!(
@@ -246,23 +257,21 @@ impl ModelProvider for DeepSeekProvider {
             .send()
             .await
             .map_err(|_| ProviderError::Network("request failed".into()))?;
-        match response.status() {
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-                return Err(ProviderError::AuthFailed);
-            }
-            StatusCode::TOO_MANY_REQUESTS => return Err(ProviderError::RateLimited),
-            status if !status.is_success() => {
-                return Err(ProviderError::Network("service request failed".into()));
-            }
-            _ => {}
-        }
+        tracing::info!(
+            provider = "deepseek",
+            model = %self.model,
+            stream = false,
+            http_status = response.status().as_u16(),
+            "model request returned"
+        );
+        map_status(response.status())?;
         let bytes = response
             .bytes()
             .await
             .map_err(|_| ProviderError::Network("response body could not be read".into()))?;
         let body = serde_json::from_slice::<Value>(&bytes)
             .map_err(|_| ProviderError::Network("service returned an invalid response".into()))?;
-        parse_response(body)
+        tool_names.restore_response(parse_response(body)?)
     }
 
     async fn respond_stream(
@@ -270,6 +279,15 @@ impl ModelProvider for DeepSeekProvider {
         request: &ModelRequest,
         events: &AgentEventEmitter<'_>,
     ) -> Result<ModelResponse, ProviderError> {
+        let tool_names = ProviderToolNames::new(request)?;
+        tracing::info!(
+            provider = "deepseek",
+            model = %self.model,
+            stream = true,
+            transcript_items = request.transcript.len(),
+            tool_definitions = request.tools.len(),
+            "model request started"
+        );
         let response = self
             .client
             .post(format!(
@@ -281,6 +299,13 @@ impl ModelProvider for DeepSeekProvider {
             .send()
             .await
             .map_err(|_| ProviderError::Network("request failed".into()))?;
+        tracing::info!(
+            provider = "deepseek",
+            model = %self.model,
+            stream = true,
+            http_status = response.status().as_u16(),
+            "model request returned"
+        );
         map_status(response.status())?;
 
         let mut started = false;
@@ -357,11 +382,17 @@ impl ModelProvider for DeepSeekProvider {
                     if let Some(name) = call.pointer("/function/name").and_then(Value::as_str) {
                         target.name.push_str(name);
                     }
-                    if !target.started && !target.id.is_empty() && !target.name.is_empty() {
+                    if !target.started
+                        && !target.id.is_empty()
+                        && tool_names.canonical(&target.name).is_some()
+                    {
                         target.started = true;
                         events.emit(AgentEventKind::ToolCallStarted {
                             call_id: target.id.clone(),
-                            name: target.name.clone(),
+                            name: tool_names
+                                .canonical(&target.name)
+                                .expect("tool name checked above")
+                                .to_owned(),
                         });
                     }
                     if let Some(arguments) =
@@ -405,10 +436,10 @@ impl ModelProvider for DeepSeekProvider {
         } else {
             json!({"content": null, "tool_calls": streamed_calls})
         };
-        let response = parse_response(json!({
+        let response = tool_names.restore_response(parse_response(json!({
             "choices": [{"finish_reason": finish_reason, "message": message}],
             "usage": usage
-        }))?;
+        }))?)?;
         if last_usage.as_ref() != Some(&response.usage) {
             events.emit(AgentEventKind::UsageUpdated {
                 usage: response.usage.clone(),
@@ -428,14 +459,35 @@ struct StreamingToolCall {
 }
 
 fn map_status(status: StatusCode) -> Result<(), ProviderError> {
-    match status {
+    let result = match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(ProviderError::AuthFailed),
+        StatusCode::PAYMENT_REQUIRED => Err(ProviderError::QuotaExceeded),
         StatusCode::TOO_MANY_REQUESTS => Err(ProviderError::RateLimited),
+        status if status.is_client_error() => Err(ProviderError::InvalidRequest),
         status if !status.is_success() => {
             Err(ProviderError::Network("service request failed".into()))
         }
         _ => Ok(()),
+    };
+    if let Err(error) = &result {
+        let error_code = match error {
+            ProviderError::CredentialMissing => "credential_missing",
+            ProviderError::AuthFailed => "authentication_failed",
+            ProviderError::QuotaExceeded => "quota_exceeded",
+            ProviderError::InvalidRequest => "invalid_request",
+            ProviderError::RateLimited => "rate_limited",
+            ProviderError::Network(_) => "network",
+            ProviderError::OutputTruncated => "output_truncated",
+            ProviderError::InvalidResponse(_) => "invalid_response",
+        };
+        tracing::warn!(
+            provider = "deepseek",
+            http_status = status.as_u16(),
+            error_code,
+            "model request failed"
+        );
     }
+    result
 }
 
 fn map_sse_error(error: crate::sse::SseError) -> ProviderError {
@@ -640,6 +692,31 @@ mod tests {
         assert!(body.get("tools").is_none());
     }
 
+    #[test]
+    fn encodes_provider_neutral_tool_names_on_the_wire() {
+        let provider = DeepSeekProvider::new_with_base_for_test("k", "http://localhost".into());
+        let mut request = request(
+            vec![TranscriptItem::AssistantToolCalls(vec![
+                ToolCall::with_call_id("filesystem.read", "call-1", json!({"path": "src/lib.rs"})),
+            ])],
+            true,
+        );
+        request.tools[0].name = "filesystem.read".into();
+
+        let body = provider.request_body(&request).unwrap();
+        let definition_name = body
+            .pointer("/tools/0/function/name")
+            .and_then(Value::as_str)
+            .unwrap();
+        let replay_name = body
+            .pointer("/messages/0/tool_calls/0/function/name")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert_eq!(definition_name, replay_name);
+        assert!(!definition_name.contains('.'));
+        assert!(definition_name.len() <= 64);
+    }
+
     #[tokio::test]
     async fn parses_tool_calls_and_usage_through_the_shared_contract() {
         let server = MockServer::start().await;
@@ -671,6 +748,42 @@ mod tests {
         assert!(
             matches!(response.output, ModelOutput::ToolCalls { calls } if calls[0].name == "read_file")
         );
+    }
+
+    #[tokio::test]
+    async fn restores_wire_tool_names_before_returning_a_response() {
+        let server = MockServer::start().await;
+        let mut model_request = request(Vec::new(), true);
+        model_request.tools[0].name = "filesystem.read".into();
+        let wire_name = ProviderToolNames::new(&model_request)
+            .unwrap()
+            .wire("filesystem.read")
+            .unwrap()
+            .to_owned();
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .and(body_partial_json(json!({
+                "tools": [{"function": {"name": wire_name}}]
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "choices": [{"finish_reason": "tool_calls", "message": {
+                    "tool_calls": [{"id": "c1", "function": {
+                        "name": wire_name,
+                        "arguments": "{\"path\":\"src/lib.rs\"}"
+                    }}]
+                }}]
+            })))
+            .mount(&server)
+            .await;
+
+        let response = DeepSeekProvider::new_with_base_for_test("test-key", server.uri())
+            .respond(&model_request)
+            .await
+            .unwrap();
+        assert!(matches!(
+            response.output,
+            ModelOutput::ToolCalls { calls } if calls[0].name == "filesystem.read"
+        ));
     }
 
     #[test]
@@ -709,6 +822,9 @@ mod tests {
         for (status, expected) in [
             (401, ProviderError::AuthFailed),
             (403, ProviderError::AuthFailed),
+            (400, ProviderError::InvalidRequest),
+            (402, ProviderError::QuotaExceeded),
+            (422, ProviderError::InvalidRequest),
             (429, ProviderError::RateLimited),
         ] {
             let server = MockServer::start().await;

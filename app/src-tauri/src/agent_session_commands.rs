@@ -90,6 +90,12 @@ pub(crate) async fn start_agent_turn(
 ) -> Result<AgentSessionTurnResultDto, AgentIpcErrorDto> {
     let run_id = input.run_id.clone();
     let diagnostic_id = review_agent::diagnostic_id(&run_id);
+    tracing::info!(
+        run_id = %run_id,
+        diagnostic_id = %diagnostic_id,
+        model = %input.model_id,
+        "agent turn requested"
+    );
     validate_turn_input(&input).map_err(|error| agent_error(error, &diagnostic_id))?;
     let repository = validate_repository(&input.repo_path)
         .await
@@ -114,6 +120,22 @@ pub(crate) async fn start_agent_turn(
     .await
     .map_err(|error| agent_error(error, &diagnostic_id));
     run_registry.finish(&run_id);
+    match &result {
+        Ok(turn) => tracing::info!(
+            run_id = %run_id,
+            diagnostic_id = %diagnostic_id,
+            model_rounds = turn.model_rounds,
+            tool_calls = turn.usage.tool_calls,
+            "agent turn completed"
+        ),
+        Err(error) => tracing::warn!(
+            run_id = %run_id,
+            diagnostic_id = %diagnostic_id,
+            error_code = %error.code,
+            recoverable = error.recoverable,
+            "agent turn failed"
+        ),
+    }
     result
 }
 
@@ -311,15 +333,27 @@ fn session_engine_ipc_error(error: SessionEngineError) -> IpcError {
             match code {
                 review_agent::AgentErrorCode::CredentialMissing => "AI_KEY_MISSING",
                 review_agent::AgentErrorCode::AuthenticationFailed => "AI_AUTH_FAILED",
+                review_agent::AgentErrorCode::QuotaExceeded => "AI_QUOTA_EXCEEDED",
+                review_agent::AgentErrorCode::InvalidRequest => "AI_INVALID_REQUEST",
                 review_agent::AgentErrorCode::RateLimited => "AI_RATE_LIMITED",
                 review_agent::AgentErrorCode::Network => "AI_NETWORK_ERROR",
                 review_agent::AgentErrorCode::OutputTruncated => "AI_OUTPUT_TRUNCATED",
                 review_agent::AgentErrorCode::InvalidResponse => "AI_INVALID_RESPONSE",
             },
-            "Agent model request failed",
+            match code {
+                review_agent::AgentErrorCode::QuotaExceeded => {
+                    "The AI provider balance or quota is insufficient"
+                }
+                review_agent::AgentErrorCode::InvalidRequest => {
+                    "The AI provider rejected the agent request"
+                }
+                _ => "Agent model request failed",
+            },
             matches!(
                 code,
-                review_agent::AgentErrorCode::RateLimited | review_agent::AgentErrorCode::Network
+                review_agent::AgentErrorCode::QuotaExceeded
+                    | review_agent::AgentErrorCode::RateLimited
+                    | review_agent::AgentErrorCode::Network
             ),
         ),
         SessionEngineError::Session(error) => session_ipc_error(error),
@@ -454,5 +488,21 @@ mod tests {
             let error = validate_turn_input(&input).expect_err("invalid input must fail closed");
             assert_eq!(error.code, "AGENT_INVALID_INPUT");
         }
+    }
+
+    #[test]
+    fn provider_client_errors_are_specific_and_never_retried_as_network_failures() {
+        let quota = session_engine_ipc_error(SessionEngineError::Provider(
+            review_agent::AgentErrorCode::QuotaExceeded,
+        ));
+        assert_eq!(quota.code, "AI_QUOTA_EXCEEDED");
+        assert!(quota.message.contains("balance"));
+        assert!(quota.recoverable);
+
+        let invalid = session_engine_ipc_error(SessionEngineError::Provider(
+            review_agent::AgentErrorCode::InvalidRequest,
+        ));
+        assert_eq!(invalid.code, "AI_INVALID_REQUEST");
+        assert!(!invalid.recoverable);
     }
 }

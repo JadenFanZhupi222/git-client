@@ -1,3 +1,4 @@
+use crate::tool_names::ProviderToolNames;
 use crate::{
     AgentEventEmitter, AgentEventKind, ModelCatalogEntry, ModelPricing, ModelProvider,
     ModelRequest, ModelResponse, ModelUsage, ProviderCapabilities, ProviderDescriptor,
@@ -120,6 +121,7 @@ impl OpenAiProvider {
     }
 
     fn request_body(&self, request: &ModelRequest) -> Result<Value, ProviderError> {
+        let tool_names = ProviderToolNames::new(request)?;
         let mut instructions = Vec::new();
         let mut input = Vec::new();
         for item in &request.transcript {
@@ -139,7 +141,7 @@ impl OpenAiProvider {
                         input.push(json!({
                             "type": "function_call",
                             "call_id": call_id,
-                            "name": call.name,
+                            "name": tool_names.wire(&call.name)?,
                             "arguments": arguments.to_string(),
                             "status": "completed"
                         }));
@@ -199,15 +201,15 @@ impl OpenAiProvider {
                         .tools
                         .iter()
                         .map(|tool| {
-                            json!({
+                            Ok(json!({
                                 "type": "function",
-                                "name": tool.name,
+                                "name": tool_names.wire(&tool.name)?,
                                 "description": tool.description,
                                 "parameters": tool.input_schema,
                                 "strict": false
-                            })
+                            }))
                         })
-                        .collect(),
+                        .collect::<Result<Vec<_>, ProviderError>>()?,
                 ),
             );
         }
@@ -252,6 +254,7 @@ impl ModelProvider for OpenAiProvider {
     }
 
     async fn respond(&self, request: &ModelRequest) -> Result<ModelResponse, ProviderError> {
+        let tool_names = ProviderToolNames::new(request)?;
         let response = self
             .client
             .post(format!("{}/responses", self.base_url.trim_end_matches('/')))
@@ -281,7 +284,7 @@ impl ModelProvider for OpenAiProvider {
             .map_err(|_| ProviderError::Network("response body could not be read".into()))?;
         let body = serde_json::from_slice::<Value>(&bytes)
             .map_err(|_| ProviderError::Network("service returned an invalid response".into()))?;
-        parse_response(body)
+        tool_names.restore_response(parse_response(body)?)
     }
 
     async fn respond_stream(
@@ -289,6 +292,7 @@ impl ModelProvider for OpenAiProvider {
         request: &ModelRequest,
         events: &AgentEventEmitter<'_>,
     ) -> Result<ModelResponse, ProviderError> {
+        let tool_names = ProviderToolNames::new(request)?;
         let response = self
             .client
             .post(format!("{}/responses", self.base_url.trim_end_matches('/')))
@@ -347,10 +351,13 @@ impl ModelProvider for OpenAiProvider {
                         }
                         item_call_ids.insert(item_id.to_owned(), call_id.to_owned());
                     }
-                    if !call_id.is_empty() && !name.is_empty() {
+                    if !call_id.is_empty() && tool_names.canonical(name).is_some() {
                         events.emit(AgentEventKind::ToolCallStarted {
                             call_id: call_id.to_owned(),
-                            name: name.to_owned(),
+                            name: tool_names
+                                .canonical(name)
+                                .expect("tool name checked above")
+                                .to_owned(),
                         });
                     }
                 }
@@ -399,9 +406,10 @@ impl ModelProvider for OpenAiProvider {
         if let Some(error) = terminal_error {
             return Err(error);
         }
-        let response = parse_response(terminal_response.ok_or_else(|| {
-            ProviderError::InvalidResponse("stream ended before completion".into())
-        })?)?;
+        let response =
+            tool_names.restore_response(parse_response(terminal_response.ok_or_else(
+                || ProviderError::InvalidResponse("stream ended before completion".into()),
+            )?)?)?;
         events.emit(AgentEventKind::UsageUpdated {
             usage: response.usage.clone(),
         });
@@ -621,10 +629,11 @@ mod tests {
     fn maps_stateless_transcript_and_structured_output_without_reasoning_replay() {
         let provider = OpenAiProvider::new_with_base_for_test("k", "http://localhost".into());
         let mut request = request(true);
+        request.tools[0].name = "filesystem.read".into();
         request.transcript.extend([
             TranscriptItem::AssistantText("Earlier answer".into()),
             TranscriptItem::AssistantToolCalls(vec![ToolCall::with_call_id(
-                "read_file",
+                "filesystem.read",
                 "call-1",
                 json!({"path":"src/lib.rs"}),
             )]),
@@ -643,6 +652,12 @@ mod tests {
             Some(&json!("Earlier answer"))
         );
         assert_eq!(body.pointer("/input/2/type"), Some(&json!("function_call")));
+        assert_eq!(body.pointer("/input/2/name"), body.pointer("/tools/0/name"));
+        assert!(!body
+            .pointer("/tools/0/name")
+            .and_then(Value::as_str)
+            .unwrap()
+            .contains('.'));
         assert_eq!(
             body.pointer("/input/3/type"),
             Some(&json!("function_call_output"))

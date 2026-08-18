@@ -13,6 +13,7 @@ mod provider_retry;
 mod providers;
 mod review_output;
 mod sse;
+mod tool_names;
 mod trace;
 
 pub use agent_runtime::*;

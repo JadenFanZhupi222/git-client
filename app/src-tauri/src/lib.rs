@@ -1654,6 +1654,10 @@ fn watch_repo(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_target(false)
+        .try_init();
     // 整个应用一个共享后端,启动时建一次;按仓库路由的长驻上下文由 RepoRegistry 管理。
     let registry = RepoRegistry::new(Arc::new(CompositeBackend::default()));
     let builder = tauri::Builder::default()

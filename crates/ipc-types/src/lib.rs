@@ -947,6 +947,8 @@ impl From<review_agent::AgentEvent> for AgentEventDto {
                         review_agent::AgentErrorCode::AuthenticationFailed => {
                             "authentication_failed"
                         }
+                        review_agent::AgentErrorCode::QuotaExceeded => "quota_exceeded",
+                        review_agent::AgentErrorCode::InvalidRequest => "invalid_request",
                         review_agent::AgentErrorCode::RateLimited => "rate_limited",
                         review_agent::AgentErrorCode::Network => "network",
                         review_agent::AgentErrorCode::OutputTruncated => "output_truncated",

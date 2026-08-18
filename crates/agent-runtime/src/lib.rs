@@ -194,6 +194,8 @@ pub struct ModelResponse {
 pub enum AgentErrorCode {
     CredentialMissing,
     AuthenticationFailed,
+    QuotaExceeded,
+    InvalidRequest,
     RateLimited,
     Network,
     OutputTruncated,
@@ -205,6 +207,8 @@ impl From<&ProviderError> for AgentErrorCode {
         match error {
             ProviderError::CredentialMissing => Self::CredentialMissing,
             ProviderError::AuthFailed => Self::AuthenticationFailed,
+            ProviderError::QuotaExceeded => Self::QuotaExceeded,
+            ProviderError::InvalidRequest => Self::InvalidRequest,
             ProviderError::RateLimited => Self::RateLimited,
             ProviderError::Network(_) => Self::Network,
             ProviderError::OutputTruncated => Self::OutputTruncated,
@@ -486,6 +490,10 @@ pub enum ProviderError {
     CredentialMissing,
     #[error("provider authentication failed")]
     AuthFailed,
+    #[error("provider quota or balance was exhausted")]
+    QuotaExceeded,
+    #[error("provider rejected the request")]
+    InvalidRequest,
     #[error("provider rate limit exceeded")]
     RateLimited,
     #[error("provider network request failed: {0}")]
@@ -627,6 +635,8 @@ mod tests {
         assert!(ProviderError::RateLimited.is_transient());
         assert!(ProviderError::Network("offline".into()).is_transient());
         assert!(!ProviderError::AuthFailed.is_transient());
+        assert!(!ProviderError::QuotaExceeded.is_transient());
+        assert!(!ProviderError::InvalidRequest.is_transient());
         assert!(!ProviderError::InvalidResponse("bad json".into()).is_transient());
     }
 

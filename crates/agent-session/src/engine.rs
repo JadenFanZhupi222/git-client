@@ -400,6 +400,15 @@ impl SessionEngine {
         for failed_attempt in 1..=self.config.retry.max_attempts {
             let attempt_id = router.next_attempt();
             let emitter = router.emitter(attempt_id);
+            tracing::info!(
+                run_id = %router.run_id(),
+                attempt_id,
+                provider = %descriptor.provider_id,
+                model = %descriptor.model_id,
+                transcript_items = request.transcript.len(),
+                tool_definitions = request.tools.len(),
+                "agent model attempt started"
+            );
             emitter.emit(AgentEventKind::ModelAttemptStarted {
                 provider_id: descriptor.provider_id.clone(),
                 model_id: descriptor.model_id.clone(),
@@ -410,16 +419,35 @@ impl SessionEngine {
                 response = self.provider.respond_stream(request, &emitter) => response,
             };
             match response {
-                Ok(response) => return Ok(response),
+                Ok(response) => {
+                    tracing::info!(
+                        run_id = %router.run_id(),
+                        attempt_id,
+                        provider = %descriptor.provider_id,
+                        model = %descriptor.model_id,
+                        "agent model attempt completed"
+                    );
+                    return Ok(response);
+                }
                 Err(error) => {
                     let will_retry =
                         error.is_transient() && failed_attempt < self.config.retry.max_attempts;
+                    let error_code = AgentErrorCode::from(&error);
+                    tracing::warn!(
+                        run_id = %router.run_id(),
+                        attempt_id,
+                        provider = %descriptor.provider_id,
+                        model = %descriptor.model_id,
+                        error_code = ?error_code,
+                        will_retry,
+                        "agent model attempt failed"
+                    );
                     emitter.emit(AgentEventKind::ModelAttemptFailed {
-                        error: AgentErrorCode::from(&error),
+                        error: error_code,
                         will_retry,
                     });
                     if !will_retry {
-                        return Err(SessionEngineError::Provider(AgentErrorCode::from(&error)));
+                        return Err(SessionEngineError::Provider(error_code));
                     }
                     let delay = self
                         .config
