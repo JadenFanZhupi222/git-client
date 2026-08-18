@@ -13,12 +13,13 @@ use ipc_types::{
 use review_agent::{
     AgentEventPublisher, CancelSignal, HistoryBlameLine, HistoryConfidence, HistoryEvidence,
     HistoryEvidenceCommit, HistoryEvidenceFile, HistoryInvestigationResult, MAX_HISTORY_COMMITS,
-    MAX_HISTORY_PATCH_BYTES, investigate_history_with_events, is_sensitive_change_path,
-    validate_repository_path,
+    MAX_HISTORY_PATCH_BYTES, SanitizedTraceStore, investigate_history_with_events_and_trace,
+    is_sensitive_change_path, validate_repository_path,
 };
 use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::Path;
+use tauri::Manager;
 
 const HISTORY_RESOURCE_PREFIX: &str = "history:";
 const MAX_FILES_PER_COMMIT: usize = 16;
@@ -470,7 +471,7 @@ pub(crate) async fn investigate_repository_history(
             .map_err(review_error)
             .map_err(|error| agent_error(error, &input.run_id))?;
     }
-    let diagnostic_id = input.run_id.clone();
+    let diagnostic_id = review_agent::diagnostic_id(&input.run_id);
     let cancellation = runs
         .register_resource(&input.run_id, &history_resource_key(&input.repo_path))
         .map_err(|error| agent_error(error, &diagnostic_id))?;
@@ -499,14 +500,26 @@ pub(crate) async fn investigate_repository_history(
         let model = review_agent::create_model_provider(credential, &input.model_id)
             .map_err(review_error)
             .map_err(|error| agent_error(error, &diagnostic_id))?;
+        let trace_path = app
+            .path()
+            .app_data_dir()
+            .map_err(|_| IpcError {
+                code: "APP_DATA_DIR".into(),
+                message: "Application data directory is unavailable".into(),
+                recoverable: false,
+            })
+            .map_err(|error| agent_error(error, &diagnostic_id))?
+            .join("history-agent-trace.json");
+        let trace = SanitizedTraceStore::new(trace_path);
         let sink = AppAgentEventEmitter(app.clone());
         let events = AgentEventPublisher::new(&input.run_id, &sink);
-        investigate_history_with_events(
+        investigate_history_with_events_and_trace(
             model.as_ref(),
             &cancellation,
             &input.run_id,
             &evidence,
             &events,
+            &trace,
         )
         .await
         .map(result_dto)

@@ -156,6 +156,14 @@ fn is_stable_error_detail(detail: &str) -> bool {
             | "read_path_missing"
             | "read_start_invalid"
             | "read_end_invalid"
+            | "history_response_not_object"
+            | "output_truncated"
+            | "history_too_many_items"
+            | "history_ungrounded_citation"
+            | "history_unrelated_path"
+            | "history_stream_incomplete"
+            | "history_stream_invalid"
+            | "structured_output_unsupported"
             | "other_validation_failure"
     )
 }
@@ -177,6 +185,7 @@ fn is_stable_error_code(code: &str) -> bool {
             | "CANCELLED"
             | "REVIEW_PUBLISH_FAILED"
             | "ISSUE_PUBLISH_FAILED"
+            | "HISTORY_INVESTIGATION_BUDGET_EXCEEDED"
     )
 }
 
@@ -229,6 +238,14 @@ mod tests {
         assert!(is_safe_model_id("openai/gpt-5.6-terra"));
         assert!(!is_safe_model_id("model SECRET_KEY"));
         assert!(!is_safe_model_id(""));
+    }
+
+    #[test]
+    fn accepts_only_enumerated_history_error_details() {
+        assert!(is_stable_error_detail("output_truncated"));
+        assert!(is_stable_error_detail("history_stream_incomplete"));
+        assert!(is_stable_error_detail("history_ungrounded_citation"));
+        assert!(!is_stable_error_detail("history SECRET detail"));
     }
 
     #[tokio::test]
