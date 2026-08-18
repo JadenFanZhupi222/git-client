@@ -11,10 +11,10 @@ use ipc_types::{
     IpcError, ReviewUsageDto,
 };
 use review_agent::{
-    AgentEventPublisher, CancelSignal, HistoryBlameLine, HistoryConfidence, HistoryEvidence,
-    HistoryEvidenceCommit, HistoryEvidenceFile, HistoryInvestigationResult, MAX_HISTORY_COMMITS,
-    MAX_HISTORY_PATCH_BYTES, SanitizedTraceStore, investigate_history_with_events_and_trace,
-    is_sensitive_change_path, validate_repository_path,
+    AgentEventPublisher, CancelSignal, HistoryBlameLine, HistoryConfidence, HistoryEventAugmenter,
+    HistoryEvidence, HistoryEvidenceCommit, HistoryEvidenceFile, HistoryInvestigationResult,
+    MAX_HISTORY_COMMITS, MAX_HISTORY_PATCH_BYTES, SanitizedTraceStore,
+    investigate_history_with_events_and_trace, is_sensitive_change_path, validate_repository_path,
 };
 use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -512,7 +512,8 @@ pub(crate) async fn investigate_repository_history(
             .join("history-agent-trace.json");
         let trace = SanitizedTraceStore::new(trace_path);
         let sink = AppAgentEventEmitter(app.clone());
-        let events = AgentEventPublisher::new(&input.run_id, &sink);
+        let augmenter = HistoryEventAugmenter::default();
+        let events = AgentEventPublisher::new_with_augmenter(&input.run_id, &sink, &augmenter);
         investigate_history_with_events_and_trace(
             model.as_ref(),
             &cancellation,

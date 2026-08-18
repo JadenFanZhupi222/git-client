@@ -11,6 +11,7 @@ import {
   listReviewModels,
 } from "../ipc";
 import { useT } from "../lib/i18n";
+import { historyDraftFromStream, type HistoryStreamDraft } from "../lib/historyStream";
 import { useAgentStream } from "../hooks/useAgentStream";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { AgentStreamPanel } from "./AgentStreamPanel";
@@ -46,6 +47,7 @@ export function HistoryInvestigationWorkspace({
   const [result, setResult] = useState<HistoryInvestigationResultDto | null>(null);
   const [error, setError] = useState<AgentIpcErrorDto | null>(null);
   const agentStream = useAgentStream();
+  const streamingDraft = busy ? historyDraftFromStream(agentStream.stream) : null;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -85,6 +87,7 @@ export function HistoryInvestigationWorkspace({
     const runId = createRunId();
     runIdRef.current = runId;
     setBusy(true);
+    setResult(null);
     setError(null);
     try {
       await agentStream.begin(runId);
@@ -208,7 +211,15 @@ export function HistoryInvestigationWorkspace({
             </div>
           </div>
 
-          {busy && <div className="mt-5"><AgentStreamPanel stream={agentStream.stream} /></div>}
+          {agentStream.stream && (
+            <div className="mt-5">
+              <AgentStreamPanel
+                stream={agentStream.stream}
+                active={busy}
+                preparingLabel={t("historyInvestigator.activity.preparingEvidence")}
+              />
+            </div>
+          )}
 
           {error && (
             <div className="mt-5 flex items-start gap-2 border-y border-danger/30 bg-danger/[0.06] px-3 py-2.5 text-xs text-danger" role="alert">
@@ -218,6 +229,10 @@ export function HistoryInvestigationWorkspace({
                 <div className="mt-1 font-mono text-[10px] opacity-70">{error.code} · {error.diagnostic_id}</div>
               </div>
             </div>
+          )}
+
+          {streamingDraft && !result && (
+            <StreamingHistoryAnswer draft={streamingDraft} />
           )}
 
           {result && (
@@ -297,6 +312,52 @@ export function HistoryInvestigationWorkspace({
       </div>
     </section>
   );
+}
+
+function StreamingHistoryAnswer({ draft }: { draft: HistoryStreamDraft }) {
+  const t = useT();
+  return (
+    <section className="mt-7" aria-label={t("historyInvestigator.streaming.label")} aria-live="polite">
+      <div className="flex flex-wrap items-center gap-2 border-b border-line pb-3">
+        {draft.summary && (
+          <h2 className="min-w-0 flex-1 text-[15px] font-semibold leading-relaxed text-fg">
+            {draft.summary}
+            {draft.findings.length === 0 && <StreamingCaret />}
+          </h2>
+        )}
+        <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10.5px] font-medium text-accent">
+          {t("historyInvestigator.streaming.badge")}
+        </span>
+      </div>
+      {draft.findings.length > 0 && (
+        <div className="divide-y divide-line">
+          {draft.findings.map((finding, index) => (
+            <article key={index} className="py-4">
+              {finding.title && (
+                <h3 className="text-[13px] font-semibold text-fg">
+                  {finding.title}
+                  {index === draft.findings.length - 1 && !finding.explanation && <StreamingCaret />}
+                </h3>
+              )}
+              {finding.explanation && (
+                <p className="mt-1.5 text-[11.5px] leading-relaxed text-fg-muted">
+                  {finding.explanation}
+                  {index === draft.findings.length - 1 && <StreamingCaret />}
+                </p>
+              )}
+            </article>
+          ))}
+        </div>
+      )}
+      <p className="border-t border-line pt-2.5 text-[10.5px] text-fg-subtle">
+        {t("historyInvestigator.streaming.validationNotice")}
+      </p>
+    </section>
+  );
+}
+
+function StreamingCaret() {
+  return <span className="ml-0.5 inline-block h-[1em] w-px translate-y-[2px] bg-accent" aria-hidden="true" />;
 }
 
 type Translate = ReturnType<typeof useT>;

@@ -12,6 +12,9 @@ function event(sequence: number, attemptId: number, eventType: string, fields: P
     model_id: null,
     response_id: null,
     delta: null,
+    artifact_type: null,
+    artifact_field: null,
+    artifact_index: null,
     call_id: null,
     tool_name: null,
     usage: null,
@@ -47,5 +50,29 @@ describe("agent stream reducer", () => {
 
     expect(state).toBe(current);
     expect(state.attempts.map((attempt) => attempt.status)).toEqual(["retrying", "starting"]);
+  });
+
+  it("assembles semantic artifact text separately from raw model output", () => {
+    let state = createAgentStream("run-1");
+    state = reduceAgentEvent(state, event(1, 1, "artifact_text_delta", {
+      artifact_type: "history_investigation",
+      artifact_field: "summary",
+      artifact_index: null,
+      delta: "The guard ",
+    }));
+    state = reduceAgentEvent(state, event(2, 1, "artifact_text_delta", {
+      artifact_type: "history_investigation",
+      artifact_field: "summary",
+      artifact_index: null,
+      delta: "was added",
+    }));
+
+    expect(state.attempts[0].text).toBe("");
+    expect(state.attempts[0].artifactText).toEqual([{
+      artifactType: "history_investigation",
+      field: "summary",
+      itemIndex: null,
+      text: "The guard was added",
+    }]);
   });
 });

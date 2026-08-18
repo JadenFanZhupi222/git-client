@@ -183,6 +183,9 @@ pub struct AgentEventDto {
     pub model_id: Option<String>,
     pub response_id: Option<String>,
     pub delta: Option<String>,
+    pub artifact_type: Option<String>,
+    pub artifact_field: Option<String>,
+    pub artifact_index: Option<u32>,
     pub call_id: Option<String>,
     pub tool_name: Option<String>,
     pub usage: Option<ReviewUsageDto>,
@@ -737,6 +740,9 @@ impl From<review_agent::AgentEvent> for AgentEventDto {
             model_id: None,
             response_id: None,
             delta: None,
+            artifact_type: None,
+            artifact_field: None,
+            artifact_index: None,
             call_id: None,
             tool_name: None,
             usage: None,
@@ -758,6 +764,18 @@ impl From<review_agent::AgentEvent> for AgentEventDto {
             }
             review_agent::AgentEventKind::OutputTextDelta { delta } => {
                 dto.event_type = "output_text_delta".into();
+                dto.delta = Some(delta);
+            }
+            review_agent::AgentEventKind::ArtifactTextDelta {
+                artifact_type,
+                field,
+                item_index,
+                delta,
+            } => {
+                dto.event_type = "artifact_text_delta".into();
+                dto.artifact_type = Some(artifact_type);
+                dto.artifact_field = Some(field);
+                dto.artifact_index = item_index;
                 dto.delta = Some(delta);
             }
             review_agent::AgentEventKind::ToolCallStarted { call_id, name } => {
@@ -947,6 +965,9 @@ mod review_dto_contract_tests {
                 "model_id": null,
                 "response_id": null,
                 "delta": null,
+                "artifact_type": null,
+                "artifact_field": null,
+                "artifact_index": null,
                 "call_id": null,
                 "tool_name": null,
                 "usage": null,

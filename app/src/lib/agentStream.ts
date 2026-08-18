@@ -8,12 +8,20 @@ export type AgentStreamTool = {
   arguments: string;
 };
 
+export type AgentStreamArtifactText = {
+  artifactType: string;
+  field: string;
+  itemIndex: number | null;
+  text: string;
+};
+
 export type AgentStreamAttempt = {
   attemptId: number;
   providerId: string | null;
   modelId: string | null;
   responseId: string | null;
   text: string;
+  artifactText: AgentStreamArtifactText[];
   tools: AgentStreamTool[];
   usage: ReviewUsageDto | null;
   errorCode: string | null;
@@ -37,6 +45,7 @@ function emptyAttempt(attemptId: number): AgentStreamAttempt {
     modelId: null,
     responseId: null,
     text: "",
+    artifactText: [],
     tools: [],
     usage: null,
     errorCode: null,
@@ -49,6 +58,7 @@ export function reduceAgentEvent(state: AgentStreamState, event: AgentEventDto):
 
   const attempts = state.attempts.map((attempt) => ({
     ...attempt,
+    artifactText: attempt.artifactText.map((part) => ({ ...part })),
     tools: attempt.tools.map((tool) => ({ ...tool })),
   }));
   let attempt = attempts.find((item) => item.attemptId === event.attempt_id);
@@ -71,6 +81,26 @@ export function reduceAgentEvent(state: AgentStreamState, event: AgentEventDto):
       attempt.text += event.delta ?? "";
       attempt.status = "streaming";
       break;
+    case "artifact_text_delta": {
+      if (!event.artifact_type || !event.artifact_field) break;
+      let part = attempt.artifactText.find((candidate) => (
+        candidate.artifactType === event.artifact_type
+        && candidate.field === event.artifact_field
+        && candidate.itemIndex === event.artifact_index
+      ));
+      if (!part) {
+        part = {
+          artifactType: event.artifact_type,
+          field: event.artifact_field,
+          itemIndex: event.artifact_index,
+          text: "",
+        };
+        attempt.artifactText.push(part);
+      }
+      part.text += event.delta ?? "";
+      attempt.status = "streaming";
+      break;
+    }
     case "tool_call_started":
       if (event.call_id && !attempt.tools.some((tool) => tool.callId === event.call_id)) {
         attempt.tools.push({ callId: event.call_id, name: event.tool_name ?? "tool", arguments: "" });

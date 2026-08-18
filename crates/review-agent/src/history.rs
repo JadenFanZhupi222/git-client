@@ -7,6 +7,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use std::sync::Mutex;
 use std::time::Instant;
 
 pub const MAX_HISTORY_COMMITS: usize = 24;
@@ -109,6 +110,227 @@ struct ModelHistoryFinding {
     explanation: String,
     commit_ids: Vec<String>,
     paths: Vec<String>,
+}
+
+pub const HISTORY_ARTIFACT_TYPE: &str = "history_investigation";
+
+#[derive(Default)]
+pub struct HistoryEventAugmenter {
+    state: Mutex<HistoryStreamState>,
+}
+
+#[derive(Default)]
+struct HistoryStreamState {
+    attempt_id: Option<u32>,
+    raw: String,
+    draft: HistoryStreamDraft,
+}
+
+#[derive(Clone, Default)]
+struct HistoryStreamDraft {
+    summary: String,
+    findings: Vec<HistoryStreamFinding>,
+}
+
+#[derive(Clone, Default)]
+struct HistoryStreamFinding {
+    title: String,
+    explanation: String,
+}
+
+impl crate::AgentEventAugmenter for HistoryEventAugmenter {
+    fn additional_events(&self, attempt_id: u32, kind: &AgentEventKind) -> Vec<AgentEventKind> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if matches!(kind, AgentEventKind::ModelAttemptStarted { .. })
+            || state.attempt_id != Some(attempt_id)
+        {
+            *state = HistoryStreamState {
+                attempt_id: Some(attempt_id),
+                ..HistoryStreamState::default()
+            };
+        }
+        let AgentEventKind::OutputTextDelta { delta } = kind else {
+            return Vec::new();
+        };
+
+        state.raw.push_str(delta);
+        let next = parse_history_stream_draft(&state.raw);
+        let events = history_draft_deltas(&state.draft, &next);
+        state.draft = next;
+        events
+    }
+}
+
+fn history_draft_deltas(
+    previous: &HistoryStreamDraft,
+    next: &HistoryStreamDraft,
+) -> Vec<AgentEventKind> {
+    let mut events = Vec::new();
+    push_artifact_suffix(
+        &mut events,
+        "summary",
+        None,
+        &previous.summary,
+        &next.summary,
+    );
+    for (index, finding) in next.findings.iter().enumerate() {
+        let previous_finding = previous.findings.get(index);
+        push_artifact_suffix(
+            &mut events,
+            "finding_title",
+            Some(index as u32),
+            previous_finding.map_or("", |value| value.title.as_str()),
+            &finding.title,
+        );
+        push_artifact_suffix(
+            &mut events,
+            "finding_explanation",
+            Some(index as u32),
+            previous_finding.map_or("", |value| value.explanation.as_str()),
+            &finding.explanation,
+        );
+    }
+    events
+}
+
+fn push_artifact_suffix(
+    events: &mut Vec<AgentEventKind>,
+    field: &str,
+    item_index: Option<u32>,
+    previous: &str,
+    next: &str,
+) {
+    let Some(delta) = next.strip_prefix(previous) else {
+        return;
+    };
+    if delta.is_empty() {
+        return;
+    }
+    events.push(AgentEventKind::ArtifactTextDelta {
+        artifact_type: HISTORY_ARTIFACT_TYPE.into(),
+        field: field.into(),
+        item_index,
+        delta: delta.into(),
+    });
+}
+
+fn parse_history_stream_draft(source: &str) -> HistoryStreamDraft {
+    let mut draft = HistoryStreamDraft::default();
+    let mut cursor = 0;
+    while cursor < source.len() {
+        if source.as_bytes()[cursor] != b'"' {
+            cursor += source[cursor..].chars().next().map_or(1, char::len_utf8);
+            continue;
+        }
+        let key = read_json_stream_string(source, cursor);
+        if !key.complete {
+            break;
+        }
+        cursor = key.end;
+        if !matches!(key.value.as_str(), "summary" | "title" | "explanation") {
+            continue;
+        }
+        let mut value_start = skip_json_whitespace(source, cursor);
+        if source.as_bytes().get(value_start) != Some(&b':') {
+            continue;
+        }
+        value_start = skip_json_whitespace(source, value_start + 1);
+        if source.as_bytes().get(value_start) != Some(&b'"') {
+            continue;
+        }
+        let value = read_json_stream_string(source, value_start);
+        match key.value.as_str() {
+            "summary" if draft.summary.is_empty() => draft.summary = value.value,
+            "title" => draft.findings.push(HistoryStreamFinding {
+                title: value.value,
+                explanation: String::new(),
+            }),
+            "explanation" => {
+                if let Some(finding) = draft.findings.last_mut() {
+                    finding.explanation = value.value;
+                }
+            }
+            _ => {}
+        }
+        cursor = value.end;
+        if !value.complete {
+            break;
+        }
+    }
+    draft
+}
+
+struct JsonStreamString {
+    value: String,
+    end: usize,
+    complete: bool,
+}
+
+fn read_json_stream_string(source: &str, quote_index: usize) -> JsonStreamString {
+    let mut value = String::new();
+    let mut cursor = quote_index + 1;
+    while cursor < source.len() {
+        let character = source[cursor..]
+            .chars()
+            .next()
+            .expect("cursor is in bounds");
+        if character == '"' {
+            return JsonStreamString {
+                value,
+                end: cursor + 1,
+                complete: true,
+            };
+        }
+        if character != '\\' {
+            value.push(character);
+            cursor += character.len_utf8();
+            continue;
+        }
+        let Some(escape) = source[cursor + 1..].chars().next() else {
+            break;
+        };
+        match escape {
+            '"' | '\\' | '/' => value.push(escape),
+            'b' => value.push('\u{0008}'),
+            'f' => value.push('\u{000c}'),
+            'n' => value.push('\n'),
+            'r' => value.push('\r'),
+            't' => value.push('\t'),
+            'u' => {
+                let code_start = cursor + 2;
+                let code_end = code_start + 4;
+                let Some(code) = source.get(code_start..code_end) else {
+                    break;
+                };
+                if let Ok(number) = u32::from_str_radix(code, 16) {
+                    if let Some(decoded) = char::from_u32(number) {
+                        value.push(decoded);
+                    }
+                }
+                cursor = code_end;
+                continue;
+            }
+            other => value.push(other),
+        }
+        cursor += 1 + escape.len_utf8();
+    }
+    JsonStreamString {
+        value,
+        end: source.len(),
+        complete: false,
+    }
+}
+
+fn skip_json_whitespace(source: &str, start: usize) -> usize {
+    let mut cursor = start;
+    while source
+        .as_bytes()
+        .get(cursor)
+        .is_some_and(u8::is_ascii_whitespace)
+    {
+        cursor += 1;
+    }
+    cursor
 }
 
 pub async fn investigate_history(
@@ -750,6 +972,92 @@ mod tests {
                 }],
             }],
         }
+    }
+
+    #[test]
+    fn history_event_augmenter_emits_only_incremental_display_prose_and_resets_on_retry() {
+        fn additional(
+            augmenter: &HistoryEventAugmenter,
+            attempt_id: u32,
+            kind: AgentEventKind,
+        ) -> Vec<AgentEventKind> {
+            crate::AgentEventAugmenter::additional_events(augmenter, attempt_id, &kind)
+        }
+
+        let augmenter = HistoryEventAugmenter::default();
+        additional(
+            &augmenter,
+            1,
+            AgentEventKind::ModelAttemptStarted {
+                provider_id: "deepseek".into(),
+                model_id: "deepseek-chat".into(),
+            },
+        );
+
+        let first = additional(
+            &augmenter,
+            1,
+            AgentEventKind::OutputTextDelta {
+                delta: r#"{"summary":"The guar"#.into(),
+            },
+        );
+        assert_eq!(
+            first,
+            [AgentEventKind::ArtifactTextDelta {
+                artifact_type: HISTORY_ARTIFACT_TYPE.into(),
+                field: "summary".into(),
+                item_index: None,
+                delta: "The guar".into(),
+            }]
+        );
+
+        let second = additional(
+            &augmenter,
+            1,
+            AgentEventKind::OutputTextDelta {
+                delta: r#"d","confidence":"high","findings":[{"title":"Start","explanation":"Because","commit_ids":["abc1234"]}"#.into(),
+            },
+        );
+        assert_eq!(second.len(), 3);
+        assert!(matches!(
+            &second[0],
+            AgentEventKind::ArtifactTextDelta { field, delta, .. }
+                if field == "summary" && delta == "d"
+        ));
+        assert!(matches!(
+            &second[1],
+            AgentEventKind::ArtifactTextDelta { field, item_index: Some(0), delta, .. }
+                if field == "finding_title" && delta == "Start"
+        ));
+        assert!(matches!(
+            &second[2],
+            AgentEventKind::ArtifactTextDelta { field, item_index: Some(0), delta, .. }
+                if field == "finding_explanation" && delta == "Because"
+        ));
+        assert!(second
+            .iter()
+            .all(|event| format!("{event:?}").contains("abc1234") == false));
+
+        additional(
+            &augmenter,
+            2,
+            AgentEventKind::ModelAttemptStarted {
+                provider_id: "deepseek".into(),
+                model_id: "deepseek-chat".into(),
+            },
+        );
+        let retry = additional(
+            &augmenter,
+            2,
+            AgentEventKind::OutputTextDelta {
+                delta: r#"{"summary":"Replacement"#.into(),
+            },
+        );
+        assert!(matches!(
+            &retry[0],
+            AgentEventKind::ArtifactTextDelta { field, delta, .. }
+                if field == "summary" && delta == "Replacement"
+        ));
     }
 
     #[tokio::test]

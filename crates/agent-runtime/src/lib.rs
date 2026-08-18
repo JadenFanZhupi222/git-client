@@ -209,6 +209,12 @@ pub enum AgentEventKind {
     OutputTextDelta {
         delta: String,
     },
+    ArtifactTextDelta {
+        artifact_type: String,
+        field: String,
+        item_index: Option<u32>,
+        delta: String,
+    },
     ToolCallStarted {
         call_id: String,
         name: String,
@@ -239,6 +245,10 @@ pub trait AgentEventSink: Send + Sync {
     fn emit(&self, event: AgentEvent);
 }
 
+pub trait AgentEventAugmenter: Send + Sync {
+    fn additional_events(&self, attempt_id: u32, kind: &AgentEventKind) -> Vec<AgentEventKind>;
+}
+
 #[derive(Debug, Default)]
 pub struct NoopAgentEventSink;
 
@@ -251,6 +261,7 @@ pub struct AgentEventEmitter<'a> {
     attempt_id: u32,
     sequence: &'a AtomicU64,
     sink: &'a dyn AgentEventSink,
+    augmenter: Option<&'a dyn AgentEventAugmenter>,
 }
 
 pub struct AgentEventPublisher<'a> {
@@ -258,6 +269,7 @@ pub struct AgentEventPublisher<'a> {
     sequence: AtomicU64,
     attempt_sequence: AtomicU32,
     sink: &'a dyn AgentEventSink,
+    augmenter: Option<&'a dyn AgentEventAugmenter>,
 }
 
 impl<'a> AgentEventPublisher<'a> {
@@ -267,15 +279,31 @@ impl<'a> AgentEventPublisher<'a> {
             sequence: AtomicU64::new(1),
             attempt_sequence: AtomicU32::new(1),
             sink,
+            augmenter: None,
+        }
+    }
+
+    pub fn new_with_augmenter(
+        run_id: &'a str,
+        sink: &'a dyn AgentEventSink,
+        augmenter: &'a dyn AgentEventAugmenter,
+    ) -> Self {
+        Self {
+            run_id,
+            sequence: AtomicU64::new(1),
+            attempt_sequence: AtomicU32::new(1),
+            sink,
+            augmenter: Some(augmenter),
         }
     }
 
     pub fn next_attempt(&self) -> AgentEventEmitter<'_> {
-        AgentEventEmitter::new(
+        AgentEventEmitter::new_with_augmenter(
             self.run_id,
             self.attempt_sequence.fetch_add(1, Ordering::Relaxed),
             &self.sequence,
             self.sink,
+            self.augmenter,
         )
     }
 
@@ -284,7 +312,14 @@ impl<'a> AgentEventPublisher<'a> {
     }
 
     pub fn emit_for_attempt(&self, attempt_id: u32, kind: AgentEventKind) {
-        AgentEventEmitter::new(self.run_id, attempt_id, &self.sequence, self.sink).emit(kind);
+        AgentEventEmitter::new_with_augmenter(
+            self.run_id,
+            attempt_id,
+            &self.sequence,
+            self.sink,
+            self.augmenter,
+        )
+        .emit(kind);
     }
 }
 
@@ -300,10 +335,38 @@ impl<'a> AgentEventEmitter<'a> {
             attempt_id,
             sequence,
             sink,
+            augmenter: None,
+        }
+    }
+
+    fn new_with_augmenter(
+        run_id: &'a str,
+        attempt_id: u32,
+        sequence: &'a AtomicU64,
+        sink: &'a dyn AgentEventSink,
+        augmenter: Option<&'a dyn AgentEventAugmenter>,
+    ) -> Self {
+        Self {
+            run_id,
+            attempt_id,
+            sequence,
+            sink,
+            augmenter,
         }
     }
 
     pub fn emit(&self, kind: AgentEventKind) {
+        let additional = self
+            .augmenter
+            .map(|augmenter| augmenter.additional_events(self.attempt_id, &kind))
+            .unwrap_or_default();
+        self.emit_one(kind);
+        for event in additional {
+            self.emit_one(event);
+        }
+    }
+
+    fn emit_one(&self, kind: AgentEventKind) {
         self.sink.emit(AgentEvent {
             run_id: self.run_id.to_owned(),
             sequence: self.sequence.fetch_add(1, Ordering::Relaxed),

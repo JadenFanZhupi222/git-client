@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentEventDto } from "../bindings";
 import { setLang } from "../lib/i18n";
 import { HistoryInvestigationWorkspace } from "./HistoryInvestigationWorkspace";
 
@@ -48,6 +49,8 @@ const result = {
   provider_attempts: 1,
 };
 
+let agentEventListener: ((event: AgentEventDto) => void) | null = null;
+
 describe("HistoryInvestigationWorkspace", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -57,7 +60,11 @@ describe("HistoryInvestigationWorkspace", () => {
     ipc.credentialStatus.mockResolvedValue(true);
     ipc.listReviewModels.mockResolvedValue([model]);
     ipc.investigateRepositoryHistory.mockResolvedValue(result);
-    ipc.onAgentEvent.mockResolvedValue(vi.fn());
+    agentEventListener = null;
+    ipc.onAgentEvent.mockImplementation(async (listener: (event: AgentEventDto) => void) => {
+      agentEventListener = listener;
+      return vi.fn();
+    });
   });
 
   it("requires consent and sends the selected file as bounded evidence scope", async () => {
@@ -118,4 +125,101 @@ describe("HistoryInvestigationWorkspace", () => {
       expect.objectContaining({ file: null }),
     ));
   });
+
+  it("streams answer prose before the validated command result is available", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("history-investigation-model-consent-v1", "accepted");
+    let resolveInvestigation!: (value: typeof result) => void;
+    ipc.investigateRepositoryHistory.mockImplementation(() => new Promise((resolve) => {
+      resolveInvestigation = resolve;
+    }));
+
+    render(
+      <HistoryInvestigationWorkspace
+        repo="D:/repo"
+        selectedFile={null}
+        onClose={vi.fn()}
+        onOpenEvidence={vi.fn()}
+      />,
+    );
+
+    await screen.findByText("GPT-5.4 mini");
+    await user.type(screen.getByLabelText("What code decision do you want to trace?"), "Why was the startup guard introduced?");
+    await user.click(screen.getByRole("button", { name: "Find evidence and answer" }));
+    await waitFor(() => expect(ipc.investigateRepositoryHistory).toHaveBeenCalled());
+    const runId = ipc.investigateRepositoryHistory.mock.calls[0][0].run_id as string;
+
+    act(() => {
+      agentEventListener?.(agentEvent(runId, 1, "model_attempt_started", { model_id: model.id }));
+      agentEventListener?.(agentEvent(runId, 2, "output_text_delta", {
+        delta: '{"summary":"The guard was intro',
+      }));
+      agentEventListener?.(agentEvent(runId, 3, "artifact_text_delta", {
+        artifact_type: "history_investigation",
+        artifact_field: "summary",
+        delta: "The guard was intro",
+      }));
+    });
+
+    expect(screen.getByLabelText("Streaming history answer")).toHaveTextContent("The guard was intro");
+    expect(screen.queryByText("High confidence")).not.toBeInTheDocument();
+    expect(screen.queryByText("abc1234")).not.toBeInTheDocument();
+
+    act(() => {
+      agentEventListener?.(agentEvent(runId, 4, "output_text_delta", {
+        delta: 'duced to keep startup predictable.","findings":[{"title":"Startup guard","explanation":"The commit adds a fall',
+      }));
+      agentEventListener?.(agentEvent(runId, 5, "artifact_text_delta", {
+        artifact_type: "history_investigation",
+        artifact_field: "summary",
+        delta: "duced to keep startup predictable.",
+      }));
+      agentEventListener?.(agentEvent(runId, 6, "artifact_text_delta", {
+        artifact_type: "history_investigation",
+        artifact_field: "finding_title",
+        artifact_index: 0,
+        delta: "Startup guard",
+      }));
+      agentEventListener?.(agentEvent(runId, 7, "artifact_text_delta", {
+        artifact_type: "history_investigation",
+        artifact_field: "finding_explanation",
+        artifact_index: 0,
+        delta: "The commit adds a fall",
+      }));
+    });
+
+    expect(screen.getByLabelText("Streaming history answer")).toHaveTextContent("The guard was introduced to keep startup predictable.");
+    expect(screen.getByLabelText("Streaming history answer")).toHaveTextContent("The commit adds a fall");
+
+    await act(async () => resolveInvestigation(result));
+    expect(await screen.findByText("High confidence")).toBeInTheDocument();
+    expect(screen.getByText("abc1234")).toBeInTheDocument();
+  });
 });
+
+function agentEvent(
+  runId: string,
+  sequence: number,
+  eventType: string,
+  fields: Partial<AgentEventDto> = {},
+): AgentEventDto {
+  return {
+    run_id: runId,
+    sequence,
+    attempt_id: 1,
+    event_type: eventType,
+    provider_id: "deepseek",
+    model_id: null,
+    response_id: null,
+    delta: null,
+    artifact_type: null,
+    artifact_field: null,
+    artifact_index: null,
+    call_id: null,
+    tool_name: null,
+    usage: null,
+    error_code: null,
+    will_retry: null,
+    ...fields,
+  };
+}
