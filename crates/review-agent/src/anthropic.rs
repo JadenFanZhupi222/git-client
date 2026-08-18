@@ -635,6 +635,11 @@ fn anthropic_usage(body: &Value) -> ModelUsage {
     .sum();
     ModelUsage {
         input_tokens,
+        cached_input_tokens: body
+            .pointer("/usage/cache_read_input_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            .min(input_tokens),
         output_tokens: body
             .pointer("/usage/output_tokens")
             .and_then(Value::as_u64)

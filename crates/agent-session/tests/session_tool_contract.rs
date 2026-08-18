@@ -73,6 +73,7 @@ fn model_response(output: ModelOutput) -> ModelResponse {
         output,
         usage: ModelUsage {
             input_tokens: 20,
+            cached_input_tokens: 0,
             output_tokens: 5,
             tool_calls: 0,
         },

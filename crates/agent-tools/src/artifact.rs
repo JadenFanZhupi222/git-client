@@ -1,6 +1,7 @@
-use crate::PathScope;
+use crate::{content_digest, PathScope};
 use agent_runtime::{
-    ToolDefinition, ToolExecutionContext, ToolHandler, ToolHandlerError, ToolRisk,
+    ToolDefinition, ToolExecutionContext, ToolHandler, ToolHandlerError, ToolHandlerOutput,
+    ToolIntentPrecondition, ToolReceipt, ToolRisk,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -39,11 +40,36 @@ impl ArtifactWriteTool {
 
 #[async_trait]
 impl ToolHandler for ArtifactWriteTool {
+    fn prepare_intent(
+        &self,
+        context: &ToolExecutionContext,
+        arguments: &Value,
+    ) -> Result<ToolIntentPrecondition, ToolHandlerError> {
+        let name = arguments
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or(ToolHandlerError)?;
+        let content = arguments
+            .get("content")
+            .and_then(Value::as_str)
+            .ok_or(ToolHandlerError)?;
+        let artifact_id = format!(
+            "artifact-{:016x}",
+            stable_hash(&format!("{}:{}:{name}", context.run_id, context.call_id))
+        );
+        Ok(ToolIntentPrecondition {
+            resource: Some(artifact_id),
+            before_digest: Some("absent".into()),
+            expected_after_digest: Some(content_digest(content.as_bytes())),
+            replay_policy: None,
+        })
+    }
+
     async fn execute(
         &self,
         context: ToolExecutionContext,
         arguments: Value,
-    ) -> Result<String, ToolHandlerError> {
+    ) -> Result<ToolHandlerOutput, ToolHandlerError> {
         let name = arguments
             .get("name")
             .and_then(Value::as_str)
@@ -70,6 +96,7 @@ impl ToolHandler for ArtifactWriteTool {
         let relative = format!("{artifact_id}.data");
         let scope = self.scope.clone();
         let bytes = content.len();
+        let digest = content_digest(&content);
         tokio::task::spawn_blocking(move || {
             let target = scope
                 .write_target(&relative)
@@ -90,13 +117,21 @@ impl ToolHandler for ArtifactWriteTool {
         })
         .await
         .map_err(|_| ToolHandlerError)??;
-        Ok(json!({
-            "artifact_id": artifact_id,
-            "name": name,
-            "media_type": media_type,
-            "bytes": bytes
-        })
-        .to_string())
+        Ok(ToolHandlerOutput::new(
+            json!({
+                "artifact_id": artifact_id,
+                "name": name,
+                "media_type": media_type,
+                "bytes": bytes,
+                "content_digest": digest
+            })
+            .to_string(),
+            ToolReceipt::Artifact {
+                execution_id: context.execution_id,
+                artifact_id,
+                content_digest: digest,
+            },
+        ))
     }
 
     fn summarize_arguments(&self, arguments: &Value) -> Option<String> {
@@ -128,6 +163,7 @@ mod tests {
                 ToolExecutionContext {
                     run_id: "run".into(),
                     call_id: "call".into(),
+                    execution_id: "exec-call".into(),
                     cancellation: Arc::new(NeverCancel),
                 },
                 json!({"name":"report.md", "media_type":"text/markdown", "content":"hello"}),
@@ -147,6 +183,7 @@ mod tests {
                 ToolExecutionContext {
                     run_id: "run".into(),
                     call_id: "large".into(),
+                    execution_id: "exec-large".into(),
                     cancellation: Arc::new(NeverCancel),
                 },
                 json!({"name":"large.txt", "media_type":"text/plain", "content":"x".repeat(1025)}),

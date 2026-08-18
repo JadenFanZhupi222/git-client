@@ -256,6 +256,117 @@ pub struct AgentSessionSnapshotDto {
     pub revision: u64,
     pub memory_summary: Option<String>,
     pub recent_messages: Vec<AgentSessionMessageDto>,
+    pub active_goal: Option<AgentGoalSnapshotDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct AgentGoalUsageDto {
+    pub model_id: String,
+    pub currency: Option<String>,
+    #[ts(type = "number")]
+    pub input_tokens: u64,
+    #[ts(type = "number")]
+    pub cached_input_tokens: u64,
+    #[ts(type = "number")]
+    pub output_tokens: u64,
+    pub tool_calls: u32,
+    #[ts(type = "number")]
+    pub spent_micros: u64,
+    #[ts(type = "number | null")]
+    pub limit_micros: Option<u64>,
+    #[ts(type = "number | null")]
+    pub limit_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct AgentGoalSnapshotDto {
+    pub goal_id: String,
+    pub session_id: String,
+    #[ts(type = "number")]
+    pub revision: u64,
+    pub objective: String,
+    pub model_id: String,
+    pub status: String,
+    pub pause_reason: Option<String>,
+    pub block_reason: Option<String>,
+    pub usage_by_model: Vec<AgentGoalUsageDto>,
+    pub slice_index: u32,
+    pub steering_count: usize,
+    pub completion_candidate_pending: bool,
+    pub final_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct CreateAgentGoalInputDto {
+    pub repo_path: String,
+    pub goal_id: String,
+    pub model_id: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct AgentGoalMutationInputDto {
+    pub repo_path: String,
+    pub goal_id: String,
+    #[ts(type = "number")]
+    pub expected_revision: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct SteerAgentGoalInputDto {
+    pub repo_path: String,
+    pub goal_id: String,
+    #[ts(type = "number")]
+    pub expected_revision: u64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ResumeAgentGoalInputDto {
+    pub repo_path: String,
+    pub goal_id: String,
+    #[ts(type = "number")]
+    pub expected_revision: u64,
+    pub model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct ExtendAgentBudgetInputDto {
+    pub repo_path: String,
+    pub goal_id: String,
+    #[ts(type = "number")]
+    pub expected_revision: u64,
+    pub model_id: String,
+    pub currency: Option<String>,
+    #[ts(type = "number | null")]
+    pub new_limit_micros: Option<u64>,
+    #[ts(type = "number | null")]
+    pub new_limit_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../../app/src/bindings/")]
+pub struct AgentGoalEventDto {
+    pub goal_id: String,
+    #[ts(type = "number")]
+    pub revision: u64,
+    pub event_type: String,
+    pub status: Option<String>,
+    pub reason: Option<String>,
+    pub model_id: Option<String>,
+    #[ts(type = "number | null")]
+    pub spent_micros: Option<u64>,
+    #[ts(type = "number | null")]
+    pub limit_micros: Option<u64>,
+    pub receipt_digest: Option<String>,
+    pub size_bytes: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -867,10 +978,11 @@ impl From<review_agent::AgentEvent> for AgentEventDto {
                 dto.call_id = Some(call_id);
                 dto.tool_name = Some(name);
             }
-            review_agent::AgentEventKind::ToolArgumentsDelta { call_id, delta } => {
-                dto.event_type = "tool_arguments_delta".into();
+            review_agent::AgentEventKind::ToolArgumentsDelta { call_id, .. } => {
+                // Partial provider arguments are deliberately not projected across IPC. They are
+                // observational parser state and may contain file content or secrets.
+                dto.event_type = "tool_call_progress".into();
                 dto.call_id = Some(call_id);
-                dto.delta = Some(delta);
             }
             review_agent::AgentEventKind::ToolValidationFailed {
                 call_id,
@@ -911,7 +1023,7 @@ impl From<review_agent::AgentEvent> for AgentEventDto {
                 tool_name,
                 risk,
             } => {
-                dto.event_type = "tool_execution_started".into();
+                dto.event_type = "tool_call_ready".into();
                 dto.call_id = Some(call_id);
                 dto.tool_name = Some(tool_name);
                 dto.risk = Some(tool_risk_name(risk).into());
@@ -1183,6 +1295,24 @@ mod review_dto_contract_tests {
     }
 
     #[test]
+    fn partial_tool_arguments_are_never_projected_to_ipc() {
+        let marker = "PARTIAL_ARGUMENT_SECRET_MARKER";
+        let dto = AgentEventDto::from(review_agent::AgentEvent {
+            run_id: "run-1".into(),
+            sequence: 10,
+            attempt_id: 1,
+            kind: review_agent::AgentEventKind::ToolArgumentsDelta {
+                call_id: "call-1".into(),
+                delta: format!(r#"{{"content":"{marker}""#),
+            },
+        });
+        assert_eq!(dto.event_type, "tool_call_progress");
+        assert_eq!(dto.call_id.as_deref(), Some("call-1"));
+        assert_eq!(dto.delta, None);
+        assert!(!serde_json::to_string(&dto).unwrap().contains(marker));
+    }
+
+    #[test]
     fn artifact_reset_uses_the_same_flat_target_fields_as_artifact_deltas() {
         let dto = AgentEventDto::from(review_agent::AgentEvent {
             run_id: "run-1".into(),
@@ -1316,6 +1446,7 @@ mod review_dto_contract_tests {
 
         let usage = review_agent::ReviewUsage {
             input_tokens: 10,
+            cached_input_tokens: 0,
             output_tokens: 4,
             tool_calls: 1,
         };

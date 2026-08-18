@@ -92,19 +92,13 @@ export function AgentStreamPanel({ stream, preparingLabel, onApprovalDecision }:
                   {t("agentStream.tokens", { input: attempt.usage.input_tokens, output: attempt.usage.output_tokens })}
                 </p>
               )}
-              {(attempt.text || attempt.tools.some((tool) => tool.arguments)) && (
+              {attempt.text && (
                 <details className="mt-2 border-t border-line/70 pt-1.5">
                   <summary className="w-fit cursor-pointer select-none text-[10px] text-fg-subtle hover:text-fg-muted">
                     {t("agentStream.debugDetails")}
                   </summary>
                   <div className="mt-2 max-h-40 overflow-auto bg-overlay/45 px-2.5 py-2 font-mono text-[10px] leading-[1.55] text-fg-muted">
                     {attempt.text && <pre className="whitespace-pre-wrap break-words">{attempt.text}</pre>}
-                    {attempt.tools.map((tool) => tool.arguments && (
-                      <div key={tool.callId} className="mt-2 first:mt-0">
-                        <div className="text-accent">{tool.name}</div>
-                        <pre className="whitespace-pre-wrap break-words">{tool.arguments}</pre>
-                      </div>
-                    ))}
                   </div>
                 </details>
               )}

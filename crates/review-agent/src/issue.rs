@@ -1269,6 +1269,7 @@ mod tests {
                 serde_json::to_string(&proposal()).unwrap(),
                 ReviewUsage {
                     input_tokens: 1,
+                    cached_input_tokens: 0,
                     output_tokens: 1,
                     tool_calls: 0,
                 },

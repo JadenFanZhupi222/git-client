@@ -1,6 +1,7 @@
-use crate::{BuiltinToolError, WebToolPolicy};
+use crate::{content_digest, BuiltinToolError, WebToolPolicy};
 use agent_runtime::{
-    ToolDefinition, ToolExecutionContext, ToolHandler, ToolHandlerError, ToolRisk,
+    ToolDefinition, ToolExecutionContext, ToolHandler, ToolHandlerError, ToolHandlerOutput,
+    ToolReceipt, ToolRisk,
 };
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -73,7 +74,7 @@ impl ToolHandler for WebFetchTool {
         &self,
         context: ToolExecutionContext,
         arguments: Value,
-    ) -> Result<String, ToolHandlerError> {
+    ) -> Result<ToolHandlerOutput, ToolHandlerError> {
         let raw_url = arguments
             .get("url")
             .and_then(Value::as_str)
@@ -137,13 +138,20 @@ impl ToolHandler for WebFetchTool {
             body.extend_from_slice(&chunk);
         }
         let body = String::from_utf8(body).map_err(|_| ToolHandlerError)?;
-        Ok(json!({
+        let content = json!({
             "status": status,
             "url": final_url,
             "content_type": content_type,
             "body": body
         })
-        .to_string())
+        .to_string();
+        Ok(ToolHandlerOutput::new(
+            content.clone(),
+            ToolReceipt::Observation {
+                resource: url.as_str().to_owned(),
+                version_digest: content_digest(content.as_bytes()),
+            },
+        ))
     }
 
     fn summarize_arguments(&self, arguments: &Value) -> Option<String> {
@@ -200,6 +208,7 @@ mod tests {
         ToolExecutionContext {
             run_id: "run".into(),
             call_id: "call".into(),
+            execution_id: "exec-call".into(),
             cancellation: Arc::new(NeverCancel),
         }
     }

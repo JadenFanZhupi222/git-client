@@ -34,18 +34,19 @@ function event(sequence: number, attemptId: number, eventType: string, fields: P
 }
 
 describe("agent stream reducer", () => {
-  it("assembles text, tool arguments, and usage in sequence order", () => {
+  it("assembles text and usage without retaining partial tool arguments", () => {
     let state = createAgentStream("run-1");
     state = reduceAgentEvent(state, event(1, 1, "model_attempt_started", { provider_id: "openai", model_id: "gpt-5" }));
     state = reduceAgentEvent(state, event(2, 1, "output_text_delta", { delta: "Hel" }));
     state = reduceAgentEvent(state, event(3, 1, "output_text_delta", { delta: "lo" }));
     state = reduceAgentEvent(state, event(4, 1, "tool_call_started", { call_id: "call-1", tool_name: "read_file" }));
-    state = reduceAgentEvent(state, event(5, 1, "tool_arguments_delta", { call_id: "call-1", delta: "{\"path\":" }));
-    state = reduceAgentEvent(state, event(6, 1, "tool_arguments_delta", { call_id: "call-1", delta: "\"src/a.ts\"}" }));
+    state = reduceAgentEvent(state, event(5, 1, "tool_call_progress", { call_id: "call-1" }));
+    state = reduceAgentEvent(state, event(6, 1, "tool_call_ready", { call_id: "call-1", tool_name: "read_file" }));
     state = reduceAgentEvent(state, event(7, 1, "usage_updated", { usage: { input_tokens: 12, output_tokens: 5, tool_calls: 1 } }));
 
     expect(state.attempts[0]).toMatchObject({ text: "Hello", providerId: "openai", modelId: "gpt-5", status: "streaming" });
-    expect(state.attempts[0].tools).toEqual([expect.objectContaining({ callId: "call-1", name: "read_file", arguments: "{\"path\":\"src/a.ts\"}" })]);
+    expect(state.attempts[0].tools).toEqual([expect.objectContaining({ callId: "call-1", name: "read_file", execution: "running" })]);
+    expect(JSON.stringify(state)).not.toContain("src/a.ts");
     expect(state.attempts[0].usage?.output_tokens).toBe(5);
   });
 

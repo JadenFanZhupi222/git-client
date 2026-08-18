@@ -21,14 +21,18 @@ use std::time::Duration;
 use tauri::Emitter;
 
 mod agent_events;
+mod agent_run_manager;
 mod agent_session_commands;
+mod agent_store;
 mod change_commands;
 mod credentials;
 mod history_commands;
 mod review_commands;
 use agent_events::{ToolApprovalRegistry, resolve_tool_approval};
 use agent_session_commands::{
-    AgentSessionState, cancel_agent_turn, get_agent_session, reset_agent_session, start_agent_turn,
+    AgentSessionState, cancel_agent_goal, cancel_agent_turn, create_agent_goal,
+    extend_agent_budget, get_agent_goal, get_agent_session, pause_agent_goal, reset_agent_session,
+    resume_agent_goal, start_agent_turn, steer_agent_goal,
 };
 use change_commands::{analyze_change_plan, cancel_change_plan, commit_change_group};
 use credentials::{clear_credential, credential_status, save_credential, test_credential};
@@ -1772,6 +1776,13 @@ pub fn run() {
         cancel_pr_review,
         resolve_tool_approval,
         get_agent_session,
+        get_agent_goal,
+        create_agent_goal,
+        steer_agent_goal,
+        pause_agent_goal,
+        resume_agent_goal,
+        cancel_agent_goal,
+        extend_agent_budget,
         reset_agent_session,
         start_agent_turn,
         cancel_agent_turn,
@@ -1887,6 +1898,13 @@ pub fn run() {
         cancel_pr_review,
         resolve_tool_approval,
         get_agent_session,
+        get_agent_goal,
+        create_agent_goal,
+        steer_agent_goal,
+        pause_agent_goal,
+        resume_agent_goal,
+        cancel_agent_goal,
+        extend_agent_budget,
         reset_agent_session,
         start_agent_turn,
         cancel_agent_turn,

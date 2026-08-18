@@ -10,6 +10,14 @@ import { listen } from "@tauri-apps/api/event";
 export type {
   AgentIpcErrorDto,
   AgentEventDto,
+  AgentGoalEventDto,
+  AgentGoalMutationInputDto,
+  AgentGoalSnapshotDto,
+  AgentGoalUsageDto,
+  CreateAgentGoalInputDto,
+  ExtendAgentBudgetInputDto,
+  ResumeAgentGoalInputDto,
+  SteerAgentGoalInputDto,
   AgentSessionMessageDto,
   AgentSessionSnapshotDto,
   AgentSessionTurnInputDto,
@@ -92,6 +100,13 @@ export type {
 
 import type {
   AgentEventDto,
+  AgentGoalEventDto,
+  AgentGoalMutationInputDto,
+  AgentGoalSnapshotDto,
+  CreateAgentGoalInputDto,
+  ExtendAgentBudgetInputDto,
+  ResumeAgentGoalInputDto,
+  SteerAgentGoalInputDto,
   AgentSessionSnapshotDto,
   AgentSessionTurnInputDto,
   AgentSessionTurnResultDto,
@@ -912,6 +927,41 @@ export async function resolveToolApproval(
 
 export async function getAgentSession(repoPath: string): Promise<AgentSessionSnapshotDto> {
   return await invoke<AgentSessionSnapshotDto>("get_agent_session", { repoPath });
+}
+
+export async function createAgentGoal(input: CreateAgentGoalInputDto): Promise<AgentGoalSnapshotDto> {
+  return await invoke<AgentGoalSnapshotDto>("create_agent_goal", { input });
+}
+
+export async function getAgentGoal(repoPath: string, goalId: string): Promise<AgentGoalSnapshotDto> {
+  return await invoke<AgentGoalSnapshotDto>("get_agent_goal", { repoPath, goalId });
+}
+
+export async function steerAgentGoal(input: SteerAgentGoalInputDto): Promise<AgentGoalSnapshotDto> {
+  return await invoke<AgentGoalSnapshotDto>("steer_agent_goal", { input });
+}
+
+export async function pauseAgentGoal(input: AgentGoalMutationInputDto): Promise<AgentGoalSnapshotDto> {
+  return await invoke<AgentGoalSnapshotDto>("pause_agent_goal", { input });
+}
+
+export async function resumeAgentGoal(input: ResumeAgentGoalInputDto): Promise<AgentGoalSnapshotDto> {
+  return await invoke<AgentGoalSnapshotDto>("resume_agent_goal", { input });
+}
+
+export async function cancelAgentGoal(input: AgentGoalMutationInputDto): Promise<AgentGoalSnapshotDto> {
+  return await invoke<AgentGoalSnapshotDto>("cancel_agent_goal", { input });
+}
+
+export async function extendAgentBudget(input: ExtendAgentBudgetInputDto): Promise<AgentGoalSnapshotDto> {
+  return await invoke<AgentGoalSnapshotDto>("extend_agent_budget", { input });
+}
+
+export async function listenAgentGoalEvents(
+  handler: (event: AgentGoalEventDto) => void,
+): Promise<() => void> {
+  const unlisten = await listen<AgentGoalEventDto>("agent-goal-event", (event) => handler(event.payload));
+  return unlisten;
 }
 
 export async function resetAgentSession(repoPath: string): Promise<AgentSessionSnapshotDto> {

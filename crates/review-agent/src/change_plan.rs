@@ -824,6 +824,7 @@ mod tests {
                 self.0.lock().unwrap().take().unwrap(),
                 ReviewUsage {
                     input_tokens: 10,
+                    cached_input_tokens: 0,
                     output_tokens: 5,
                     tool_calls: 0,
                 },

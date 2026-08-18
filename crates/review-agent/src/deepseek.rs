@@ -17,9 +17,9 @@ pub const DEEPSEEK_V4_PRO_MODEL: &str = "deepseek-v4-pro";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const DEEPSEEK_NO_TOOL_FINAL_INSTRUCTION: &str = "No tools are available for this response. Do not emit DSML, tool_calls, invoke, function-call syntax, or any provider protocol markup. Return the final answer directly in the requested response format.";
-const PRICING_SOURCE_URL: &str = "https://api-docs.deepseek.com/quick_start/pricing";
+const PRICING_SOURCE_URL: &str = "https://api-docs.deepseek.com/zh-cn/quick_start/pricing";
 const PRICING_SOURCE_VERSION: &str = "deepseek-v4-models-and-pricing";
-const PRICING_CHECKED_AT: &str = "2026-08-07";
+const PRICING_CHECKED_AT: &str = "2026-08-19";
 
 fn deepseek_capabilities() -> ProviderCapabilities {
     ProviderCapabilities {
@@ -35,7 +35,7 @@ fn deepseek_capabilities() -> ProviderCapabilities {
 
 fn pricing(cache_hit: u64, cache_miss: u64, output: u64) -> ModelPricing {
     ModelPricing {
-        currency: "USD".into(),
+        currency: "CNY".into(),
         input_cache_hit_per_million_micros: cache_hit,
         input_cache_miss_per_million_micros: cache_miss,
         output_per_million_micros: output,
@@ -53,7 +53,7 @@ pub fn deepseek_model_catalog() -> Vec<ModelCatalogEntry> {
             provider_id: "deepseek".into(),
             provider_label: "DeepSeek".into(),
             capabilities: deepseek_capabilities(),
-            pricing: Some(pricing(2_800, 140_000, 280_000)),
+            pricing: Some(pricing(20_000, 1_000_000, 2_000_000)),
         },
         ModelCatalogEntry {
             id: DEEPSEEK_V4_PRO_MODEL.into(),
@@ -61,7 +61,7 @@ pub fn deepseek_model_catalog() -> Vec<ModelCatalogEntry> {
             provider_id: "deepseek".into(),
             provider_label: "DeepSeek".into(),
             capabilities: deepseek_capabilities(),
-            pricing: Some(pricing(3_625, 435_000, 870_000)),
+            pricing: Some(pricing(25_000, 3_000_000, 6_000_000)),
         },
     ]
 }
@@ -917,6 +917,10 @@ fn deepseek_usage(body: &Value) -> ModelUsage {
             .pointer("/usage/prompt_tokens")
             .and_then(Value::as_u64)
             .unwrap_or(0),
+        cached_input_tokens: body
+            .pointer("/usage/prompt_tokens_details/cached_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
         output_tokens: body
             .pointer("/usage/completion_tokens")
             .and_then(Value::as_u64)
@@ -983,11 +987,11 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .input_cache_miss_per_million_micros,
-            140_000
+            1_000_000
         );
         assert_eq!(
             catalog[0].pricing.as_ref().unwrap().checked_at,
-            "2026-08-07"
+            "2026-08-19"
         );
     }
 

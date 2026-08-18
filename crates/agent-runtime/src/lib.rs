@@ -11,6 +11,10 @@ pub use tool_runtime::*;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelUsage {
     pub input_tokens: u64,
+    /// Provider-reported cached portion of `input_tokens`. Missing cache detail is zero and is
+    /// therefore conservatively billed as cache-miss input.
+    #[serde(default)]
+    pub cached_input_tokens: u64,
     pub output_tokens: u64,
     pub tool_calls: u32,
 }
@@ -101,7 +105,7 @@ pub struct ModelCatalogEntry {
     pub pricing: Option<ModelPricing>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 pub enum TranscriptItem {
     System(String),
@@ -116,7 +120,7 @@ pub enum TranscriptItem {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCall {
     pub call_id: String,
     pub name: String,

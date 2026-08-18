@@ -1,18 +1,23 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentSessionSnapshotDto, AgentSessionTurnResultDto, ReviewModelOptionDto } from "../bindings";
+import type { AgentGoalEventDto, AgentGoalSnapshotDto, AgentSessionSnapshotDto, ReviewModelOptionDto } from "../bindings";
 import { setLang } from "../lib/i18n";
 import { AgentWorkspace } from "./AgentWorkspace";
 
 const ipc = vi.hoisted(() => ({
-  cancelAgentTurn: vi.fn(),
+  cancelAgentGoal: vi.fn(),
+  createAgentGoal: vi.fn(),
   credentialStatus: vi.fn(),
+  extendAgentBudget: vi.fn(),
   getAgentSession: vi.fn(),
+  listenAgentGoalEvents: vi.fn(),
   listReviewModels: vi.fn(),
   onAgentEvent: vi.fn(),
+  pauseAgentGoal: vi.fn(),
   resetAgentSession: vi.fn(),
   resolveToolApproval: vi.fn(),
-  startAgentTurn: vi.fn(),
+  resumeAgentGoal: vi.fn(),
+  steerAgentGoal: vi.fn(),
 }));
 
 vi.mock("../ipc", () => ipc);
@@ -22,16 +27,17 @@ const emptySession: AgentSessionSnapshotDto = {
   revision: 0,
   memory_summary: null,
   recent_messages: [],
+  active_goal: null,
 };
 
 const model: ReviewModelOptionDto = {
-  id: "deepseek-chat",
-  label: "DeepSeek Chat",
+  id: "deepseek-v4-flash",
+  label: "DeepSeek V4 Flash",
   provider: "DeepSeek",
   provider_id: "deepseek",
   capabilities: {
-    context_window_tokens: 64_000,
-    max_output_tokens: 8_192,
+    context_window_tokens: 1_000_000,
+    max_output_tokens: 384_000,
     supports_structured_output: true,
     supports_tool_calling: true,
     reports_usage: true,
@@ -39,94 +45,168 @@ const model: ReviewModelOptionDto = {
   pricing: null,
 };
 
-const completed: AgentSessionTurnResultDto = {
-  session_id: "repo-1234",
-  run_id: "agent-test",
-  revision: 1,
-  final_text: "Implemented the focused fix.",
-  usage: { input_tokens: 120, output_tokens: 24, tool_calls: 1 },
-  model_rounds: 2,
-  retrieval_count: 0,
-};
+function goal(overrides: Partial<AgentGoalSnapshotDto> = {}): AgentGoalSnapshotDto {
+  return {
+    goal_id: "goal-test",
+    session_id: "repo-1234",
+    revision: 0,
+    objective: "Fix the parser",
+    model_id: model.id,
+    status: "queued",
+    pause_reason: null,
+    block_reason: null,
+    usage_by_model: [{
+      model_id: model.id,
+      currency: "CNY",
+      input_tokens: 0,
+      cached_input_tokens: 0,
+      output_tokens: 0,
+      tool_calls: 0,
+      spent_micros: 0,
+      limit_micros: 1_000_000,
+      limit_tokens: null,
+    }],
+    slice_index: 0,
+    steering_count: 0,
+    completion_candidate_pending: false,
+    final_text: null,
+    ...overrides,
+  };
+}
 
-describe("AgentWorkspace", () => {
+describe("AgentWorkspace durable Goals", () => {
+  let goalEvent: ((event: AgentGoalEventDto) => void) | null;
+
   beforeEach(() => {
     localStorage.clear();
     setLang("en");
+    goalEvent = null;
     Object.values(ipc).forEach((mock) => mock.mockReset());
-    ipc.cancelAgentTurn.mockResolvedValue(undefined);
+    ipc.cancelAgentGoal.mockImplementation(async ({ expected_revision }) => goal({ status: "cancelled", revision: expected_revision + 1 }));
+    ipc.createAgentGoal.mockResolvedValue(goal());
     ipc.credentialStatus.mockResolvedValue(true);
+    ipc.extendAgentBudget.mockImplementation(async () => goal({ status: "queued", revision: 2 }));
     ipc.getAgentSession.mockResolvedValue(emptySession);
+    ipc.listenAgentGoalEvents.mockImplementation(async (handler) => {
+      goalEvent = handler;
+      return () => undefined;
+    });
     ipc.listReviewModels.mockResolvedValue([model]);
     ipc.onAgentEvent.mockResolvedValue(() => undefined);
+    ipc.pauseAgentGoal.mockImplementation(async ({ expected_revision }) => goal({ status: "paused", pause_reason: "user", revision: expected_revision + 1 }));
     ipc.resetAgentSession.mockResolvedValue(emptySession);
+    ipc.resumeAgentGoal.mockImplementation(async ({ expected_revision }) => goal({ status: "queued", revision: expected_revision + 1 }));
+    ipc.steerAgentGoal.mockImplementation(async ({ expected_revision }) => goal({ status: "running", revision: expected_revision + 1, steering_count: 1 }));
   });
 
-  it("commits only the authoritative turn result into the visible conversation", async () => {
-    let finish!: (value: AgentSessionTurnResultDto) => void;
-    ipc.startAgentTurn.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
-    ipc.getAgentSession
-      .mockResolvedValueOnce(emptySession)
-      .mockResolvedValueOnce({
-        ...emptySession,
-        revision: 1,
-        recent_messages: [
-          { role: "user", content: "Fix the parser" },
-          { role: "assistant", content: completed.final_text },
-        ],
-      });
-
+  it("shows only the canonical result after completion verification", async () => {
     render(<AgentWorkspace repo={"D:\\repo"} />);
     await screen.findByText("Start with a concrete task");
     fireEvent.click(screen.getByLabelText(/I agree to send/));
     fireEvent.change(screen.getByLabelText(/Describe what you want/), { target: { value: "Fix the parser" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    await screen.findByText("Fix the parser");
-    expect(screen.queryByText(completed.final_text)).not.toBeInTheDocument();
-    expect(ipc.startAgentTurn).toHaveBeenCalledWith(expect.objectContaining({
+    expect(await screen.findByText("Fix the parser")).toBeInTheDocument();
+    expect(screen.queryByText("Implemented the focused fix.")).not.toBeInTheDocument();
+    expect(ipc.createAgentGoal).toHaveBeenCalledWith(expect.objectContaining({
       repo_path: "D:\\repo",
-      model_id: "deepseek-chat",
+      model_id: model.id,
       message: "Fix the parser",
     }));
 
-    finish(completed);
-    expect(await screen.findByText(completed.final_text)).toBeInTheDocument();
-    expect(await screen.findByText(/120 input · 24 output tokens · 2 model rounds/)).toBeInTheDocument();
-  });
-
-  it("cancels the active run and does not commit its pending user message", async () => {
-    let reject!: (reason: unknown) => void;
-    ipc.startAgentTurn.mockReturnValue(new Promise((_, rejectPromise) => { reject = rejectPromise; }));
-
-    render(<AgentWorkspace repo={"D:\\repo"} />);
-    await screen.findByText("Start with a concrete task");
-    fireEvent.click(screen.getByLabelText(/I agree to send/));
-    fireEvent.change(screen.getByLabelText(/Describe what you want/), { target: { value: "Do not keep this" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Stop" }));
-
-    await waitFor(() => expect(ipc.cancelAgentTurn).toHaveBeenCalledTimes(1));
-    const runId = ipc.startAgentTurn.mock.calls[0][0].run_id;
-    expect(ipc.cancelAgentTurn).toHaveBeenCalledWith(runId);
-    reject({ code: "AGENT_CANCELLED", message: "cancelled", recoverable: true, diagnostic_id: "diag-1" });
-    expect(await screen.findByText(/message was not committed/)).toBeInTheDocument();
-    expect(screen.queryByText("Do not keep this")).not.toBeInTheDocument();
-  });
-
-  it("resets repository-scoped memory through the backend contract", async () => {
+    const completed = goal({ status: "completed", revision: 4, final_text: "Implemented the focused fix." });
     ipc.getAgentSession.mockResolvedValue({
       ...emptySession,
       revision: 2,
-      recent_messages: [{ role: "assistant", content: "Old response" }],
+      recent_messages: [
+        { role: "user", content: "Fix the parser" },
+        { role: "assistant", content: "Implemented the focused fix." },
+      ],
+      active_goal: completed,
     });
+    await waitFor(() => expect(goalEvent).not.toBeNull());
+    goalEvent!({
+      goal_id: "goal-test",
+      revision: 4,
+      event_type: "completion_verified",
+      status: "completed",
+      reason: null,
+      model_id: model.id,
+      spent_micros: null,
+      limit_micros: null,
+      receipt_digest: null,
+      size_bytes: 28,
+    });
+    expect(await screen.findByText("Implemented the focused fix.")).toBeInTheDocument();
+  });
 
+  it("does not cancel background work when the view unmounts", async () => {
+    const view = render(<AgentWorkspace repo={"D:\\repo"} />);
+    await screen.findByText("Start with a concrete task");
+    fireEvent.click(screen.getByLabelText(/I agree to send/));
+    fireEvent.change(screen.getByLabelText(/Describe what you want/), { target: { value: "Keep running" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("Keep running");
+    view.unmount();
+    expect(ipc.cancelAgentGoal).not.toHaveBeenCalled();
+  });
+
+  it("sends new input as steering for the same active Goal", async () => {
+    ipc.getAgentSession.mockResolvedValue({ ...emptySession, active_goal: goal({ status: "running", revision: 3 }) });
     render(<AgentWorkspace repo={"D:\\repo"} />);
-    await screen.findByText("Old response");
-    fireEvent.click(screen.getByRole("button", { name: "New session" }));
+    await screen.findByText("Fix the parser");
+    fireEvent.click(screen.getByLabelText(/I agree to send/));
+    fireEvent.change(screen.getByLabelText(/Describe what you want/), { target: { value: "Also inspect tests" } });
+    fireEvent.click(screen.getByRole("button", { name: "Steer" }));
+    await waitFor(() => expect(ipc.steerAgentGoal).toHaveBeenCalledWith({
+      repo_path: "D:\\repo",
+      goal_id: "goal-test",
+      expected_revision: 3,
+      message: "Also inspect tests",
+    }));
+    expect(ipc.createAgentGoal).not.toHaveBeenCalled();
+    expect(await screen.findByText("Also inspect tests")).toBeInTheDocument();
+  });
 
-    await waitFor(() => expect(ipc.resetAgentSession).toHaveBeenCalledWith("D:\\repo"));
-    expect(await screen.findByText("Start with a concrete task")).toBeInTheDocument();
-    expect(screen.queryByText("Old response")).not.toBeInTheDocument();
+  it("requires explicit resume after restart and exposes budget extension", async () => {
+    ipc.getAgentSession.mockResolvedValue({
+      ...emptySession,
+      active_goal: goal({ status: "paused", pause_reason: "app_restarted", revision: 5 }),
+    });
+    const restartView = render(<AgentWorkspace repo={"D:\\repo"} />);
+    expect(await screen.findByText(/Checkpoint restored/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(ipc.resumeAgentGoal).toHaveBeenCalledWith(expect.objectContaining({
+      goal_id: "goal-test",
+      expected_revision: 5,
+    })));
+    restartView.unmount();
+
+    ipc.getAgentSession.mockResolvedValue({
+      ...emptySession,
+      active_goal: goal({ status: "paused", pause_reason: "budget", revision: 7 }),
+    });
+    const budgetView = render(<AgentWorkspace repo={"D:\\budget-repo"} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Extend budget" }));
+    expect(screen.getByRole("dialog", { name: "Extend Goal budget" })).toBeInTheDocument();
+    expect(screen.getByText("¥0.0000")).toBeInTheDocument();
+    expect(screen.getByText("¥1.0000")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/New limit/), { target: { value: "2.5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply extension" }));
+    await waitFor(() => expect(ipc.extendAgentBudget).toHaveBeenCalledWith(expect.objectContaining({
+      goal_id: "goal-test",
+      expected_revision: 7,
+      new_limit_micros: 2_500_000,
+    })));
+    budgetView.unmount();
+  });
+
+  it("refuses session reset while a Goal is nonterminal", async () => {
+    ipc.getAgentSession.mockResolvedValue({ ...emptySession, active_goal: goal({ status: "running" }) });
+    render(<AgentWorkspace repo={"D:\\repo"} />);
+    const reset = await screen.findByRole("button", { name: "New session" });
+    expect(reset).toBeDisabled();
+    fireEvent.click(reset);
+    expect(ipc.resetAgentSession).not.toHaveBeenCalled();
   });
 });

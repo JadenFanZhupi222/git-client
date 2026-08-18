@@ -1353,8 +1353,8 @@ mod tests {
         assert!(models[0].capabilities.reports_usage);
         assert_eq!(models[0].capabilities.context_window_tokens, 1_000_000);
         let pricing = models[0].pricing.as_ref().unwrap();
-        assert_eq!(pricing.currency, "USD");
-        assert_eq!(pricing.checked_at, "2026-08-07");
+        assert_eq!(pricing.currency, "CNY");
+        assert_eq!(pricing.checked_at, "2026-08-19");
         assert!(
             pricing
                 .source_url
@@ -1956,6 +1956,7 @@ mod tests {
                 .unwrap(),
                 review_agent::ReviewUsage {
                     input_tokens: 20,
+                    cached_input_tokens: 0,
                     output_tokens: 10,
                     tool_calls: 0,
                 },

@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use agent_session::{
@@ -8,13 +8,21 @@ use agent_session::{
 };
 use agent_tools::{BuiltinToolConfig, build_builtin_tool_pack};
 use ipc_types::{
-    AgentIpcErrorDto, AgentSessionMessageDto, AgentSessionSnapshotDto, AgentSessionTurnInputDto,
-    AgentSessionTurnResultDto, IpcError, ReviewUsageDto,
+    AgentGoalMutationInputDto, AgentGoalSnapshotDto, AgentIpcErrorDto, AgentSessionMessageDto,
+    AgentSessionSnapshotDto, AgentSessionTurnInputDto, AgentSessionTurnResultDto,
+    CreateAgentGoalInputDto, ExtendAgentBudgetInputDto, IpcError, ResumeAgentGoalInputDto,
+    ReviewUsageDto, SteerAgentGoalInputDto,
 };
-use review_agent::{PermissionDecision, PermissionPolicy, PermissionRule, ToolMatcher, ToolRisk};
+use review_agent::{
+    PermissionDecision, PermissionPolicy, PermissionRule, ToolMatcher, ToolReceipt, ToolRisk,
+    TranscriptItem,
+};
 use tauri::Manager;
 
 use crate::agent_events::{AppAgentEventEmitter, ToolApprovalRegistry};
+use crate::agent_run_manager::{
+    AgentRunManager, default_budget, emit_budget_updated, emit_steering_accepted, goal_snapshot,
+};
 use crate::credentials::read_credential;
 use crate::review_commands::{
     ReviewRunRegistry, agent_error, map_review_credential_error, review_error,
@@ -33,6 +41,7 @@ const LOCAL_AGENT_MAX_RUN_DURATION: Duration = Duration::from_secs(20 * 60);
 
 pub(crate) struct AgentSessionState {
     sessions: Arc<SessionStore>,
+    manager: OnceLock<Arc<AgentRunManager>>,
 }
 
 impl Default for AgentSessionState {
@@ -42,11 +51,28 @@ impl Default for AgentSessionState {
                 SessionStore::new(SessionStoreLimits::default())
                     .expect("default agent session limits are valid"),
             ),
+            manager: OnceLock::new(),
         }
     }
 }
 
 impl AgentSessionState {
+    fn manager(&self, app: &tauri::AppHandle) -> Result<Arc<AgentRunManager>, IpcError> {
+        if let Some(manager) = self.manager.get() {
+            return Ok(Arc::clone(manager));
+        }
+        let app_data = app.path().app_data_dir().map_err(|_| {
+            stable_error(
+                "AGENT_STORAGE_UNAVAILABLE",
+                "Agent storage is unavailable",
+                true,
+            )
+        })?;
+        let manager = Arc::new(AgentRunManager::new(&app_data, Arc::clone(&self.sessions)));
+        let _ = self.manager.set(Arc::clone(&manager));
+        Ok(self.manager.get().cloned().unwrap_or(manager))
+    }
+
     fn ensure(&self, repository: &Path) -> Result<AgentSession, IpcError> {
         let session_id = repository_session_id(repository);
         match self.sessions.get(&session_id) {
@@ -68,25 +94,397 @@ impl AgentSessionState {
 
 #[tauri::command]
 pub(crate) async fn get_agent_session(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AgentSessionState>,
     repo_path: String,
 ) -> Result<AgentSessionSnapshotDto, IpcError> {
     let repository = validate_repository(&repo_path).await?;
-    state.ensure(&repository).map(session_snapshot)
+    let session_id = repository_session_id(&repository);
+    let manager = state.manager(&app)?;
+    manager
+        .ensure(&session_id, &session_id)
+        .map_err(goal_ipc_error)?;
+    manager
+        .reconcile_pending(&session_id, &repository)
+        .map_err(goal_ipc_error)?;
+    let durable = manager
+        .goals()
+        .snapshot(&session_id)
+        .map_err(goal_ipc_error)?;
+    Ok(durable_session_snapshot(durable))
 }
 
 #[tauri::command]
 pub(crate) async fn reset_agent_session(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AgentSessionState>,
     repo_path: String,
 ) -> Result<AgentSessionSnapshotDto, IpcError> {
     let repository = validate_repository(&repo_path).await?;
-    let session = state.ensure(&repository)?;
-    state
-        .sessions
-        .reset(&session.session_id)
-        .map(session_snapshot)
-        .map_err(session_ipc_error)
+    let session_id = repository_session_id(&repository);
+    let manager = state.manager(&app)?;
+    manager
+        .ensure(&session_id, &session_id)
+        .map_err(goal_ipc_error)?;
+    let durable = manager
+        .goals()
+        .reset_session(&session_id)
+        .map_err(goal_ipc_error)?;
+    let _ = state.sessions.reset(&session_id);
+    Ok(durable_session_snapshot(durable))
+}
+
+#[tauri::command]
+pub(crate) async fn create_agent_goal(
+    app: tauri::AppHandle,
+    session_state: tauri::State<'_, AgentSessionState>,
+    run_registry: tauri::State<'_, ReviewRunRegistry>,
+    approvals: tauri::State<'_, ToolApprovalRegistry>,
+    input: CreateAgentGoalInputDto,
+) -> Result<AgentGoalSnapshotDto, IpcError> {
+    validate_goal_input(&input.goal_id, &input.model_id, &input.message)?;
+    let repository = validate_repository(&input.repo_path).await?;
+    let session_id = repository_session_id(&repository);
+    let manager = session_state.manager(&app)?;
+    manager
+        .ensure(&session_id, &session_id)
+        .map_err(goal_ipc_error)?;
+    let cancellation =
+        run_registry.register_resource(&input.goal_id, &format!("agent-goal:{session_id}"))?;
+    let repository_digest = repository_state_digest(&repository).await?;
+    let goal = match manager.create_goal(
+        &session_id,
+        &session_id,
+        &input.goal_id,
+        input.message,
+        input.model_id,
+        repository_digest,
+    ) {
+        Ok(goal) => goal,
+        Err(error) => {
+            run_registry.finish(&input.goal_id);
+            return Err(goal_ipc_error(error));
+        }
+    };
+    launch_goal(
+        app,
+        manager,
+        approvals.inner().clone(),
+        cancellation,
+        session_id,
+        repository,
+        goal.goal_id.clone(),
+    );
+    Ok(goal_snapshot(&goal))
+}
+
+#[tauri::command]
+pub(crate) async fn get_agent_goal(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AgentSessionState>,
+    repo_path: String,
+    goal_id: String,
+) -> Result<AgentGoalSnapshotDto, IpcError> {
+    let repository = validate_repository(&repo_path).await?;
+    let session_id = repository_session_id(&repository);
+    let manager = state.manager(&app)?;
+    manager
+        .ensure(&session_id, &session_id)
+        .map_err(goal_ipc_error)?;
+    manager
+        .reconcile_pending(&session_id, &repository)
+        .map_err(goal_ipc_error)?;
+    let session = manager
+        .goals()
+        .snapshot(&session_id)
+        .map_err(goal_ipc_error)?;
+    let goal = session
+        .active_goal
+        .ok_or_else(|| stable_error("AGENT_GOAL_NOT_FOUND", "Agent Goal was not found", false))?;
+    if goal.goal_id != goal_id {
+        return Err(stable_error(
+            "AGENT_GOAL_NOT_FOUND",
+            "Agent Goal was not found",
+            false,
+        ));
+    }
+    Ok(goal_snapshot(&goal))
+}
+
+#[tauri::command]
+pub(crate) async fn steer_agent_goal(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AgentSessionState>,
+    input: SteerAgentGoalInputDto,
+) -> Result<AgentGoalSnapshotDto, IpcError> {
+    let repository = validate_repository(&input.repo_path).await?;
+    let session_id = repository_session_id(&repository);
+    let manager = state.manager(&app)?;
+    manager
+        .ensure(&session_id, &session_id)
+        .map_err(goal_ipc_error)?;
+    let active = manager
+        .goals()
+        .snapshot(&session_id)
+        .map_err(goal_ipc_error)?
+        .active_goal
+        .ok_or_else(|| goal_ipc_error(agent_session::GoalError::GoalNotFound))?;
+    ensure_goal_id(&active, &input.goal_id).map_err(goal_ipc_error)?;
+    manager
+        .goals()
+        .steer(
+            &session_id,
+            input.expected_revision,
+            input.message,
+            current_time_ms(),
+        )
+        .map_err(goal_ipc_error)?;
+    let goal = manager
+        .goals()
+        .snapshot(&session_id)
+        .map_err(goal_ipc_error)?
+        .active_goal
+        .ok_or_else(|| goal_ipc_error(agent_session::GoalError::GoalNotFound))?;
+    if goal.goal_id != input.goal_id {
+        return Err(goal_ipc_error(agent_session::GoalError::GoalNotFound));
+    }
+    emit_steering_accepted(&app, &goal);
+    Ok(goal_snapshot(&goal))
+}
+
+#[tauri::command]
+pub(crate) async fn pause_agent_goal(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AgentSessionState>,
+    input: AgentGoalMutationInputDto,
+) -> Result<AgentGoalSnapshotDto, IpcError> {
+    let repository = validate_repository(&input.repo_path).await?;
+    let session_id = repository_session_id(&repository);
+    let manager = state.manager(&app)?;
+    manager
+        .ensure(&session_id, &session_id)
+        .map_err(goal_ipc_error)?;
+    manager
+        .goals()
+        .mutate_goal(
+            &session_id,
+            input.expected_revision,
+            current_time_ms(),
+            |goal| {
+                ensure_goal_id(goal, &input.goal_id)?;
+                if goal.status.is_terminal() {
+                    return Err(agent_session::GoalError::Terminal);
+                }
+                goal.status = agent_session::AgentGoalStatus::Pausing;
+                goal.pause_reason = Some(agent_session::PauseReason::User);
+                Ok(())
+            },
+        )
+        .map_err(goal_ipc_error)?;
+    current_goal_snapshot(&manager, &session_id)
+}
+
+#[tauri::command]
+pub(crate) async fn cancel_agent_goal(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AgentSessionState>,
+    registry: tauri::State<'_, ReviewRunRegistry>,
+    input: AgentGoalMutationInputDto,
+) -> Result<AgentGoalSnapshotDto, IpcError> {
+    let repository = validate_repository(&input.repo_path).await?;
+    let session_id = repository_session_id(&repository);
+    let manager = state.manager(&app)?;
+    manager
+        .ensure(&session_id, &session_id)
+        .map_err(goal_ipc_error)?;
+    manager
+        .goals()
+        .mutate_goal(
+            &session_id,
+            input.expected_revision,
+            current_time_ms(),
+            |goal| {
+                ensure_goal_id(goal, &input.goal_id)?;
+                if goal.status.is_terminal() {
+                    return Err(agent_session::GoalError::Terminal);
+                }
+                if goal.checkpoint.pending_intents.is_empty() {
+                    goal.status = agent_session::AgentGoalStatus::Cancelled;
+                    goal.pause_reason = None;
+                    goal.block_reason = None;
+                    goal.clear_active_working_data();
+                } else {
+                    goal.status = agent_session::AgentGoalStatus::Blocked;
+                    goal.block_reason = Some(agent_session::BlockReason::AmbiguousToolEffect);
+                }
+                Ok(())
+            },
+        )
+        .map_err(goal_ipc_error)?;
+    registry.cancel(&input.goal_id);
+    current_goal_snapshot(&manager, &session_id)
+}
+
+#[tauri::command]
+pub(crate) async fn resume_agent_goal(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AgentSessionState>,
+    registry: tauri::State<'_, ReviewRunRegistry>,
+    approvals: tauri::State<'_, ToolApprovalRegistry>,
+    input: ResumeAgentGoalInputDto,
+) -> Result<AgentGoalSnapshotDto, IpcError> {
+    let repository = validate_repository(&input.repo_path).await?;
+    let session_id = repository_session_id(&repository);
+    let manager = state.manager(&app)?;
+    manager
+        .ensure(&session_id, &session_id)
+        .map_err(goal_ipc_error)?;
+    manager
+        .reconcile_pending(&session_id, &repository)
+        .map_err(goal_ipc_error)?;
+    let confirmed_repository_digest = repository_state_digest(&repository).await?;
+    let cancellation =
+        registry.register_resource(&input.goal_id, &format!("agent-goal:{session_id}"))?;
+    let mutation = manager.goals().mutate_goal(
+        &session_id,
+        input.expected_revision,
+        current_time_ms(),
+        |goal| {
+            ensure_goal_id(goal, &input.goal_id)?;
+            if goal.status.is_terminal() {
+                return Err(agent_session::GoalError::Terminal);
+            }
+            if goal.status == agent_session::AgentGoalStatus::Blocked
+                && goal.block_reason == Some(agent_session::BlockReason::WorkspaceConflict)
+            {
+                for receipt in &goal.checkpoint.receipts {
+                    if let ToolReceipt::Mutation { execution_id, .. } = receipt
+                        && !goal
+                            .checkpoint
+                            .superseded_execution_ids
+                            .contains(execution_id)
+                    {
+                        goal.checkpoint
+                            .superseded_execution_ids
+                            .push(execution_id.clone());
+                    }
+                }
+                goal.checkpoint.repository_digest = confirmed_repository_digest.clone();
+                goal.checkpoint.evidence.clear();
+                goal.checkpoint.progress = Default::default();
+                goal.checkpoint.recent_transcript.push(TranscriptItem::System(
+                    "The user confirmed the externally changed workspace. Previous mutation receipts remain audit metadata but are superseded; refresh evidence before making further claims or writes."
+                        .into(),
+                ));
+            }
+            if let Some(model_id) = &input.model_id {
+                review_model_credential(model_id)
+                    .map_err(|_| agent_session::GoalError::InvalidBudget)?;
+                if !goal.usage_by_model.contains_key(model_id) {
+                    goal.usage_by_model
+                        .insert(model_id.clone(), default_budget(model_id)?);
+                }
+                goal.model_id = model_id.clone();
+            }
+            if goal.active_budget_mut()?.is_exceeded() {
+                return Err(agent_session::GoalError::InvalidBudget);
+            }
+            goal.status = agent_session::AgentGoalStatus::Queued;
+            goal.pause_reason = None;
+            goal.block_reason = None;
+            Ok(())
+        },
+    );
+    if let Err(error) = mutation {
+        registry.finish(&input.goal_id);
+        return Err(goal_ipc_error(error));
+    }
+    launch_goal(
+        app,
+        manager.clone(),
+        approvals.inner().clone(),
+        cancellation,
+        session_id.clone(),
+        repository,
+        input.goal_id,
+    );
+    current_goal_snapshot(&manager, &session_id)
+}
+
+#[tauri::command]
+pub(crate) async fn extend_agent_budget(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AgentSessionState>,
+    registry: tauri::State<'_, ReviewRunRegistry>,
+    approvals: tauri::State<'_, ToolApprovalRegistry>,
+    input: ExtendAgentBudgetInputDto,
+) -> Result<AgentGoalSnapshotDto, IpcError> {
+    let repository = validate_repository(&input.repo_path).await?;
+    let session_id = repository_session_id(&repository);
+    let manager = state.manager(&app)?;
+    manager
+        .ensure(&session_id, &session_id)
+        .map_err(goal_ipc_error)?;
+    let limit = match (
+        input.currency.clone(),
+        input.new_limit_micros,
+        input.new_limit_tokens,
+    ) {
+        (Some(currency), Some(limit_micros), None) => agent_session::ModelBudgetLimit::CostMicros {
+            currency,
+            limit_micros,
+        },
+        (None, None, Some(limit_tokens)) => {
+            agent_session::ModelBudgetLimit::Tokens { limit_tokens }
+        }
+        _ => return Err(goal_ipc_error(agent_session::GoalError::InvalidBudget)),
+    };
+    let should_launch = manager
+        .goals()
+        .mutate_goal(
+            &session_id,
+            input.expected_revision,
+            current_time_ms(),
+            |goal| {
+                ensure_goal_id(goal, &input.goal_id)?;
+                let account = goal
+                    .usage_by_model
+                    .get_mut(&input.model_id)
+                    .ok_or(agent_session::GoalError::InvalidBudget)?;
+                account.extend(limit)?;
+                if goal.status == agent_session::AgentGoalStatus::Paused
+                    && goal.pause_reason == Some(agent_session::PauseReason::Budget)
+                {
+                    goal.status = agent_session::AgentGoalStatus::Queued;
+                    goal.pause_reason = None;
+                    return Ok(true);
+                }
+                Ok(false)
+            },
+        )
+        .map_err(goal_ipc_error)?;
+    let updated = manager
+        .goals()
+        .snapshot(&session_id)
+        .map_err(goal_ipc_error)?
+        .active_goal
+        .ok_or_else(|| goal_ipc_error(agent_session::GoalError::GoalNotFound))?;
+    emit_budget_updated(&app, &updated, &input.model_id);
+    if !should_launch {
+        return Ok(goal_snapshot(&updated));
+    }
+    let cancellation =
+        registry.register_resource(&input.goal_id, &format!("agent-goal:{session_id}"))?;
+    launch_goal(
+        app,
+        manager.clone(),
+        approvals.inner().clone(),
+        cancellation,
+        session_id.clone(),
+        repository,
+        input.goal_id,
+    );
+    current_goal_snapshot(&manager, &session_id)
 }
 
 #[tauri::command]
@@ -432,7 +830,9 @@ fn stable_error(code: &str, message: &str, recoverable: bool) -> IpcError {
     }
 }
 
-fn session_snapshot(session: AgentSession) -> AgentSessionSnapshotDto {
+fn durable_session_snapshot(
+    session: agent_session::DurableAgentSession,
+) -> AgentSessionSnapshotDto {
     AgentSessionSnapshotDto {
         session_id: session.session_id,
         revision: session.revision,
@@ -448,6 +848,168 @@ fn session_snapshot(session: AgentSession) -> AgentSessionSnapshotDto {
                 content: message.content,
             })
             .collect(),
+        active_goal: session.active_goal.as_ref().map(goal_snapshot),
+    }
+}
+
+fn current_goal_snapshot(
+    manager: &AgentRunManager,
+    session_id: &str,
+) -> Result<AgentGoalSnapshotDto, IpcError> {
+    manager
+        .goals()
+        .snapshot(session_id)
+        .map_err(goal_ipc_error)?
+        .active_goal
+        .as_ref()
+        .map(goal_snapshot)
+        .ok_or_else(|| goal_ipc_error(agent_session::GoalError::GoalNotFound))
+}
+
+fn ensure_goal_id(
+    goal: &agent_session::AgentGoal,
+    expected: &str,
+) -> Result<(), agent_session::GoalError> {
+    if goal.goal_id == expected {
+        Ok(())
+    } else {
+        Err(agent_session::GoalError::GoalNotFound)
+    }
+}
+
+fn validate_goal_input(goal_id: &str, model_id: &str, message: &str) -> Result<(), IpcError> {
+    let turn = AgentSessionTurnInputDto {
+        repo_path: "unused".into(),
+        run_id: goal_id.into(),
+        model_id: model_id.into(),
+        message: message.into(),
+    };
+    validate_turn_input(&turn)
+}
+
+fn launch_goal(
+    app: tauri::AppHandle,
+    manager: Arc<AgentRunManager>,
+    approvals: ToolApprovalRegistry,
+    cancellation: crate::review_commands::ReviewCancellation,
+    session_id: String,
+    repository: PathBuf,
+    goal_id: String,
+) {
+    tauri::async_runtime::spawn(async move {
+        manager
+            .run_goal(
+                app.clone(),
+                approvals,
+                cancellation,
+                session_id,
+                repository,
+                goal_id.clone(),
+            )
+            .await;
+        app.state::<ReviewRunRegistry>().finish(&goal_id);
+    });
+}
+
+async fn repository_state_digest(repository: &Path) -> Result<String, IpcError> {
+    let output = tokio::process::Command::new("git")
+        .arg("-C")
+        .arg(repository)
+        .args([
+            "status",
+            "--porcelain=v2",
+            "--branch",
+            "--untracked-files=all",
+        ])
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "safe.directory")
+        .env("GIT_CONFIG_VALUE_0", repository)
+        .output()
+        .await
+        .map_err(|_| {
+            stable_error(
+                "AGENT_WORKSPACE_STATE",
+                "Workspace state is unavailable",
+                true,
+            )
+        })?;
+    if !output.status.success() {
+        return Err(stable_error(
+            "AGENT_WORKSPACE_STATE",
+            "Workspace state is unavailable",
+            true,
+        ));
+    }
+    let hash = output
+        .stdout
+        .iter()
+        .fold(0xcbf29ce484222325_u64, |hash, byte| {
+            hash.wrapping_mul(0x100000001b3) ^ u64::from(*byte)
+        });
+    Ok(format!("workspace-{hash:016x}"))
+}
+
+fn current_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
+}
+
+fn goal_ipc_error(error: agent_session::GoalError) -> IpcError {
+    match error {
+        agent_session::GoalError::Busy => stable_error(
+            "AGENT_GOAL_BUSY",
+            "This repository already has an active Goal",
+            true,
+        ),
+        agent_session::GoalError::RevisionConflict => stable_error(
+            "AGENT_REVISION_CONFLICT",
+            "Agent Goal changed; refresh and retry",
+            true,
+        ),
+        agent_session::GoalError::GoalNotFound | agent_session::GoalError::SessionNotLoaded => {
+            stable_error("AGENT_GOAL_NOT_FOUND", "Agent Goal was not found", false)
+        }
+        agent_session::GoalError::Terminal => stable_error(
+            "AGENT_GOAL_TERMINAL",
+            "Agent Goal is already finished",
+            false,
+        ),
+        agent_session::GoalError::KeyUnavailable => stable_error(
+            "AGENT_CHECKPOINT_KEY_UNAVAILABLE",
+            "Agent checkpoint key is unavailable",
+            true,
+        ),
+        agent_session::GoalError::StorageLocked => stable_error(
+            "AGENT_CHECKPOINT_LOCKED",
+            "Agent checkpoint is locked",
+            true,
+        ),
+        agent_session::GoalError::CheckpointCorrupt => stable_error(
+            "AGENT_CHECKPOINT_CORRUPT",
+            "Agent checkpoint is corrupt",
+            false,
+        ),
+        agent_session::GoalError::UnsupportedVersion => stable_error(
+            "AGENT_CHECKPOINT_VERSION",
+            "Agent checkpoint version is unsupported",
+            false,
+        ),
+        agent_session::GoalError::StorageUnavailable => stable_error(
+            "AGENT_STORAGE_UNAVAILABLE",
+            "Agent storage is unavailable",
+            true,
+        ),
+        agent_session::GoalError::InvalidBudget => {
+            stable_error("AGENT_BUDGET_INVALID", "Agent budget is invalid", false)
+        }
+        agent_session::GoalError::InvalidId
+        | agent_session::GoalError::InvalidContent
+        | agent_session::GoalError::Capacity => {
+            stable_error("AGENT_INVALID_INPUT", "Agent input is invalid", false)
+        }
     }
 }
 

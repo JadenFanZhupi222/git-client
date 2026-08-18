@@ -1,6 +1,7 @@
-use crate::PathScope;
+use crate::{content_digest, PathScope};
 use agent_runtime::{
-    ToolDefinition, ToolExecutionContext, ToolHandler, ToolHandlerError, ToolRisk,
+    ToolDefinition, ToolExecutionContext, ToolHandler, ToolHandlerError, ToolHandlerOutput,
+    ToolIntentPrecondition, ToolReceipt, ToolRisk,
 };
 use async_trait::async_trait;
 use serde::Serialize;
@@ -54,7 +55,8 @@ impl ToolHandler for FilesystemReadTool {
         &self,
         _: ToolExecutionContext,
         arguments: Value,
-    ) -> Result<String, ToolHandlerError> {
+    ) -> Result<ToolHandlerOutput, ToolHandlerError> {
+        let resource = string_argument(&arguments, "path")?.replace('\\', "/");
         let path = self
             .scope
             .existing_file(string_argument(&arguments, "path")?)
@@ -75,7 +77,15 @@ impl ToolHandler for FilesystemReadTool {
         if bytes.len() > requested {
             return failure();
         }
-        String::from_utf8(bytes).map_err(|_| ToolHandlerError)
+        let digest = content_digest(&bytes);
+        let content = String::from_utf8(bytes).map_err(|_| ToolHandlerError)?;
+        Ok(ToolHandlerOutput::new(
+            content,
+            ToolReceipt::Observation {
+                resource,
+                version_digest: digest,
+            },
+        ))
     }
 
     fn summarize_arguments(&self, arguments: &Value) -> Option<String> {
@@ -127,7 +137,7 @@ impl ToolHandler for FilesystemListTool {
         &self,
         _: ToolExecutionContext,
         arguments: Value,
-    ) -> Result<String, ToolHandlerError> {
+    ) -> Result<ToolHandlerOutput, ToolHandlerError> {
         let relative = arguments.get("path").and_then(Value::as_str).unwrap_or("");
         let directory = self
             .scope
@@ -168,7 +178,14 @@ impl ToolHandler for FilesystemListTool {
             });
         }
         entries.sort_by(|left, right| left.path.cmp(&right.path));
-        serde_json::to_string(&entries).map_err(|_| ToolHandlerError)
+        let content = serde_json::to_string(&entries).map_err(|_| ToolHandlerError)?;
+        Ok(ToolHandlerOutput::new(
+            content.clone(),
+            ToolReceipt::Observation {
+                resource: relative.replace('\\', "/"),
+                version_digest: content_digest(content.as_bytes()),
+            },
+        ))
     }
 
     fn summarize_arguments(&self, arguments: &Value) -> Option<String> {
@@ -202,7 +219,8 @@ impl FilesystemWriteTool {
                 "properties": {
                     "path": {"type": "string", "minLength": 1, "maxLength": 1024},
                     "content": {"type": "string", "maxLength": max_bytes},
-                    "create_only": {"type": "boolean"}
+                    "create_only": {"type": "boolean"},
+                    "expected_version": {"type": "string", "minLength": 6, "maxLength": 80}
                 },
                 "required": ["path", "content"],
                 "additionalProperties": false
@@ -216,11 +234,42 @@ impl FilesystemWriteTool {
 
 #[async_trait]
 impl ToolHandler for FilesystemWriteTool {
+    fn prepare_intent(
+        &self,
+        _: &ToolExecutionContext,
+        arguments: &Value,
+    ) -> Result<ToolIntentPrecondition, ToolHandlerError> {
+        let relative = string_argument(arguments, "path")?;
+        let content = string_argument(arguments, "content")?.as_bytes();
+        let target = self
+            .scope
+            .write_target(relative)
+            .map_err(|_| ToolHandlerError)?;
+        let before = match std::fs::read(target) {
+            Ok(bytes) => content_digest(&bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => "absent".into(),
+            Err(_) => return Err(ToolHandlerError),
+        };
+        if arguments
+            .get("expected_version")
+            .and_then(Value::as_str)
+            .is_some_and(|expected| expected != before)
+        {
+            return Err(ToolHandlerError);
+        }
+        Ok(ToolIntentPrecondition {
+            resource: Some(relative.replace('\\', "/")),
+            before_digest: Some(before),
+            expected_after_digest: Some(content_digest(content)),
+            replay_policy: None,
+        })
+    }
+
     async fn execute(
         &self,
-        _: ToolExecutionContext,
+        context: ToolExecutionContext,
         arguments: Value,
-    ) -> Result<String, ToolHandlerError> {
+    ) -> Result<ToolHandlerOutput, ToolHandlerError> {
         let path = string_argument(&arguments, "path")?.to_owned();
         let content = string_argument(&arguments, "content")?.as_bytes().to_vec();
         let create_only = arguments
@@ -233,12 +282,31 @@ impl ToolHandler for FilesystemWriteTool {
         let scope = self.scope.clone();
         let bytes = content.len();
         let write_path = path.clone();
-        tokio::task::spawn_blocking(move || {
-            atomic_write(&scope, &write_path, &content, create_only)
+        let after_digest = content_digest(&content);
+        let before_digest = tokio::task::spawn_blocking(move || {
+            let target = scope
+                .write_target(&write_path)
+                .map_err(|_| ToolHandlerError)?;
+            let before = match std::fs::read(&target) {
+                Ok(bytes) => content_digest(&bytes),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => "absent".into(),
+                Err(_) => return Err(ToolHandlerError),
+            };
+            atomic_write(&scope, &write_path, &content, create_only)?;
+            Ok::<_, ToolHandlerError>(before)
         })
         .await
         .map_err(|_| ToolHandlerError)??;
-        Ok(json!({"path": path.replace('\\', "/"), "bytes": bytes}).to_string())
+        let resource = path.replace('\\', "/");
+        Ok(ToolHandlerOutput::new(
+            json!({"path": resource, "bytes": bytes, "version_digest": after_digest}).to_string(),
+            ToolReceipt::Mutation {
+                execution_id: context.execution_id,
+                resource,
+                before_digest,
+                after_digest,
+            },
+        ))
     }
 
     fn summarize_arguments(&self, arguments: &Value) -> Option<String> {
@@ -283,26 +351,62 @@ impl PatchApplyTool {
 
 #[async_trait]
 impl ToolHandler for PatchApplyTool {
+    fn prepare_intent(
+        &self,
+        _: &ToolExecutionContext,
+        arguments: &Value,
+    ) -> Result<ToolIntentPrecondition, ToolHandlerError> {
+        let relative = string_argument(arguments, "path")?;
+        let expected = string_argument(arguments, "expected")?;
+        let replacement = string_argument(arguments, "replacement")?;
+        let target = self
+            .scope
+            .existing_file(relative)
+            .map_err(|_| ToolHandlerError)?;
+        let bytes = std::fs::read(target).map_err(|_| ToolHandlerError)?;
+        if bytes.len() > self.max_bytes {
+            return Err(ToolHandlerError);
+        }
+        let before = content_digest(&bytes);
+        let original = String::from_utf8(bytes).map_err(|_| ToolHandlerError)?;
+        let mut matches = original.match_indices(expected);
+        let Some((offset, _)) = matches.next() else {
+            return Err(ToolHandlerError);
+        };
+        if matches.next().is_some() {
+            return Err(ToolHandlerError);
+        }
+        let mut updated = original;
+        updated.replace_range(offset..offset + expected.len(), replacement);
+        Ok(ToolIntentPrecondition {
+            resource: Some(relative.replace('\\', "/")),
+            before_digest: Some(before),
+            expected_after_digest: Some(content_digest(updated.as_bytes())),
+            replay_policy: None,
+        })
+    }
+
     async fn execute(
         &self,
-        _: ToolExecutionContext,
+        context: ToolExecutionContext,
         arguments: Value,
-    ) -> Result<String, ToolHandlerError> {
+    ) -> Result<ToolHandlerOutput, ToolHandlerError> {
         let path = string_argument(&arguments, "path")?.to_owned();
         let expected = string_argument(&arguments, "expected")?.to_owned();
         let replacement = string_argument(&arguments, "replacement")?.to_owned();
         let scope = self.scope.clone();
         let max_bytes = self.max_bytes;
         let result_path = path.clone();
-        let bytes = tokio::task::spawn_blocking(move || {
+        let (bytes, before_digest, after_digest) = tokio::task::spawn_blocking(move || {
             let target = scope
                 .existing_file(&result_path)
                 .map_err(|_| ToolHandlerError)?;
-            let original = std::fs::read(&target).map_err(|_| ToolHandlerError)?;
-            if original.len() > max_bytes {
+            let original_bytes = std::fs::read(&target).map_err(|_| ToolHandlerError)?;
+            if original_bytes.len() > max_bytes {
                 return failure();
             }
-            let original = String::from_utf8(original).map_err(|_| ToolHandlerError)?;
+            let before_digest = content_digest(&original_bytes);
+            let original = String::from_utf8(original_bytes).map_err(|_| ToolHandlerError)?;
             let mut matches = original.match_indices(&expected);
             let Some((offset, _)) = matches.next() else {
                 return failure();
@@ -322,12 +426,22 @@ impl ToolHandler for PatchApplyTool {
             if updated.len() > max_bytes {
                 return failure();
             }
+            let after_digest = content_digest(updated.as_bytes());
             atomic_write(&scope, &result_path, updated.as_bytes(), false)?;
-            Ok(updated.len())
+            Ok((updated.len(), before_digest, after_digest))
         })
         .await
         .map_err(|_| ToolHandlerError)??;
-        Ok(json!({"path": path.replace('\\', "/"), "bytes": bytes, "replacements": 1}).to_string())
+        let resource = path.replace('\\', "/");
+        Ok(ToolHandlerOutput::new(
+            json!({"path": resource, "bytes": bytes, "replacements": 1, "version_digest": after_digest}).to_string(),
+            ToolReceipt::Mutation {
+                execution_id: context.execution_id,
+                resource,
+                before_digest,
+                after_digest,
+            },
+        ))
     }
 
     fn summarize_arguments(&self, arguments: &Value) -> Option<String> {
@@ -370,6 +484,7 @@ mod tests {
         ToolExecutionContext {
             run_id: "run".into(),
             call_id: "call".into(),
+            execution_id: "exec-call".into(),
             cancellation: Arc::new(NeverCancel),
         }
     }

@@ -6,7 +6,6 @@ export type AgentRunStatus = "active" | "completed" | "failed" | "cancelled";
 export type AgentStreamTool = {
   callId: string;
   name: string;
-  arguments: string;
   risk: string | null;
   approvalId: string | null;
   approvalSummary: string | null;
@@ -69,7 +68,6 @@ function emptyTool(callId: string, name = "tool"): AgentStreamTool {
   return {
     callId,
     name,
-    arguments: "",
     risk: null,
     approvalId: null,
     approvalSummary: null,
@@ -153,10 +151,9 @@ export function reduceAgentEvent(state: AgentStreamState, event: AgentEventDto):
       }
       attempt.status = "streaming";
       break;
-    case "tool_arguments_delta": {
+    case "tool_call_progress": {
       if (!event.call_id) break;
-      const tool = findOrCreateTool(attempt, event.call_id);
-      tool.arguments += event.delta ?? "";
+      findOrCreateTool(attempt, event.call_id);
       attempt.status = "streaming";
       break;
     }
@@ -182,7 +179,7 @@ export function reduceAgentEvent(state: AgentStreamState, event: AgentEventDto):
       tool.permission = event.decision === "allow" ? "allowed" : "denied";
       break;
     }
-    case "tool_execution_started": {
+    case "tool_call_ready": {
       if (!event.call_id) break;
       const tool = findOrCreateTool(attempt, event.call_id, event.tool_name ?? undefined);
       tool.risk = event.risk;

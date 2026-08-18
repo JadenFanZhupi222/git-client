@@ -32,6 +32,11 @@ review-agent = { path = "../../crates/review-agent" }
 agent-session = { path = "../../crates/agent-session" }
 agent-tools = { path = "../../crates/agent-tools" }
 async-trait.workspace = true
+chacha20poly1305.workspace = true
+fs2.workspace = true
+hex.workspace = true
+getrandom.workspace = true
+tempfile.workspace = true
 
 # 接入我们的分层 crate:命令层 → app-service → git-engine
 app-service = { path = "../../crates/app-service" }

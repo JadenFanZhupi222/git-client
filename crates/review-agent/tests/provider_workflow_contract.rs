@@ -149,6 +149,7 @@ async fn one_provider_contract_drives_both_workflows_without_provider_branches()
             r#"{"summary":"Reviewed","findings":[]}"#,
             ModelUsage {
                 input_tokens: 10,
+                cached_input_tokens: 0,
                 output_tokens: 2,
                 tool_calls: 0,
             },
@@ -157,6 +158,7 @@ async fn one_provider_contract_drives_both_workflows_without_provider_branches()
             r#"{"summary":"Crash report","category":"bug","priority":"high","confidence":0.9,"suggested_labels":["bug"],"suspected_duplicate_numbers":[],"suggested_reply":"Thanks","rationale":["Reproduction steps supplied"]}"#,
             ModelUsage {
                 input_tokens: 12,
+                cached_input_tokens: 0,
                 output_tokens: 4,
                 tool_calls: 0,
             },

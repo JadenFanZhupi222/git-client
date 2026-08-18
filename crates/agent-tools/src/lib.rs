@@ -9,6 +9,7 @@ use agent_runtime::{
     PermissionDecision, PermissionPolicy, PermissionRule, ToolMatcher, ToolRegistrationError,
     ToolRegistry, ToolRisk,
 };
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -19,6 +20,14 @@ pub use path_scope::{PathScope, PathScopeError};
 pub use search::SearchTextTool;
 pub use shell::ShellExecTool;
 pub use web::{is_public_ip, WebFetchTool};
+
+pub(crate) fn content_digest(bytes: &[u8]) -> String {
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+}
+
+pub fn digest_content(bytes: &[u8]) -> String {
+    content_digest(bytes)
+}
 
 #[derive(Debug, Clone)]
 pub struct ShellProgram {

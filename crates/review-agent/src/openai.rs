@@ -460,6 +460,10 @@ fn parse_response(body: Value) -> Result<ModelResponse, ProviderError> {
             .pointer("/usage/input_tokens")
             .and_then(Value::as_u64)
             .unwrap_or(0),
+        cached_input_tokens: body
+            .pointer("/usage/input_tokens_details/cached_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
         output_tokens: body
             .pointer("/usage/output_tokens")
             .and_then(Value::as_u64)

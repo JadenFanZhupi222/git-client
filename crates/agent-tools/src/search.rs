@@ -1,6 +1,7 @@
-use crate::PathScope;
+use crate::{content_digest, PathScope};
 use agent_runtime::{
-    ToolDefinition, ToolExecutionContext, ToolHandler, ToolHandlerError, ToolRisk,
+    ToolDefinition, ToolExecutionContext, ToolHandler, ToolHandlerError, ToolHandlerOutput,
+    ToolReceipt, ToolRisk,
 };
 use async_trait::async_trait;
 use regex::Regex;
@@ -59,7 +60,7 @@ impl ToolHandler for SearchTextTool {
         &self,
         context: ToolExecutionContext,
         arguments: Value,
-    ) -> Result<String, ToolHandlerError> {
+    ) -> Result<ToolHandlerOutput, ToolHandlerError> {
         let query = arguments
             .get("query")
             .and_then(Value::as_str)
@@ -109,7 +110,14 @@ impl ToolHandler for SearchTextTool {
         })
         .await
         .map_err(|_| ToolHandlerError)??;
-        serde_json::to_string(&results).map_err(|_| ToolHandlerError)
+        let content = serde_json::to_string(&results).map_err(|_| ToolHandlerError)?;
+        Ok(ToolHandlerOutput::new(
+            content.clone(),
+            ToolReceipt::Observation {
+                resource: relative.replace('\\', "/"),
+                version_digest: content_digest(content.as_bytes()),
+            },
+        ))
     }
 
     fn summarize_arguments(&self, arguments: &Value) -> Option<String> {
@@ -219,6 +227,7 @@ mod tests {
         ToolExecutionContext {
             run_id: "run".into(),
             call_id: "call".into(),
+            execution_id: "exec-call".into(),
             cancellation: Arc::new(NeverCancel),
         }
     }
@@ -259,6 +268,7 @@ mod tests {
                 ToolExecutionContext {
                     run_id: "run".into(),
                     call_id: "call".into(),
+                    execution_id: "exec-call".into(),
                     cancellation: Arc::new(Cancelled),
                 },
                 json!({"query":"needle"}),

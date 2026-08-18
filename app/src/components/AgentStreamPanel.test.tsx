@@ -24,7 +24,6 @@ describe("AgentStreamPanel", () => {
         tools: [{
           callId: "call-1",
           name: "read_file",
-          arguments: "{\"path\":\"src/a.ts\"}",
           risk: null,
           approvalId: null,
           approvalSummary: null,
@@ -51,7 +50,7 @@ describe("AgentStreamPanel", () => {
     await user.click(screen.getByText("Debug details"));
     expect(debugDetails).toHaveAttribute("open");
     expect(screen.getByText("Partial answer")).toBeInTheDocument();
-    expect(screen.getByText('{"path":"src/a.ts"}')).toBeInTheDocument();
+    expect(screen.queryByText('{"path":"src/a.ts"}')).not.toBeInTheDocument();
   });
 
   it("uses a workflow-specific preparation label before model events arrive", () => {
@@ -97,7 +96,6 @@ describe("AgentStreamPanel", () => {
         tools: [{
           callId: "call-1",
           name: "filesystem.write",
-          arguments: "",
           risk: "write",
           approvalId: "approval-1",
           approvalSummary: "Write one repository file",

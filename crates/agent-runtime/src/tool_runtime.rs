@@ -41,6 +41,120 @@ pub struct ToolResult {
     pub content: String,
     pub truncated: bool,
     pub content_bytes: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<ToolReceipt>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessReplayPolicy {
+    Never,
+    UserApproved,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ToolReceipt {
+    Observation {
+        resource: String,
+        version_digest: String,
+    },
+    Mutation {
+        execution_id: String,
+        resource: String,
+        before_digest: String,
+        after_digest: String,
+    },
+    Artifact {
+        execution_id: String,
+        artifact_id: String,
+        content_digest: String,
+    },
+    Process {
+        execution_id: String,
+        program: String,
+        exit_code: i32,
+        replay_policy: ProcessReplayPolicy,
+    },
+}
+
+impl ToolReceipt {
+    pub fn is_effect(&self) -> bool {
+        !matches!(self, Self::Observation { .. })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolIntent {
+    pub execution_id: String,
+    pub run_id: String,
+    pub call_id: String,
+    pub tool_name: String,
+    pub risk: ToolRisk,
+    pub arguments: Value,
+    pub approval_id: Option<String>,
+    pub approved: bool,
+    pub resource: Option<String>,
+    pub before_digest: Option<String>,
+    pub expected_after_digest: Option<String>,
+    pub replay_policy: Option<ProcessReplayPolicy>,
+}
+
+impl ToolIntent {
+    #[doc(hidden)]
+    pub fn for_test(execution_id: &str, call_id: &str, tool_name: &str) -> Self {
+        Self {
+            execution_id: execution_id.into(),
+            run_id: "run-test".into(),
+            call_id: call_id.into(),
+            tool_name: tool_name.into(),
+            risk: ToolRisk::Write,
+            arguments: Value::Object(Default::default()),
+            approval_id: None,
+            approved: false,
+            resource: None,
+            before_digest: None,
+            expected_after_digest: None,
+            replay_policy: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ToolIntentPrecondition {
+    pub resource: Option<String>,
+    pub before_digest: Option<String>,
+    pub expected_after_digest: Option<String>,
+    pub replay_policy: Option<ProcessReplayPolicy>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolHandlerOutput {
+    pub sanitized_content: String,
+    pub receipt: ToolReceipt,
+}
+
+impl ToolHandlerOutput {
+    pub fn new(content: impl Into<String>, receipt: ToolReceipt) -> Self {
+        Self {
+            sanitized_content: content.into(),
+            receipt,
+        }
+    }
+}
+
+impl std::ops::Deref for ToolHandlerOutput {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.sanitized_content
+    }
+}
+
+impl PartialEq<&str> for ToolHandlerOutput {
+    fn eq(&self, other: &&str) -> bool {
+        self.sanitized_content == *other
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -154,6 +268,7 @@ impl ToolApprovalResolver for DenyAllApprovals {
 pub struct ToolExecutionContext {
     pub run_id: String,
     pub call_id: String,
+    pub execution_id: String,
     pub cancellation: Arc<dyn ToolCancellation>,
 }
 
@@ -163,11 +278,19 @@ pub struct ToolHandlerError;
 
 #[async_trait]
 pub trait ToolHandler: Send + Sync {
+    fn prepare_intent(
+        &self,
+        _: &ToolExecutionContext,
+        _: &Value,
+    ) -> Result<ToolIntentPrecondition, ToolHandlerError> {
+        Ok(ToolIntentPrecondition::default())
+    }
+
     async fn execute(
         &self,
         context: ToolExecutionContext,
         arguments: Value,
-    ) -> Result<String, ToolHandlerError>;
+    ) -> Result<ToolHandlerOutput, ToolHandlerError>;
 
     fn summarize_arguments(&self, _: &Value) -> Option<String> {
         None
@@ -175,6 +298,30 @@ pub trait ToolHandler: Send + Sync {
 
     fn sanitize_result(&self, content: String) -> String {
         content
+    }
+}
+
+pub trait ToolIntentJournal: Send + Sync {
+    /// Must durably persist and fsync the complete intent before returning.
+    fn record_intent(&self, intent: &ToolIntent) -> Result<(), ToolExecutionError>;
+    /// Must durably persist and fsync the receipt before returning.
+    fn record_receipt(
+        &self,
+        intent: &ToolIntent,
+        receipt: &ToolReceipt,
+    ) -> Result<(), ToolExecutionError>;
+}
+
+#[derive(Debug, Default)]
+pub struct NoopToolIntentJournal;
+
+impl ToolIntentJournal for NoopToolIntentJournal {
+    fn record_intent(&self, _: &ToolIntent) -> Result<(), ToolExecutionError> {
+        Ok(())
+    }
+
+    fn record_receipt(&self, _: &ToolIntent, _: &ToolReceipt) -> Result<(), ToolExecutionError> {
+        Ok(())
     }
 }
 
@@ -202,6 +349,12 @@ pub enum ToolExecutionError {
     Cancelled,
     #[error("tool execution timed out")]
     Timeout,
+    #[error("tool intent persistence failed")]
+    IntentPersistence,
+    #[error("tool receipt persistence failed")]
+    ReceiptPersistence,
+    #[error("tool intent preparation failed")]
+    IntentPreparation,
 }
 
 #[derive(Clone)]
@@ -645,6 +798,7 @@ struct ToolRunCounters {
 
 pub struct ToolRun {
     run_id: String,
+    execution_namespace: String,
     limits: ToolRunLimits,
     cancellation: Arc<dyn ToolCancellation>,
     run_policy: Option<PermissionPolicy>,
@@ -657,8 +811,10 @@ impl ToolRun {
         limits: ToolRunLimits,
         cancellation: Arc<dyn ToolCancellation>,
     ) -> Self {
+        let run_id = run_id.into();
         Self {
-            run_id: run_id.into(),
+            execution_namespace: run_id.clone(),
+            run_id,
             limits,
             cancellation,
             run_policy: None,
@@ -668,6 +824,11 @@ impl ToolRun {
 
     pub fn with_policy(mut self, policy: PermissionPolicy) -> Self {
         self.run_policy = Some(policy);
+        self
+    }
+
+    pub fn with_execution_namespace(mut self, namespace: impl Into<String>) -> Self {
+        self.execution_namespace = namespace.into();
         self
     }
 
@@ -736,7 +897,7 @@ impl ToolRun {
         counters.next_approval_id = counters.next_approval_id.saturating_add(1);
         format!(
             "approval-{}-{}",
-            stable_hash(&self.run_id),
+            stable_hash(&self.execution_namespace),
             counters.next_approval_id
         )
     }
@@ -817,6 +978,7 @@ pub struct ToolExecutor {
     policy: PermissionPolicy,
     approvals: Arc<dyn ToolApprovalResolver>,
     events: Arc<dyn ToolExecutionEventSink>,
+    journal: Arc<dyn ToolIntentJournal>,
     secret_literals: Vec<String>,
 }
 
@@ -827,6 +989,7 @@ impl ToolExecutor {
             policy,
             approvals: Arc::new(DenyAllApprovals),
             events: Arc::new(NoopToolExecutionEventSink),
+            journal: Arc::new(NoopToolIntentJournal),
             secret_literals: Vec::new(),
         }
     }
@@ -838,6 +1001,11 @@ impl ToolExecutor {
 
     pub fn with_events(mut self, events: Arc<dyn ToolExecutionEventSink>) -> Self {
         self.events = events;
+        self
+    }
+
+    pub fn with_journal(mut self, journal: Arc<dyn ToolIntentJournal>) -> Self {
+        self.journal = journal;
         self
     }
 
@@ -879,6 +1047,7 @@ impl ToolExecutor {
             .as_ref()
             .map(|policy| policy.evaluate(&call.name, tool.definition.risk));
         let mut decision = restrict_decision(app_decision, run_decision);
+        let mut resolved_approval_id = None;
         if decision == PermissionDecision::Ask {
             let approval_timeout = run.effective_timeout(
                 Duration::from_millis(tool.definition.timeout_ms).min(run.limits.max_tool_timeout),
@@ -910,10 +1079,11 @@ impl ToolExecutor {
                 decision = PermissionDecision::Deny;
             }
             self.events.emit(ToolExecutionEvent::ApprovalResolved {
-                approval_id,
+                approval_id: approval_id.clone(),
                 call_id: call.call_id.clone(),
                 decision,
             });
+            resolved_approval_id = Some(approval_id);
         }
         if decision != PermissionDecision::Allow {
             let result = ToolResult {
@@ -923,6 +1093,7 @@ impl ToolExecutor {
                 content: "Tool permission denied.".into(),
                 truncated: false,
                 content_bytes: "Tool permission denied.".len(),
+                receipt: None,
             };
             self.events.emit(ToolExecutionEvent::Completed {
                 call_id: result.call_id.clone(),
@@ -936,6 +1107,62 @@ impl ToolExecutor {
         }
 
         run.check_active()?;
+        let execution_id = format!(
+            "exec-{}",
+            stable_hash(&format!(
+                "{}\0{}\0{}",
+                run.execution_namespace, call.call_id, call.name
+            ))
+        );
+        let preparation = match tool.handler.prepare_intent(
+            &ToolExecutionContext {
+                run_id: run.run_id.clone(),
+                call_id: call.call_id.clone(),
+                execution_id: execution_id.clone(),
+                cancellation: Arc::clone(&run.cancellation),
+            },
+            &call.arguments,
+        ) {
+            Ok(preparation) => preparation,
+            Err(_) => {
+                let content = "Tool preparation failed.".to_owned();
+                run.commit_result_bytes(content.len())?;
+                self.events.emit(ToolExecutionEvent::Completed {
+                    call_id: call.call_id.clone(),
+                    name: call.name.clone(),
+                    outcome: ToolOutcome::Failed,
+                    duration_ms: 0,
+                    content_bytes: content.len(),
+                    truncated: false,
+                });
+                return Ok(ToolResult {
+                    call_id: call.call_id,
+                    name: call.name,
+                    outcome: ToolOutcome::Failed,
+                    content_bytes: content.len(),
+                    content,
+                    truncated: false,
+                    receipt: None,
+                });
+            }
+        };
+        let intent = ToolIntent {
+            execution_id: execution_id.clone(),
+            run_id: run.run_id.clone(),
+            call_id: call.call_id.clone(),
+            tool_name: call.name.clone(),
+            risk: tool.definition.risk,
+            arguments: call.arguments.clone(),
+            approval_id: resolved_approval_id,
+            approved: true,
+            resource: preparation.resource,
+            before_digest: preparation.before_digest,
+            expected_after_digest: preparation.expected_after_digest,
+            replay_policy: preparation.replay_policy,
+        };
+        self.journal
+            .record_intent(&intent)
+            .map_err(|_| ToolExecutionError::IntentPersistence)?;
         self.events.emit(ToolExecutionEvent::Started {
             call_id: call.call_id.clone(),
             name: call.name.clone(),
@@ -948,6 +1175,7 @@ impl ToolExecutor {
         let context = ToolExecutionContext {
             run_id: run.run_id.clone(),
             call_id: call.call_id.clone(),
+            execution_id,
             cancellation: Arc::clone(&run.cancellation),
         };
         let arguments = call.arguments.clone();
@@ -967,9 +1195,18 @@ impl ToolExecutor {
                 }
             }
         };
-        let (outcome, content) = match output {
-            Ok(content) => (ToolOutcome::Success, tool.handler.sanitize_result(content)),
-            Err(_) => (ToolOutcome::Failed, "Tool execution failed.".into()),
+        let (outcome, content, receipt) = match output {
+            Ok(output) => {
+                self.journal
+                    .record_receipt(&intent, &output.receipt)
+                    .map_err(|_| ToolExecutionError::ReceiptPersistence)?;
+                (
+                    ToolOutcome::Success,
+                    tool.handler.sanitize_result(output.sanitized_content),
+                    Some(output.receipt),
+                )
+            }
+            Err(_) => (ToolOutcome::Failed, "Tool execution failed.".into(), None),
         };
         let content = redact_sensitive_text(content, &self.secret_literals);
         let cap = tool
@@ -991,6 +1228,7 @@ impl ToolExecutor {
             content,
             truncated,
             content_bytes,
+            receipt,
         })
     }
 
@@ -1116,11 +1354,17 @@ mod tests {
     impl ToolHandler for EchoHandler {
         async fn execute(
             &self,
-            _: ToolExecutionContext,
+            context: ToolExecutionContext,
             arguments: Value,
-        ) -> Result<String, ToolHandlerError> {
+        ) -> Result<ToolHandlerOutput, ToolHandlerError> {
             self.0.fetch_add(1, Ordering::SeqCst);
-            Ok(arguments["text"].as_str().unwrap_or_default().to_owned())
+            Ok(ToolHandlerOutput::new(
+                arguments["text"].as_str().unwrap_or_default(),
+                ToolReceipt::Observation {
+                    resource: context.call_id,
+                    version_digest: "test-digest".into(),
+                },
+            ))
         }
 
         fn summarize_arguments(&self, _: &Value) -> Option<String> {
@@ -1169,6 +1413,7 @@ mod tests {
             content: "ok".into(),
             truncated: false,
             content_bytes: 2,
+            receipt: None,
         };
         assert_eq!(
             serde_json::from_str::<ToolResult>(&serde_json::to_string(&result).unwrap()).unwrap(),
@@ -1376,9 +1621,15 @@ mod tests {
             &self,
             _: ToolExecutionContext,
             _: Value,
-        ) -> Result<String, ToolHandlerError> {
+        ) -> Result<ToolHandlerOutput, ToolHandlerError> {
             tokio::time::sleep(Duration::from_secs(1)).await;
-            Ok("late".into())
+            Ok(ToolHandlerOutput::new(
+                "late",
+                ToolReceipt::Observation {
+                    resource: "slow".into(),
+                    version_digest: "test-digest".into(),
+                },
+            ))
         }
     }
 
@@ -1459,5 +1710,81 @@ mod tests {
         assert!(result.truncated);
         assert!(result.content_bytes <= 32);
         assert!(std::str::from_utf8(result.content.as_bytes()).is_ok());
+    }
+
+    struct OrderedHandler(Arc<Mutex<Vec<&'static str>>>);
+
+    #[async_trait]
+    impl ToolHandler for OrderedHandler {
+        async fn execute(
+            &self,
+            context: ToolExecutionContext,
+            _: Value,
+        ) -> Result<ToolHandlerOutput, ToolHandlerError> {
+            self.0.lock().unwrap().push("effect");
+            Ok(ToolHandlerOutput::new(
+                "safe",
+                ToolReceipt::Observation {
+                    resource: context.call_id,
+                    version_digest: "digest".into(),
+                },
+            ))
+        }
+    }
+
+    struct RecordingJournal {
+        order: Arc<Mutex<Vec<&'static str>>>,
+        fail_intent: bool,
+    }
+
+    impl ToolIntentJournal for RecordingJournal {
+        fn record_intent(&self, _: &ToolIntent) -> Result<(), ToolExecutionError> {
+            self.order.lock().unwrap().push("intent");
+            if self.fail_intent {
+                Err(ToolExecutionError::IntentPersistence)
+            } else {
+                Ok(())
+            }
+        }
+
+        fn record_receipt(
+            &self,
+            _: &ToolIntent,
+            _: &ToolReceipt,
+        ) -> Result<(), ToolExecutionError> {
+            self.order.lock().unwrap().push("receipt");
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn durable_intent_precedes_effect_and_receipt_and_failed_intent_prevents_execution() {
+        for fail_intent in [false, true] {
+            let order = Arc::new(Mutex::new(Vec::new()));
+            let mut registry = ToolRegistry::default();
+            registry
+                .register(definition(), Arc::new(OrderedHandler(Arc::clone(&order))))
+                .unwrap();
+            let executor = ToolExecutor::new(Arc::new(registry), allow_policy()).with_journal(
+                Arc::new(RecordingJournal {
+                    order: Arc::clone(&order),
+                    fail_intent,
+                }),
+            );
+            let run = ToolRun::new("run", ToolRunLimits::default(), Arc::new(NeverCancel));
+            let result = executor
+                .execute(
+                    &run,
+                    ToolCall::with_call_id("test.echo", "ordered", json!({"text":"ok"})),
+                )
+                .await;
+            if fail_intent {
+                assert_eq!(result.unwrap_err(), ToolExecutionError::IntentPersistence);
+                assert_eq!(*order.lock().unwrap(), vec!["intent"]);
+            } else {
+                assert_eq!(result.unwrap().outcome, ToolOutcome::Success);
+                assert_eq!(*order.lock().unwrap(), vec!["intent", "effect", "receipt"]);
+            }
+        }
     }
 }

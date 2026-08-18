@@ -1,6 +1,7 @@
 use crate::PathScope;
 use agent_runtime::{
-    ToolDefinition, ToolExecutionContext, ToolHandler, ToolHandlerError, ToolRisk,
+    ProcessReplayPolicy, ToolDefinition, ToolExecutionContext, ToolHandler, ToolHandlerError,
+    ToolHandlerOutput, ToolIntentPrecondition, ToolReceipt, ToolRisk,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -52,16 +53,35 @@ impl ShellExecTool {
 
 #[async_trait]
 impl ToolHandler for ShellExecTool {
+    fn prepare_intent(
+        &self,
+        _: &ToolExecutionContext,
+        arguments: &Value,
+    ) -> Result<ToolIntentPrecondition, ToolHandlerError> {
+        let program = arguments
+            .get("program")
+            .and_then(Value::as_str)
+            .ok_or(ToolHandlerError)?;
+        if !self.programs.contains_key(program) {
+            return Err(ToolHandlerError);
+        }
+        Ok(ToolIntentPrecondition {
+            replay_policy: Some(ProcessReplayPolicy::Never),
+            ..ToolIntentPrecondition::default()
+        })
+    }
+
     async fn execute(
         &self,
-        _: ToolExecutionContext,
+        context: ToolExecutionContext,
         arguments: Value,
-    ) -> Result<String, ToolHandlerError> {
+    ) -> Result<ToolHandlerOutput, ToolHandlerError> {
         let alias = arguments
             .get("program")
             .and_then(Value::as_str)
             .ok_or(ToolHandlerError)?;
         let executable = self.programs.get(alias).ok_or(ToolHandlerError)?;
+        let program = alias.to_owned();
         let cwd = self
             .scope
             .existing_directory(arguments.get("cwd").and_then(Value::as_str).unwrap_or(""))
@@ -127,13 +147,22 @@ impl ToolHandler for ShellExecTool {
             }
         }
         let status = child.wait().await.map_err(|_| ToolHandlerError)?;
-        Ok(json!({
-            "exit_code": status.code(),
-            "success": status.success(),
-            "stdout": String::from_utf8_lossy(&stdout_bytes),
-            "stderr": String::from_utf8_lossy(&stderr_bytes)
-        })
-        .to_string())
+        let exit_code = status.code().unwrap_or(-1);
+        Ok(ToolHandlerOutput::new(
+            json!({
+                "exit_code": status.code(),
+                "success": status.success(),
+                "stdout": String::from_utf8_lossy(&stdout_bytes),
+                "stderr": String::from_utf8_lossy(&stderr_bytes)
+            })
+            .to_string(),
+            ToolReceipt::Process {
+                execution_id: context.execution_id,
+                program,
+                exit_code,
+                replay_policy: ProcessReplayPolicy::Never,
+            },
+        ))
     }
 
     fn summarize_arguments(&self, arguments: &Value) -> Option<String> {
@@ -190,6 +219,7 @@ mod tests {
         ToolExecutionContext {
             run_id: "run".into(),
             call_id: "call".into(),
+            execution_id: "exec-call".into(),
             cancellation: Arc::new(NeverCancel),
         }
     }

@@ -295,6 +295,7 @@ async fn performs_stateless_multi_turn_tool_loop() {
             vec![finding("f1", 1)],
             ReviewUsage {
                 input_tokens: 3,
+                cached_input_tokens: 0,
                 output_tokens: 2,
                 tool_calls: 0,
             },
@@ -763,6 +764,7 @@ impl ModelProvider for DelayedFinalModel {
             vec![],
             ReviewUsage {
                 input_tokens: 4,
+                cached_input_tokens: 0,
                 output_tokens: 2,
                 tool_calls: 0,
             },
