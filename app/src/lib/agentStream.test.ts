@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentEventDto } from "../bindings";
-import { createAgentStream, finishAgentStream, reduceAgentEvent } from "./agentStream";
+import { createAgentStream, finishAgentStream, latestAgentAnswerDraft, reduceAgentEvent } from "./agentStream";
 
 function event(sequence: number, attemptId: number, eventType: string, fields: Partial<AgentEventDto> = {}): AgentEventDto {
   return {
@@ -34,6 +34,20 @@ function event(sequence: number, attemptId: number, eventType: string, fields: P
 }
 
 describe("agent stream reducer", () => {
+  it("exposes only the latest tool-free attempt as a provisional answer", () => {
+    let state = createAgentStream("run-1");
+    state = reduceAgentEvent(state, event(1, 1, "output_text_delta", { delta: "Inspecting the parser" }));
+    expect(latestAgentAnswerDraft(state)).toBe("Inspecting the parser");
+
+    state = reduceAgentEvent(state, event(2, 1, "tool_call_started", { call_id: "call-1", tool_name: "filesystem.read" }));
+    expect(latestAgentAnswerDraft(state)).toBeNull();
+
+    state = reduceAgentEvent(state, event(3, 2, "output_text_delta", { delta: "Final answer in pro" }));
+    expect(latestAgentAnswerDraft(state)).toBe("Final answer in pro");
+    state = reduceAgentEvent(state, event(4, 2, "output_text_delta", { delta: "gress" }));
+    expect(latestAgentAnswerDraft(state)).toBe("Final answer in progress");
+  });
+
   it("assembles text and usage without retaining partial tool arguments", () => {
     let state = createAgentStream("run-1");
     state = reduceAgentEvent(state, event(1, 1, "model_attempt_started", { provider_id: "openai", model_id: "gpt-5" }));

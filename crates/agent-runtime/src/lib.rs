@@ -254,6 +254,7 @@ impl From<&ProviderError> for AgentErrorCode {
             ProviderError::InvalidRequest => Self::InvalidRequest,
             ProviderError::RateLimited => Self::RateLimited,
             ProviderError::Network(_) => Self::Network,
+            ProviderError::StreamInterrupted => Self::Network,
             ProviderError::OutputTruncated => Self::OutputTruncated,
             ProviderError::InvalidResponse(_) => Self::InvalidResponse,
         }
@@ -541,6 +542,8 @@ pub enum ProviderError {
     RateLimited,
     #[error("provider network request failed: {0}")]
     Network(String),
+    #[error("provider stream was interrupted after the response started")]
+    StreamInterrupted,
     #[error("provider output was truncated")]
     OutputTruncated,
     #[error("provider returned an invalid response: {0}")]
@@ -549,6 +552,13 @@ pub enum ProviderError {
 
 impl ProviderError {
     pub fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            Self::RateLimited | Self::Network(_) | Self::StreamInterrupted
+        )
+    }
+
+    pub fn is_safe_to_automatically_retry(&self) -> bool {
         matches!(self, Self::RateLimited | Self::Network(_))
     }
 }
@@ -715,6 +725,9 @@ mod tests {
     fn retry_policy_retries_only_transient_provider_failures() {
         assert!(ProviderError::RateLimited.is_transient());
         assert!(ProviderError::Network("offline".into()).is_transient());
+        assert!(ProviderError::StreamInterrupted.is_transient());
+        assert!(!ProviderError::StreamInterrupted.is_safe_to_automatically_retry());
+        assert!(ProviderError::Network("offline".into()).is_safe_to_automatically_retry());
         assert!(!ProviderError::AuthFailed.is_transient());
         assert!(!ProviderError::QuotaExceeded.is_transient());
         assert!(!ProviderError::InvalidRequest.is_transient());

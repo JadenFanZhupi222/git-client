@@ -111,10 +111,10 @@ async fn respond_with_retry_and_events_matching(
             }
             Err(error)
                 if attempt < policy.max_attempts
-                    && (error.is_transient()
+                    && (error.is_safe_to_automatically_retry()
                         || (!invalid_retry_used && recoverable_invalid(&error))) =>
             {
-                invalid_retry_used |= !error.is_transient();
+                invalid_retry_used |= !error.is_safe_to_automatically_retry();
                 events.emit(AgentEventKind::ModelAttemptFailed {
                     error: (&error).into(),
                     will_retry: true,
@@ -235,6 +235,31 @@ mod tests {
         assert!(matches!(
             error,
             ProviderCallError::Provider(ProviderError::InvalidResponse(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn interrupted_streams_are_not_automatically_retried() {
+        let provider = SequenceProvider(Mutex::new(VecDeque::from([
+            Err(ProviderError::StreamInterrupted),
+            Ok(ModelResponse::final_text("unused", ModelUsage::default())),
+        ])));
+        let mut attempts = 0;
+
+        let error = respond_with_retry(
+            &provider,
+            &request(),
+            &NeverCancel,
+            "possibly-billed-stream",
+            &mut attempts,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(attempts, 1);
+        assert!(matches!(
+            error,
+            ProviderCallError::Provider(ProviderError::StreamInterrupted)
         ));
     }
 

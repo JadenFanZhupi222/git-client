@@ -8,8 +8,9 @@ use agent_session::{
     AgentSliceBoundary, AgentSliceOutcome, AgentSliceRequest, AgentTurnRequest, BlockReason,
     CompletionError, DurableAgentSession, GoalError, GoalRepository, ModelBudgetLimit, PauseReason,
     PriceSnapshot, SessionEngine, SessionEngineConfig, SessionEngineError, SessionError,
-    SessionRole, SessionStore, VerificationDecision, compact_working_set,
-    validate_completion_candidate, verifier_requests_fit_budget, verify_completion_candidate,
+    SessionRole, SessionStore, VerificationDecision, VerifierContinuationAction,
+    compact_working_set, validate_completion_candidate, verifier_continuation_action,
+    verifier_feedback_message, verifier_requests_fit_budget, verify_completion_candidate,
 };
 use agent_tools::{BuiltinToolConfig, build_builtin_tool_pack};
 use async_trait::async_trait;
@@ -36,6 +37,9 @@ const SLICE_MAX_ACTIVE_MS: u64 = 120_000;
 const SLICE_MAX_INPUT_TOKENS: u64 = 250_000;
 const SLICE_MAX_OUTPUT_TOKENS: u64 = 16_000;
 const SLICE_MAX_TOOL_RESULT_BYTES: usize = 2 * 1024 * 1024;
+const PROVIDER_RETRY_MAX_ATTEMPTS: u8 = 8;
+const PROVIDER_RETRY_BASE_DELAY_MS: u64 = 500;
+const PROVIDER_RETRY_MAX_DELAY_MS: u64 = 10_000;
 
 pub(crate) type DurableGoalRepository = GoalRepository<EncryptedAgentStore>;
 
@@ -411,6 +415,13 @@ impl AgentRunManager {
                 })?;
             let provider: Arc<dyn ModelProvider> = Arc::from(provider);
             if goal.completion_candidate.is_some() {
+                tracing::info!(
+                    goal_id = %goal.goal_id,
+                    slice_index = goal.checkpoint.slice_index,
+                    candidate_pending = true,
+                    stage = "completion_candidate_resume",
+                    "durable agent completion advanced"
+                );
                 if self
                     .handle_completion_candidate(app, session_id, repository, Arc::clone(&provider))
                     .await?
@@ -466,6 +477,14 @@ impl AgentRunManager {
                     .map_err(map_goal_run_error)?,
             );
             let atomic_step_started = Instant::now();
+            tracing::info!(
+                goal_id = %goal.goal_id,
+                slice_index = goal.checkpoint.slice_index,
+                checkpoint_sequence = goal.checkpoint.checkpoint_sequence,
+                transcript_items = goal.checkpoint.recent_transcript.len(),
+                stage = "slice_started",
+                "durable agent slice advanced"
+            );
             let outcome = engine
                 .run_goal_slice(
                     AgentSliceRequest {
@@ -481,6 +500,17 @@ impl AgentRunManager {
                 )
                 .await
                 .map_err(map_engine_error)?;
+            tracing::info!(
+                goal_id = %goal.goal_id,
+                slice_index = goal.checkpoint.slice_index,
+                duration_ms = elapsed_ms(atomic_step_started.elapsed()),
+                outcome = match &outcome {
+                    AgentSliceOutcome::Checkpoint(_) => "checkpoint",
+                    AgentSliceOutcome::CompletionCandidate { .. } => "completion_candidate",
+                },
+                stage = "slice_completed",
+                "durable agent slice advanced"
+            );
 
             match outcome {
                 AgentSliceOutcome::Checkpoint(mut checkpoint) => {
@@ -721,6 +751,16 @@ impl AgentRunManager {
             .completion_candidate
             .clone()
             .ok_or(RunGoalError::InvalidResult)?;
+        tracing::info!(
+            goal_id = %goal.goal_id,
+            slice_index = goal.checkpoint.slice_index,
+            candidate_bytes = candidate.text.len(),
+            candidate_model_responses = candidate.model_responses,
+            candidate_used_tools = candidate.used_tools,
+            verification_cached = candidate.verification.is_some(),
+            stage = "completion_candidate_started",
+            "durable agent completion advanced"
+        );
         validate_completion_candidate(&candidate).map_err(map_completion_error)?;
         if !receipts_match_repository(&goal, repository)? {
             self.goals
@@ -748,9 +788,29 @@ impl AgentRunManager {
                 emit_status(app, &current_goal(&self.goals, session_id)?);
                 return Ok(true);
             }
+            let verifier_started = Instant::now();
             let verified = verify_completion_candidate(provider, &goal)
                 .await
-                .map_err(map_completion_error)?;
+                .map_err(|error| {
+                    tracing::warn!(
+                        goal_id = %goal.goal_id,
+                        duration_ms = elapsed_ms(verifier_started.elapsed()),
+                        error_detail = %error,
+                        stage = "completion_verifier_failed",
+                        "durable agent completion advanced"
+                    );
+                    map_completion_error(error)
+                })?;
+            tracing::info!(
+                goal_id = %goal.goal_id,
+                duration_ms = elapsed_ms(verifier_started.elapsed()),
+                decision = ?verified.result.decision,
+                input_tokens = verified.usage.input_tokens,
+                cached_input_tokens = verified.usage.cached_input_tokens,
+                output_tokens = verified.usage.output_tokens,
+                stage = "completion_verifier_completed",
+                "durable agent completion advanced"
+            );
             let result = verified.result.clone();
             let charge = self
                 .goals
@@ -783,15 +843,34 @@ impl AgentRunManager {
         match verification.as_ref().map(|result| result.decision) {
             Some(VerificationDecision::Continue) => {
                 let verification = verification.expect("verification exists");
+                let action = verifier_continuation_action(&goal, &verification);
+                if action != VerifierContinuationAction::Continue {
+                    tracing::warn!(
+                        goal_id = %goal.goal_id,
+                        action = ?action,
+                        gap_count = verification.gaps.len(),
+                        stage = "verifier_continuation_blocked",
+                        "durable agent completion stopped before another paid model request"
+                    );
+                    self.goals
+                        .mutate_goal_current(session_id, now_ms(), |goal| {
+                            goal.status = AgentGoalStatus::Blocked;
+                            goal.block_reason = Some(BlockReason::VerifierRejected);
+                            goal.checkpoint.verifier_gaps = verification.gaps.clone();
+                            Ok(())
+                        })
+                        .map_err(map_goal_run_error)?;
+                    emit_status(app, &current_goal(&self.goals, session_id)?);
+                    return Ok(true);
+                }
                 self.goals
                     .mutate_goal_current(session_id, now_ms(), |goal| {
                         goal.completion_candidate = None;
                         goal.checkpoint.verifier_gaps = verification.gaps.clone();
                         goal.checkpoint
                             .recent_transcript
-                            .push(TranscriptItem::System(format!(
-                                "Untrusted verifier gaps to address: {}",
-                                verification.gaps.join("; ")
+                            .push(TranscriptItem::System(verifier_feedback_message(
+                                &verification.gaps,
                             )));
                         Ok(())
                     })
@@ -1183,6 +1262,12 @@ fn slice_config() -> SessionEngineConfig {
     config.max_total_input_tokens = SLICE_MAX_INPUT_TOKENS;
     config.max_total_output_tokens = SLICE_MAX_OUTPUT_TOKENS;
     config.max_run_duration = Duration::from_millis(SLICE_MAX_ACTIVE_MS);
+    // Durable Goals should ride through short provider incidents without asking the user to
+    // resume every time. Cancellation remains responsive because the engine selects it while
+    // requests and backoff timers are pending.
+    config.retry.max_attempts = PROVIDER_RETRY_MAX_ATTEMPTS;
+    config.retry.base_delay_ms = PROVIDER_RETRY_BASE_DELAY_MS;
+    config.retry.max_delay_ms = PROVIDER_RETRY_MAX_DELAY_MS;
     config
 }
 
@@ -1511,9 +1596,15 @@ fn goal_error_stage(error: &RunGoalError) -> &'static str {
 }
 
 async fn workspace_digest(repository: &Path) -> Result<String, RunGoalError> {
-    shared_workspace_digest(repository)
-        .await
-        .map_err(|_| RunGoalError::Storage)
+    let started = Instant::now();
+    let result = shared_workspace_digest(repository).await;
+    tracing::info!(
+        duration_ms = elapsed_ms(started.elapsed()),
+        success = result.is_ok(),
+        stage = "workspace_digest",
+        "durable agent workspace check completed"
+    );
+    result.map_err(|_| RunGoalError::Storage)
 }
 
 #[cfg(test)]
@@ -1559,6 +1650,12 @@ mod tests {
         assert_eq!(config.tool_run.max_result_bytes, 2 * 1024 * 1024);
         assert!(config.tool_run.max_model_rounds > 64);
         assert!(config.tool_run.max_tool_calls > 128);
+        assert_eq!(config.retry.max_attempts, 8);
+        assert_eq!(config.retry.base_delay_ms, 500);
+        assert_eq!(config.retry.max_delay_ms, 10_000);
+        let capped_delay_ms = config.retry.delay_after(7, "goal").as_millis();
+        assert!(capped_delay_ms >= 8_000);
+        assert!(capped_delay_ms <= 12_000);
     }
 
     #[test]

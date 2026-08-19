@@ -93,14 +93,12 @@ export function AgentStreamPanel({ stream, preparingLabel, onApprovalDecision }:
                 </p>
               )}
               {attempt.text && (
-                <details className="mt-2 border-t border-line/70 pt-1.5">
-                  <summary className="w-fit cursor-pointer select-none text-[10px] text-fg-subtle hover:text-fg-muted">
-                    {t("agentStream.debugDetails")}
-                  </summary>
-                  <div className="mt-2 max-h-40 overflow-auto bg-overlay/45 px-2.5 py-2 font-mono text-[10px] leading-[1.55] text-fg-muted">
-                    {attempt.text && <pre className="whitespace-pre-wrap break-words">{attempt.text}</pre>}
-                  </div>
-                </details>
+                <pre
+                  className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words border-t border-line/70 bg-overlay/45 px-2.5 py-2 font-mono text-[10px] leading-[1.55] text-fg-muted"
+                  aria-live="polite"
+                >
+                  {attempt.text}
+                </pre>
               )}
             </div>
           </article>

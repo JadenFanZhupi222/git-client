@@ -6,10 +6,10 @@ use std::time::{Duration, Instant};
 use agent_runtime::{
     redact_sensitive_text, AgentErrorCode, AgentEventClock, AgentEventEmitter, AgentEventKind,
     AgentEventSink, ModelOutput, ModelProvider, ModelRequest, ModelResponse, ModelUsage,
-    PermissionPolicy, ProviderCapabilities, ResponseFormat, RetryPolicy, ToolApprovalResolver,
-    ToolCall, ToolCancellation, ToolExecutionError, ToolExecutionEvent, ToolExecutionEventSink,
-    ToolExecutor, ToolIntentJournal, ToolRegistry, ToolResult, ToolRun, ToolRunLimits,
-    TranscriptItem,
+    PermissionPolicy, ProviderCapabilities, ProviderError, ResponseFormat, RetryPolicy,
+    ToolApprovalResolver, ToolCall, ToolCancellation, ToolExecutionError, ToolExecutionEvent,
+    ToolExecutionEventSink, ToolExecutor, ToolIntentJournal, ToolRegistry, ToolResult, ToolRun,
+    ToolRunLimits, TranscriptItem,
 };
 use serde_json::Value;
 use thiserror::Error;
@@ -18,6 +18,10 @@ use crate::context::{ContextError, ContextLimits, ContextPlanner};
 use crate::goal::{ModelRequestBudget, ProgressAction, ProgressTracker};
 use crate::rag::{NoopRagRetriever, RagError, RagRetriever};
 use crate::session::{SessionError, SessionLease, SessionStore};
+
+fn duration_ms(duration: Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
 
 #[derive(Debug, Clone)]
 pub struct SessionEngineConfig {
@@ -421,6 +425,7 @@ impl SessionEngine {
         let router = Arc::new(RunEventRouter::new(
             lease.run_id.clone(),
             Arc::clone(&self.events),
+            execution_sequence,
         ));
         let executor = ToolExecutor::new(Arc::clone(&self.registry), self.policy.clone())
             .with_approvals(Arc::clone(&self.approvals))
@@ -905,6 +910,7 @@ impl SessionEngine {
         for failed_attempt in 1..=self.config.retry.max_attempts {
             let attempt_id = router.next_attempt();
             let emitter = router.emitter(attempt_id);
+            let attempt_started = Instant::now();
             tracing::info!(
                 run_id = %router.run_id(),
                 attempt_id,
@@ -930,13 +936,18 @@ impl SessionEngine {
                         attempt_id,
                         provider = %descriptor.provider_id,
                         model = %descriptor.model_id,
+                        duration_ms = duration_ms(attempt_started.elapsed()),
+                        input_tokens = response.usage.input_tokens,
+                        cached_input_tokens = response.usage.cached_input_tokens,
+                        output_tokens = response.usage.output_tokens,
                         "agent model attempt completed"
                     );
                     return Ok(response);
                 }
                 Err(error) => {
+                    let safe_to_retry = error.is_safe_to_automatically_retry();
                     let will_retry =
-                        error.is_transient() && failed_attempt < self.config.retry.max_attempts;
+                        safe_to_retry && failed_attempt < self.config.retry.max_attempts;
                     let error_code = AgentErrorCode::from(&error);
                     tracing::warn!(
                         run_id = %router.run_id(),
@@ -944,6 +955,10 @@ impl SessionEngine {
                         provider = %descriptor.provider_id,
                         model = %descriptor.model_id,
                         error_code = ?error_code,
+                        error_detail = %error,
+                        duration_ms = duration_ms(attempt_started.elapsed()),
+                        potentially_billed = matches!(error, ProviderError::StreamInterrupted),
+                        safe_to_retry,
                         will_retry,
                         "agent model attempt failed"
                     );
@@ -1085,17 +1100,17 @@ struct CompletedTurn {
 struct RunEventRouter {
     run_id: String,
     clock: AgentEventClock,
-    sink: Arc<dyn AgentEventSink>,
+    sink: Arc<EpochEventSink>,
     next_attempt: AtomicU32,
     current_attempt: AtomicU32,
 }
 
 impl RunEventRouter {
-    fn new(run_id: String, sink: Arc<dyn AgentEventSink>) -> Self {
+    fn new(run_id: String, sink: Arc<dyn AgentEventSink>, execution_sequence: u64) -> Self {
         Self {
             run_id,
             clock: AgentEventClock::default(),
-            sink,
+            sink: Arc::new(EpochEventSink::new(sink, execution_sequence)),
             next_attempt: AtomicU32::new(1),
             current_attempt: AtomicU32::new(0),
         }
@@ -1113,6 +1128,36 @@ impl RunEventRouter {
 
     fn emitter(&self, attempt: u32) -> AgentEventEmitter<'_> {
         AgentEventEmitter::new(&self.run_id, attempt, &self.clock, self.sink.as_ref())
+    }
+}
+
+const EVENT_SEQUENCE_EPOCH_STRIDE: u64 = 1_u64 << 32;
+const EVENT_ATTEMPT_EPOCH_STRIDE: u64 = 1_024;
+
+struct EpochEventSink {
+    inner: Arc<dyn AgentEventSink>,
+    sequence_offset: u64,
+    attempt_offset: u32,
+}
+
+impl EpochEventSink {
+    fn new(inner: Arc<dyn AgentEventSink>, execution_sequence: u64) -> Self {
+        Self {
+            inner,
+            sequence_offset: execution_sequence.saturating_mul(EVENT_SEQUENCE_EPOCH_STRIDE),
+            attempt_offset: u32::try_from(
+                execution_sequence.saturating_mul(EVENT_ATTEMPT_EPOCH_STRIDE),
+            )
+            .unwrap_or(u32::MAX),
+        }
+    }
+}
+
+impl AgentEventSink for EpochEventSink {
+    fn emit(&self, mut event: agent_runtime::AgentEvent) {
+        event.sequence = self.sequence_offset.saturating_add(event.sequence);
+        event.attempt_id = self.attempt_offset.saturating_add(event.attempt_id);
+        self.inner.emit(event);
     }
 }
 
@@ -1467,6 +1512,33 @@ mod tests {
         assert_eq!(result.final_text, "answer");
         assert_eq!(result.revision, 1);
         assert_eq!(sessions.get("session").unwrap().recent_messages.len(), 2);
+    }
+
+    #[test]
+    fn durable_event_epochs_remain_monotonic_across_checkpoint_routers() {
+        let sink = Arc::new(RecordingEvents::default());
+        let first = RunEventRouter::new("goal".into(), sink.clone(), 0);
+        let first_attempt = first.next_attempt();
+        first
+            .emitter(first_attempt)
+            .emit(AgentEventKind::OutputTextDelta {
+                delta: "first".into(),
+            });
+
+        let second = RunEventRouter::new("goal".into(), sink.clone(), 1);
+        let second_attempt = second.next_attempt();
+        second
+            .emitter(second_attempt)
+            .emit(AgentEventKind::OutputTextDelta {
+                delta: "second".into(),
+            });
+
+        let events = sink.0.lock().unwrap();
+        assert_eq!(events[0].sequence, 1);
+        assert_eq!(events[1].sequence, EVENT_SEQUENCE_EPOCH_STRIDE + 1);
+        assert!(events[1].sequence > events[0].sequence);
+        assert_eq!(events[0].attempt_id, 1);
+        assert_eq!(events[1].attempt_id, EVENT_ATTEMPT_EPOCH_STRIDE as u32 + 1);
     }
 
     #[tokio::test]
@@ -1935,6 +2007,38 @@ mod tests {
         let encoded = serde_json::to_string(&*events).unwrap();
         assert!(!encoded.contains("secret provider detail"));
         assert!(!encoded.contains("question"));
+    }
+
+    #[tokio::test]
+    async fn potentially_billed_stream_interruption_is_not_retried() {
+        let provider = fixture_provider(vec![
+            Err(ProviderError::StreamInterrupted),
+            response(ModelOutput::FinalText {
+                text: "must not be requested".into(),
+            }),
+        ]);
+        let engine = SessionEngine::new(
+            provider.clone(),
+            sessions(),
+            registry(Arc::new(CountingHandler::default())),
+            policy(),
+            Arc::new(DenyAllApprovals),
+            Arc::new(NoopAgentEventSink),
+            config(2),
+        )
+        .unwrap();
+
+        assert_eq!(
+            engine
+                .run_turn(
+                    AgentTurnRequest::text("session", "run", "question", 256),
+                    Arc::new(NeverCancel),
+                )
+                .await
+                .unwrap_err(),
+            SessionEngineError::Provider(AgentErrorCode::Network)
+        );
+        assert_eq!(provider.requests.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

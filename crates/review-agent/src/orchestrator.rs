@@ -598,6 +598,9 @@ fn map_review_provider_error(error: ProviderError) -> ReviewError {
         }
         ProviderError::RateLimited => ReviewError::RateLimited,
         ProviderError::Network(message) => ReviewError::NetworkError(message),
+        ProviderError::StreamInterrupted => {
+            ReviewError::NetworkError("provider stream interrupted".into())
+        }
         ProviderError::OutputTruncated => ReviewError::ReviewBudgetExceeded,
         ProviderError::InvalidResponse(message) => ReviewError::InvalidModelOutput(message),
     }

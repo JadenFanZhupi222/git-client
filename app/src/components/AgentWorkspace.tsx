@@ -15,6 +15,7 @@ import {
   steerAgentGoal,
 } from "../ipc";
 import { useAgentStream } from "../hooks/useAgentStream";
+import { latestAgentAnswerDraft } from "../lib/agentStream";
 import { useT } from "../lib/i18n";
 import { createRunId } from "../lib/uiShared";
 import { AgentStreamPanel } from "./AgentStreamPanel";
@@ -46,6 +47,7 @@ export function AgentWorkspace({ repo, onConfigureCredential = () => undefined }
   const agentStream = useAgentStream();
   const goal = session?.active_goal ?? null;
   const active = Boolean(goal && !TERMINAL.has(goal.status));
+  const liveAnswerDraft = latestAgentAnswerDraft(agentStream.stream);
 
   async function refresh() {
     const snapshot = await getAgentSession(repo);
@@ -140,14 +142,17 @@ export function AgentWorkspace({ repo, onConfigureCredential = () => undefined }
         setSteeringEchoes((current) => [...current, trimmed]);
       } else {
         if (!selectedModelId) return;
+        const goalId = createGoalId();
+        // Subscribe before the backend task is launched so the first model events cannot race
+        // past the UI while create_agent_goal is returning its queued snapshot.
+        await agentStream.begin(goalId);
         const nextGoal = await createAgentGoal({
           repo_path: repo,
-          goal_id: createGoalId(),
+          goal_id: goalId,
           model_id: selectedModelId,
           message: trimmed,
         });
         setSession((current) => current ? { ...current, active_goal: nextGoal } : current);
-        await agentStream.begin(nextGoal.goal_id);
       }
       setMessage("");
     } catch (reason) {
@@ -164,13 +169,13 @@ export function AgentWorkspace({ repo, onConfigureCredential = () => undefined }
     setError(null);
     try {
       const base = { repo_path: repo, goal_id: goal.goal_id, expected_revision: goal.revision };
+      if (action === "resume") await agentStream.begin(goal.goal_id);
       const nextGoal = action === "pause"
         ? await pauseAgentGoal(base)
         : action === "cancel"
           ? await cancelAgentGoal(base)
           : await resumeAgentGoal({ ...base, model_id: selectedModelId || null });
       setSession((current) => current ? { ...current, active_goal: nextGoal } : current);
-      if (action === "resume") await agentStream.begin(nextGoal.goal_id);
       if (action === "cancel") agentStream.finish("cancelled");
     } catch (reason) {
       setError(asAgentError(reason, t("agentWorkspace.error")));
@@ -191,6 +196,7 @@ export function AgentWorkspace({ repo, onConfigureCredential = () => undefined }
     setActing(true);
     setError(null);
     try {
+      await agentStream.begin(goal.goal_id);
       const nextGoal = await extendAgentBudget({
         repo_path: repo,
         goal_id: goal.goal_id,
@@ -202,9 +208,9 @@ export function AgentWorkspace({ repo, onConfigureCredential = () => undefined }
       });
       setSession((current) => current ? { ...current, active_goal: nextGoal } : current);
       setBudgetOpen(false);
-      await agentStream.begin(nextGoal.goal_id);
     } catch (reason) {
       setError(asAgentError(reason, t("agentWorkspace.error")));
+      await refresh().catch(() => undefined);
     } finally {
       if (mountedRef.current) setActing(false);
     }
@@ -267,6 +273,11 @@ export function AgentWorkspace({ repo, onConfigureCredential = () => undefined }
                   {messages.map((item, index) => <Message key={`${session?.revision ?? 0}-${index}`} role={item.role} content={item.content} />)}
                   {showActiveObjective && <Message role="user" content={goal!.objective} pending />}
                   {steeringEchoes.map((content, index) => <Message key={`steering-${index}`} role="user" content={content} pending />)}
+                  {showActiveObjective && liveAnswerDraft && (
+                    <div aria-label="Streaming agent answer">
+                      <Message role="assistant" content={liveAnswerDraft} pending />
+                    </div>
+                  )}
                 </div>
               )}
               {agentStream.stream && (!goal || STREAMING.has(goal.status)) && <div className="mt-6"><AgentStreamPanel stream={agentStream.stream} /></div>}
@@ -362,6 +373,7 @@ function goalStatusLabel(goal: AgentGoalSnapshotDto): string {
 function goalStatusDetail(goal: AgentGoalSnapshotDto): string {
   if (goal.status === "paused" && goal.pause_reason === "app_restarted") return "Checkpoint restored. Resume explicitly to continue.";
   if (goal.status === "paused" && goal.pause_reason === "budget") return "Soft model budget reached. Extend it to continue from this checkpoint.";
+  if (goal.status === "paused" && goal.pause_reason === "provider_unavailable") return "Model provider remained unavailable after automatic retries. Resume when the provider is stable.";
   if (goal.status === "blocked") return `Blocked: ${(goal.block_reason ?? "review required").replace(/_/g, " ")}`;
   if (goal.status === "awaiting_approval") return "Waiting for tool approval.";
   if (goal.status === "pausing") return "Pausing after the current atomic step.";

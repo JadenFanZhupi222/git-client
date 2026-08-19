@@ -20,6 +20,22 @@ pub(crate) fn build_client(
         .map_err(|_| ReviewError::NetworkError("could not initialize HTTP client".into()))
 }
 
+pub(crate) fn request_error_kind(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connect"
+    } else if error.is_body() {
+        "body"
+    } else if error.is_decode() {
+        "decode"
+    } else if error.is_request() {
+        "request"
+    } else {
+        "unknown"
+    }
+}
+
 pub(crate) fn map_status(status: StatusCode, policy: StatusPolicy) -> Result<(), ProviderError> {
     match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(ProviderError::AuthFailed),

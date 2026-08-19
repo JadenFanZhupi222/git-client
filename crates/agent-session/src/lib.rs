@@ -8,8 +8,9 @@ mod session;
 
 pub use compaction::{compact_working_set, CompactionAttempt, WorkingCompaction};
 pub use completion::{
-    validate_completion_candidate, verifier_requests_fit_budget, verify_completion_candidate,
-    CandidateVerification, CompletionError,
+    validate_completion_candidate, verifier_continuation_action, verifier_feedback_message,
+    verifier_requests_fit_budget, verify_completion_candidate, CandidateVerification,
+    CompletionError, VerifierContinuationAction,
 };
 pub use context::{
     estimate_request_tokens, estimate_text_tokens, CalibratedTokenEstimator, ContextError,

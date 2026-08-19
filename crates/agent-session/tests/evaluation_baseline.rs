@@ -582,7 +582,7 @@ async fn evaluate_verifier_repair() -> ModelServiceMetrics {
         ),
         response(
             ModelOutput::FinalText {
-                text: r#"{"decision":"accepted","gaps":[],"evidence_ids":["e1"]}"#.into(),
+                text: r#"{"decision":"accepted","gaps":[],"evidence_ids":[]}"#.into(),
             },
             11,
             3,

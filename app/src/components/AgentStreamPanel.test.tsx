@@ -8,8 +8,7 @@ import { AgentStreamPanel } from "./AgentStreamPanel";
 describe("AgentStreamPanel", () => {
   beforeEach(() => setLang("en"));
 
-  it("renders semantic activity and keeps raw model data collapsed", async () => {
-    const user = userEvent.setup();
+  it("renders semantic activity and exposes model text as it streams", () => {
     const stream: AgentStreamState = {
       runId: "run-1",
       runStatus: "active",
@@ -44,12 +43,8 @@ describe("AgentStreamPanel", () => {
     expect(screen.getByText("Called read_file")).toBeInTheDocument();
     expect(screen.getByText("Retrying")).toBeInTheDocument();
     expect(screen.getByText(/12 input.*3 output tokens/)).toBeInTheDocument();
-    const debugDetails = screen.getByText("Debug details").closest("details");
-    expect(debugDetails).not.toHaveAttribute("open");
-
-    await user.click(screen.getByText("Debug details"));
-    expect(debugDetails).toHaveAttribute("open");
     expect(screen.getByText("Partial answer")).toBeInTheDocument();
+    expect(screen.queryByText("Debug details")).not.toBeInTheDocument();
     expect(screen.queryByText('{"path":"src/a.ts"}')).not.toBeInTheDocument();
   });
 

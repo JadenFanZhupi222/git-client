@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::HashSet;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
 pub const DEEPSEEK_V4_FLASH_MODEL: &str = "deepseek-v4-flash";
@@ -280,6 +280,7 @@ impl ModelProvider for DeepSeekProvider {
         request: &ModelRequest,
         events: &AgentEventEmitter<'_>,
     ) -> Result<ModelResponse, ProviderError> {
+        let request_started = Instant::now();
         let tool_names = ProviderToolNames::new(request)?;
         tracing::info!(
             provider = "deepseek",
@@ -299,12 +300,26 @@ impl ModelProvider for DeepSeekProvider {
             .json(&self.streaming_request_body(request)?)
             .send()
             .await
-            .map_err(|_| ProviderError::Network("request failed".into()))?;
+            .map_err(|error| {
+                let error_kind = provider_http::request_error_kind(&error);
+                tracing::warn!(
+                    provider = "deepseek",
+                    model = %self.model,
+                    stream = true,
+                    error_kind,
+                    duration_ms = duration_ms(request_started.elapsed()),
+                    response_started = false,
+                    potentially_billed = false,
+                    "model request transport failed"
+                );
+                ProviderError::Network(error_kind.into())
+            })?;
         tracing::info!(
             provider = "deepseek",
             model = %self.model,
             stream = true,
             http_status = response.status().as_u16(),
+            response_headers_ms = duration_ms(request_started.elapsed()),
             "model request returned"
         );
         map_status(response.status())?;
@@ -317,7 +332,7 @@ impl ModelProvider for DeepSeekProvider {
         let mut usage = Value::Null;
         let mut last_usage = None;
         let mut tool_calls = Vec::<StreamingToolCall>::new();
-        crate::sse::consume_sse(response.bytes_stream(), |event| {
+        let stream_result = crate::sse::consume_sse(response.bytes_stream(), |event| {
             if event.data == "[DONE]" {
                 completed = true;
                 return Ok(false);
@@ -326,6 +341,13 @@ impl ModelProvider for DeepSeekProvider {
                 .map_err(|_| crate::sse::SseError::Protocol("invalid JSON event".into()))?;
             if !started {
                 started = true;
+                tracing::info!(
+                    provider = "deepseek",
+                    model = %self.model,
+                    stream = true,
+                    first_event_ms = duration_ms(request_started.elapsed()),
+                    "model response stream started"
+                );
                 events.emit(AgentEventKind::ModelResponseStarted {
                     response_id: body.get("id").and_then(Value::as_str).map(str::to_owned),
                 });
@@ -412,10 +434,40 @@ impl ModelProvider for DeepSeekProvider {
             }
             Ok(true)
         })
-        .await
-        .map_err(provider_http::map_sse_error)?;
+        .await;
+        if let Err(error) = stream_result {
+            let error_kind = sse_error_kind(&error);
+            let potentially_billed = started;
+            tracing::warn!(
+                provider = "deepseek",
+                model = %self.model,
+                stream = true,
+                error_kind,
+                duration_ms = duration_ms(request_started.elapsed()),
+                response_started = started,
+                potentially_billed,
+                "model response stream failed"
+            );
+            return Err(
+                if started && matches!(error, crate::sse::SseError::Read(_)) {
+                    ProviderError::StreamInterrupted
+                } else {
+                    provider_http::map_sse_error(error)
+                },
+            );
+        }
 
         if !completed {
+            tracing::warn!(
+                provider = "deepseek",
+                model = %self.model,
+                stream = true,
+                duration_ms = duration_ms(request_started.elapsed()),
+                response_started = started,
+                potentially_billed = started,
+                error_kind = "missing_done",
+                "model response stream failed"
+            );
             return Err(ProviderError::InvalidResponse(
                 "stream ended before completion".into(),
             ));
@@ -453,7 +505,31 @@ impl ModelProvider for DeepSeekProvider {
             });
         }
         events.emit(AgentEventKind::ModelResponseCompleted);
+        tracing::info!(
+            provider = "deepseek",
+            model = %self.model,
+            stream = true,
+            duration_ms = duration_ms(request_started.elapsed()),
+            input_tokens = response.usage.input_tokens,
+            cached_input_tokens = response.usage.cached_input_tokens,
+            output_tokens = response.usage.output_tokens,
+            "model response stream completed"
+        );
         Ok(response)
+    }
+}
+
+fn duration_ms(duration: Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
+}
+
+fn sse_error_kind(error: &crate::sse::SseError) -> &'static str {
+    match error {
+        crate::sse::SseError::Read(source) => provider_http::request_error_kind(source),
+        crate::sse::SseError::TooLarge => "event_too_large",
+        crate::sse::SseError::InvalidUtf8 => "invalid_utf8",
+        crate::sse::SseError::Incomplete => "incomplete_event",
+        crate::sse::SseError::Protocol(_) => "protocol",
     }
 }
 
@@ -558,6 +634,7 @@ fn map_status(status: reqwest::StatusCode) -> Result<(), ProviderError> {
             ProviderError::InvalidRequest => "invalid_request",
             ProviderError::RateLimited => "rate_limited",
             ProviderError::Network(_) => "network",
+            ProviderError::StreamInterrupted => "stream_interrupted",
             ProviderError::OutputTruncated => "output_truncated",
             ProviderError::InvalidResponse(_) => "invalid_response",
         };

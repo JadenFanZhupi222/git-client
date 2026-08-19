@@ -18,9 +18,10 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 mod agent_events;
+mod agent_logging;
 mod agent_run_manager;
 mod agent_session_commands;
 mod agent_store;
@@ -618,13 +619,21 @@ fn watch_repo(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let _ = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(false)
-        .try_init();
     // 整个应用一个共享后端,启动时建一次;按仓库路由的长驻上下文由 RepoRegistry 管理。
     let registry = RepoRegistry::new(Arc::new(CompositeBackend::default()));
     let builder = tauri::Builder::default()
+        .setup(|app| {
+            let app_data_dir = app.path().app_data_dir()?;
+            if let Some(log_path) = agent_logging::init(&app_data_dir) {
+                tracing::info!(
+                    log_path = %log_path.display(),
+                    contains_prompts = false,
+                    contains_credentials = false,
+                    "application diagnostics initialized"
+                );
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())

@@ -49,6 +49,12 @@ export function finishAgentStream(state: AgentStreamState, runStatus: Exclude<Ag
   return { ...state, runStatus };
 }
 
+export function latestAgentAnswerDraft(state: AgentStreamState | null): string | null {
+  const attempt = state?.attempts[state.attempts.length - 1];
+  if (!attempt || attempt.tools.length > 0 || attempt.status === "failed" || attempt.status === "retrying") return null;
+  return attempt.text.trim() ? attempt.text : null;
+}
+
 function emptyAttempt(attemptId: number): AgentStreamAttempt {
   return {
     attemptId,

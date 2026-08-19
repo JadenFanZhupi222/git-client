@@ -80,6 +80,8 @@ Before provider I/O, every Goal model request is quoted against the active accou
 
 A direct single-response answer that used no tools and received no steering may pass deterministic checks alone. A multi-response, steered, tool-using, or mutating Goal requires an independent tool-free verifier returning `{decision, gaps, evidence_ids}`. `accepted` commits the candidate; `continue` checkpoints its gaps and schedules another slice; `blocked` changes state to `blocked/verifier_rejected`. Invalid verifier output is retried once and then blocks. Candidate text never appears as a committed assistant message before acceptance.
 
+The verifier receives a bounded, sanitized evidence catalog derived from retained tool results, working evidence, and content-free receipt metadata. Every cited `evidence_id` must name an entry in that catalog; an accepted evidence-backed candidate must cite at least one entry. A `continue` decision must contain actionable gaps and authorizes at most one candidate-repair cycle. Empty gaps, repeated normalized gaps, or a second `continue` block with `verifier_rejected` before another main-model request. This fuse is independent of provider transport retries and does not change the checkpoint or IPC schema.
+
 ## 10. IPC and event contract
 
 The Goal IPC surface is `create_agent_goal`, `get_agent_session`, `get_agent_goal`, `steer_agent_goal`, `pause_agent_goal`, `resume_agent_goal`, `cancel_agent_goal`, `extend_agent_budget`, and the existing approval resolution command. Create returns after durable queueing, not after completion.

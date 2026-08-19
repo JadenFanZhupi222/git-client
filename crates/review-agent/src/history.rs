@@ -608,6 +608,9 @@ fn map_provider_error(error: ProviderError) -> ReviewError {
         }
         ProviderError::RateLimited => ReviewError::RateLimited,
         ProviderError::Network(message) => ReviewError::NetworkError(message),
+        ProviderError::StreamInterrupted => {
+            ReviewError::NetworkError("provider stream interrupted".into())
+        }
         ProviderError::OutputTruncated => ReviewError::InvalidModelOutput(
             "history investigation provider output was truncated".into(),
         ),

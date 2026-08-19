@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use agent_runtime::{
     AgentEventClock, AgentEventEmitter, ModelOutput, ModelProvider, ModelRequest, ModelUsage,
@@ -66,7 +67,27 @@ pub async fn compact_working_set(
     let sink = NoopAgentEventSink;
     let clock = AgentEventClock::default();
     let emitter = AgentEventEmitter::new("goal-compactor", 1, &clock, &sink);
-    let response = provider.respond_stream(&request, &emitter).await.ok()?;
+    let started = Instant::now();
+    tracing::info!(
+        transcript_items = transcript.len(),
+        compacted_prefix_bytes = bounded.len(),
+        stage = "compaction_started",
+        "agent working set compaction advanced"
+    );
+    let response = match provider.respond_stream(&request, &emitter).await {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::warn!(
+                error_code = ?agent_runtime::AgentErrorCode::from(&error),
+                error_detail = %error,
+                duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+                potentially_billed = matches!(error, agent_runtime::ProviderError::StreamInterrupted),
+                stage = "compaction_provider_error",
+                "agent working set compaction advanced"
+            );
+            return None;
+        }
+    };
     let usage = response.usage;
     let output = match response.output {
         ModelOutput::FinalText { text } => {
@@ -78,6 +99,15 @@ pub async fn compact_working_set(
         }
         ModelOutput::ToolCalls { .. } => None,
     };
+    tracing::info!(
+        duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+        input_tokens = usage.input_tokens,
+        cached_input_tokens = usage.cached_input_tokens,
+        output_tokens = usage.output_tokens,
+        output_valid = output.is_some(),
+        stage = "compaction_completed",
+        "agent working set compaction advanced"
+    );
     Some(CompactionAttempt { output, usage })
 }
 

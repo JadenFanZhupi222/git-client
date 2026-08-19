@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentGoalEventDto, AgentGoalSnapshotDto, AgentSessionSnapshotDto, ReviewModelOptionDto } from "../bindings";
+import type { AgentEventDto, AgentGoalEventDto, AgentGoalSnapshotDto, AgentSessionSnapshotDto, ReviewModelOptionDto } from "../bindings";
 import { setLang } from "../lib/i18n";
 import { AgentWorkspace } from "./AgentWorkspace";
 
@@ -76,11 +76,13 @@ function goal(overrides: Partial<AgentGoalSnapshotDto> = {}): AgentGoalSnapshotD
 
 describe("AgentWorkspace durable Goals", () => {
   let goalEvent: ((event: AgentGoalEventDto) => void) | null;
+  let agentEvent: ((event: AgentEventDto) => void) | null;
 
   beforeEach(() => {
     localStorage.clear();
     setLang("en");
     goalEvent = null;
+    agentEvent = null;
     Object.values(ipc).forEach((mock) => mock.mockReset());
     ipc.cancelAgentGoal.mockImplementation(async ({ expected_revision }) => goal({ status: "cancelled", revision: expected_revision + 1 }));
     ipc.createAgentGoal.mockResolvedValue(goal());
@@ -92,7 +94,10 @@ describe("AgentWorkspace durable Goals", () => {
       return () => undefined;
     });
     ipc.listReviewModels.mockResolvedValue([model]);
-    ipc.onAgentEvent.mockResolvedValue(() => undefined);
+    ipc.onAgentEvent.mockImplementation(async (handler) => {
+      agentEvent = handler;
+      return () => undefined;
+    });
     ipc.pauseAgentGoal.mockImplementation(async ({ expected_revision }) => goal({ status: "paused", pause_reason: "user", revision: expected_revision + 1 }));
     ipc.resetAgentSession.mockResolvedValue(emptySession);
     ipc.resumeAgentGoal.mockImplementation(async ({ expected_revision }) => goal({ status: "queued", revision: expected_revision + 1 }));
@@ -113,6 +118,40 @@ describe("AgentWorkspace durable Goals", () => {
       model_id: model.id,
       message: "Fix the parser",
     }));
+    expect(ipc.onAgentEvent).toHaveBeenCalledOnce();
+    expect(ipc.onAgentEvent.mock.invocationCallOrder[0]).toBeLessThan(
+      ipc.createAgentGoal.mock.invocationCallOrder[0],
+    );
+
+    await waitFor(() => expect(agentEvent).not.toBeNull());
+    act(() => agentEvent!({
+      run_id: ipc.createAgentGoal.mock.calls[0][0].goal_id,
+      sequence: 1,
+      attempt_id: 1,
+      event_type: "output_text_delta",
+      provider_id: null,
+      model_id: model.id,
+      response_id: null,
+      delta: "A final answer is being streamed",
+      artifact_type: null,
+      artifact_field: null,
+      artifact_index: null,
+      call_id: null,
+      tool_name: null,
+      usage: null,
+      error_code: null,
+      will_retry: null,
+      approval_id: null,
+      risk: null,
+      approval_summary: null,
+      decision: null,
+      tool_outcome: null,
+      duration_ms: null,
+      content_bytes: null,
+      truncated: null,
+      tool_error: null,
+    }));
+    expect(screen.getByLabelText("Streaming agent answer")).toHaveTextContent("A final answer is being streamed");
 
     const completed = goal({ status: "completed", revision: 4, final_text: "Implemented the focused fix." });
     ipc.getAgentSession.mockResolvedValue({
@@ -201,6 +240,12 @@ describe("AgentWorkspace durable Goals", () => {
       goal_id: "goal-test",
       expected_revision: 5,
     })));
+    const latestSubscription = ipc.onAgentEvent.mock.invocationCallOrder[
+      ipc.onAgentEvent.mock.invocationCallOrder.length - 1
+    ];
+    expect(latestSubscription).toBeLessThan(
+      ipc.resumeAgentGoal.mock.invocationCallOrder[0],
+    );
     restartView.unmount();
 
     ipc.getAgentSession.mockResolvedValue({
@@ -220,6 +265,18 @@ describe("AgentWorkspace durable Goals", () => {
       new_limit_micros: 2_500_000,
     })));
     budgetView.unmount();
+  });
+
+  it("explains that provider pauses happen only after automatic retries are exhausted", async () => {
+    ipc.getAgentSession.mockResolvedValue({
+      ...emptySession,
+      active_goal: goal({ status: "paused", pause_reason: "provider_unavailable", revision: 6 }),
+    });
+
+    render(<AgentWorkspace repo={"D:\\repo"} />);
+
+    expect(await screen.findByText(/provider remained unavailable after automatic retries/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resume" })).toBeEnabled();
   });
 
   it("does not show a stale live stream for a blocked Goal", async () => {
