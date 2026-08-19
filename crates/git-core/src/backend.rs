@@ -5,7 +5,7 @@ use crate::model::{
     RebaseStep, ReflogEntry, RemoteInfo, RepoState, ResetMode, SignatureInfo, StashEntry,
     SubmoduleInfo, SyncCommits, WorkingTreeStatus, WorktreeInfo,
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// 端口(Port):所有 git 后端必须实现它。
 /// 上层只依赖这个 trait,不依赖任何具体实现 —— 这是六边形架构的核心。
@@ -14,6 +14,12 @@ use std::path::Path;
 pub trait GitBackend: Send + Sync {
     /// 打开仓库,顺手验证它是不是个有效仓库。
     fn open(&self, path: &Path) -> Result<(), GitError>;
+
+    /// 从所选目录解析实际仓库根。实现可向父目录发现仓库；默认实现只验证当前目录。
+    fn discover(&self, path: &Path) -> Result<PathBuf, GitError> {
+        self.open(path)?;
+        Ok(path.to_path_buf())
+    }
 
     /// 在 `path` 处新建一个空仓库(`git init`,尊重 init.defaultBranch)。
     /// 路径不存在则创建;已是仓库 → 幂等(git init 不破坏已有仓库)。默认 Unsupported。

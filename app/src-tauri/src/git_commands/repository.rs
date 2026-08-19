@@ -1,5 +1,37 @@
 use crate::*;
 
+/// onboarding:验证所选目录并返回实际仓库根；选中子目录时向上发现所属仓库。
+#[tauri::command]
+pub(crate) async fn discover_repo(
+    registry: tauri::State<'_, RepoRegistry>,
+    path: String,
+) -> Result<String, IpcError> {
+    let backend = registry.backend_arc();
+    let selected = PathBuf::from(path);
+    tokio::task::spawn_blocking(move || {
+        if !selected.exists() {
+            return Err(IpcError {
+                code: "FOLDER_NOT_FOUND".into(),
+                message: "所选文件夹已不存在".into(),
+                recoverable: false,
+            });
+        }
+        if !selected.is_dir() {
+            return Err(IpcError {
+                code: "NOT_A_FOLDER".into(),
+                message: "所选路径不是文件夹".into(),
+                recoverable: false,
+            });
+        }
+        app_service::RepoService::new(backend)
+            .discover_repo(&selected)
+            .map(|root| root.to_string_lossy().into_owned())
+            .map_err(to_ipc)
+    })
+    .await
+    .map_err(join_panic)?
+}
+
 #[tauri::command]
 pub(crate) async fn get_head_commit(
     registry: tauri::State<'_, RepoRegistry>,

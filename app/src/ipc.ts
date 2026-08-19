@@ -163,6 +163,11 @@ import type {
   OpLogDto,
 } from "./bindings";
 
+/** onboarding:验证所选目录并解析实际仓库根(选中仓库子目录时返回父级根目录)。 */
+export async function discoverRepo(path: string): Promise<string> {
+  return await invoke<string>("discover_repo", { path });
+}
+
 /** onboarding:在 path 处新建空仓库(git init,尊重 init.defaultBranch)。 */
 export async function initRepo(path: string): Promise<void> {
   await invoke("init_repo", { path });

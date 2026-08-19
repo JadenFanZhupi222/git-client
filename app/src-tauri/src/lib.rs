@@ -652,6 +652,7 @@ pub fn run() {
 
     #[cfg(feature = "e2e")]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        git_commands::repository::discover_repo,
         git_commands::repository::init_repo,
         git_commands::repository::clone_repo,
         git_commands::repository::get_head_commit,
@@ -774,6 +775,7 @@ pub fn run() {
 
     #[cfg(not(feature = "e2e"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
+        git_commands::repository::discover_repo,
         git_commands::repository::init_repo,
         git_commands::repository::clone_repo,
         git_commands::repository::get_head_commit,

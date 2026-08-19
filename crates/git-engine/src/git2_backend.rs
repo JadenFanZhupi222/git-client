@@ -5,7 +5,7 @@ use git_core::model::{
 };
 use git_core::{GitBackend, GitError};
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// git2 的 add_path/remove_path 要求"仓库根相对路径"。
 /// 若传入绝对路径,用 workdir 前缀剥成相对路径;否则原样返回。
@@ -523,6 +523,12 @@ impl GitBackend for Git2Backend {
         git2::Repository::open(path)
             .map(|_| ())
             .map_err(|e| GitError::RepoNotFound(e.to_string()))
+    }
+
+    fn discover(&self, path: &Path) -> Result<PathBuf, GitError> {
+        let repo =
+            git2::Repository::discover(path).map_err(|e| GitError::RepoNotFound(e.to_string()))?;
+        Ok(repo.workdir().unwrap_or_else(|| repo.path()).to_path_buf())
     }
 
     fn head_commit(&self, path: &Path) -> Result<Commit, GitError> {
@@ -1600,6 +1606,25 @@ mod tests {
 
     fn write(dir: &Path, name: &str, contents: &str) {
         std::fs::write(dir.join(name), contents).unwrap();
+    }
+
+    #[test]
+    fn discover_resolves_nested_folder_to_repository_root() {
+        let (_tmp, repo) = init_repo();
+        let nested = repo.join("src/components");
+        std::fs::create_dir_all(&nested).unwrap();
+
+        assert_eq!(Git2Backend.discover(&nested).unwrap(), repo);
+    }
+
+    #[test]
+    fn discover_rejects_plain_folder() {
+        let plain = tempfile::tempdir().unwrap();
+
+        assert!(matches!(
+            Git2Backend.discover(plain.path()),
+            Err(GitError::RepoNotFound(_))
+        ));
     }
 
     #[test]

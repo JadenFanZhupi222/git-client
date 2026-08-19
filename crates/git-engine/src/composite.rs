@@ -7,7 +7,7 @@ use git_core::model::{
     WorkingTreeStatus, WorktreeInfo,
 };
 use git_core::{GitBackend, GitError};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// 组合后端:对外是一个 GitBackend,内部按操作路由。
 /// 既有(读 + 本地写)方法走 git2;网络方法(fetch)走 CLI。
@@ -20,6 +20,9 @@ pub struct CompositeBackend {
 impl GitBackend for CompositeBackend {
     fn open(&self, repo: &Path) -> Result<(), GitError> {
         self.git2.open(repo)
+    }
+    fn discover(&self, path: &Path) -> Result<PathBuf, GitError> {
+        self.git2.discover(path)
     }
     fn init(&self, path: &Path) -> Result<(), GitError> {
         // 走 CLI:`git init` 尊重 init.defaultBranch / 模板,行为与本机 git 一致。

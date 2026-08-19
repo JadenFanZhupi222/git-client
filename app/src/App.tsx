@@ -6,7 +6,7 @@ import { check } from "@tauri-apps/plugin-updater";
 import type { Tab } from "./components/TabBar";
 import { Sidebar } from "./components/Sidebar";
 import { useQueryClient } from "@tanstack/react-query";
-import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, checkoutBranch, initRepo, type IpcError } from "./ipc";
+import { setUpstream, fetchRemote, pullRemote, pushRemote, undo, redo, checkoutBranch, discoverRepo, initRepo, type IpcError } from "./ipc";
 import { FolderIcon, SunIcon, MoonIcon, FetchIcon, PullIcon, PushIcon, SpinnerIcon, ChevronDownIcon, CheckIcon, UndoIcon, RedoIcon, HistoryIcon, SearchIcon, MoreIcon, DropletIcon, CloudIcon, PlusIcon, FileDiffIcon, BlameIcon, SubmoduleIcon, WorktreeIcon, BranchIcon, SettingsIcon, IssueIcon, AgentIcon } from "./components/icons";
 import { BranchSwitcher } from "./components/BranchSwitcher";
 import { SyncBadge } from "./components/SyncBadge";
@@ -28,6 +28,7 @@ import { APP_SETTINGS_ENTRY_POINTS, settingsSectionForEntryPoint, type SettingsE
 import { getDesktopPlatform } from "./lib/platform";
 import { ChangesView } from "./views/ChangesView";
 import { HistoryView } from "./views/HistoryView";
+import { NonRepositoryDialog, type RepositorySetupMode } from "./components/NonRepositoryDialog";
 
 const CompareView = lazy(() => import("./views/CompareView").then((m) => ({ default: m.CompareView })));
 const BlameView = lazy(() => import("./views/BlameView").then((m) => ({ default: m.BlameView })));
@@ -80,6 +81,10 @@ export default function App() {
   const [gitlabCreateMrOpen, setGitlabCreateMrOpen] = useState(false);
   const [gitlabMrOpen, setGitlabMrOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
+  const [openingRepo, setOpeningRepo] = useState(false);
+  const [nonRepoPath, setNonRepoPath] = useState<string | null>(null);
+  const [nonRepoBusy, setNonRepoBusy] = useState(false);
+  const [nonRepoError, setNonRepoError] = useState<string | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const moreMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const toast = useToast();
@@ -109,7 +114,7 @@ export default function App() {
   const sparsePatterns = useSparseCheckout(repo ?? "").data ?? [];
   const hasSparse = sparsePatterns.length > 0; // 未开启稀疏检出时不显示标签
 
-  const busy = fetching || pulling || pushing || undoing;
+  const busy = fetching || pulling || pushing || undoing || openingRepo || nonRepoBusy;
   // 同步提示:落后 → 建议 Pull;领先 → 建议 Push(无上游时 sync 为 null,不提示)
   const canPull = !!sync && sync.behind > 0;
   const canPush = !!sync && sync.ahead > 0;
@@ -233,9 +238,53 @@ export default function App() {
     }
   }
 
+  function repositoryOpenError(error: unknown): string {
+    const ipcError = error as IpcError;
+    if (ipcError.code === "FOLDER_NOT_FOUND") return t("nonRepo.folderMissing");
+    if (ipcError.code === "NOT_A_FOLDER") return t("nonRepo.notFolder");
+    return ipcError.message ?? String(error);
+  }
+
+  async function openSelectedRepo(path: string) {
+    if (openingRepo) return;
+    setOpeningRepo(true);
+    try {
+      const root = await discoverRepo(path);
+      setRepo(root);
+    } catch (error) {
+      const ipcError = error as IpcError;
+      if (ipcError.code === "REPO_NOT_FOUND") {
+        setNonRepoError(null);
+        setNonRepoPath(path);
+      } else {
+        toast({ kind: "error", title: repositoryOpenError(error) });
+      }
+    } finally {
+      setOpeningRepo(false);
+    }
+  }
+
   async function pickRepo() {
     const dir = await open({ directory: true, title: t("dialog.pickRepo") });
-    if (typeof dir === "string") setRepo(dir);
+    if (typeof dir === "string") await openSelectedRepo(dir);
+  }
+
+  async function initializeSelectedFolder(mode: RepositorySetupMode) {
+    if (!nonRepoPath || nonRepoBusy) return;
+    const path = nonRepoPath;
+    setNonRepoBusy(true);
+    setNonRepoError(null);
+    try {
+      await initRepo(path);
+      setNonRepoPath(null);
+      toast({ kind: "success", title: t("toast.repoInit"), detail: path });
+      setRepo(path);
+      if (mode === "remote") setRemoteMgrOpen(true);
+    } catch (error) {
+      setNonRepoError((error as IpcError).message ?? String(error));
+    } finally {
+      setNonRepoBusy(false);
+    }
   }
 
   // 新建:选一个文件夹 → git init → 打开它。
@@ -774,7 +823,7 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <EmptyState onPick={pickRepo} onClone={() => setCloneOpen(true)} onInit={doInit} lastRepo={lastRepo} onResume={setRepo} />
+        <EmptyState onPick={pickRepo} onClone={() => setCloneOpen(true)} onInit={doInit} lastRepo={lastRepo} onResume={openSelectedRepo} />
       )}
 
       {/* 底部状态栏:分支 + 仓库路径,IDE 风格 */}
@@ -815,6 +864,17 @@ export default function App() {
       )}
 
       {paletteOpen && <CommandPalette commands={commands} onClose={() => setPaletteOpen(false)} />}
+
+      {nonRepoPath && (
+        <NonRepositoryDialog
+          path={nonRepoPath}
+          busy={nonRepoBusy}
+          error={nonRepoError}
+          onContinue={initializeSelectedFolder}
+          onCancel={() => { setNonRepoPath(null); setNonRepoError(null); }}
+          onClone={() => { setNonRepoPath(null); setNonRepoError(null); setCloneOpen(true); }}
+        />
+      )}
 
       <LazyBoundary
         loading={<LazyFallback overlay />}

@@ -16,6 +16,21 @@ export const en: Record<MessageKey, string> = {
   "launch.resume": "Resume",
   "launch.paletteHint": "Command palette",
 
+  // Git guidance after choosing a plain folder
+  "nonRepo.title": "This folder isn't a Git repository",
+  "nonRepo.description": "You can initialize Git here without deleting or replacing existing files. If the project already exists remotely, clone it instead.",
+  "nonRepo.chooseAction": "What would you like to do?",
+  "nonRepo.localTitle": "Initialize a local repository",
+  "nonRepo.localDescription": "Create .git and open this folder now.",
+  "nonRepo.remoteTitle": "Initialize, then add a remote",
+  "nonRepo.remoteDescription": "Create .git, open the folder, then continue to remote setup.",
+  "nonRepo.cloneInstead": "Clone instead",
+  "nonRepo.initialize": "Initialize and open",
+  "nonRepo.initAndRemote": "Initialize and configure remote",
+  "nonRepo.initializing": "Initializing…",
+  "nonRepo.folderMissing": "This folder no longer exists. Choose another folder.",
+  "nonRepo.notFolder": "The selected path isn't a folder. Choose another folder.",
+
   // Top bar / common actions
   "action.langTitle": "Switch language",
   "action.themeTitle": "Toggle theme",

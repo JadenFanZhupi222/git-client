@@ -16,6 +16,21 @@ export const zh = {
   "launch.resume": "继续上次",
   "launch.paletteHint": "命令面板",
 
+  // 选择普通文件夹后的 Git 引导
+  "nonRepo.title": "这个文件夹还不是 Git 仓库",
+  "nonRepo.description": "可以在这里初始化 Git，现有文件不会被删除或覆盖。若项目已经存在于远程，请改用克隆。",
+  "nonRepo.chooseAction": "接下来怎么做？",
+  "nonRepo.localTitle": "仅初始化本地仓库",
+  "nonRepo.localDescription": "创建 .git 并立即打开这个文件夹。",
+  "nonRepo.remoteTitle": "初始化后添加远程仓库",
+  "nonRepo.remoteDescription": "创建 .git、打开文件夹，然后进入远程仓库配置。",
+  "nonRepo.cloneInstead": "改为克隆",
+  "nonRepo.initialize": "初始化并打开",
+  "nonRepo.initAndRemote": "初始化并配置远程",
+  "nonRepo.initializing": "正在初始化…",
+  "nonRepo.folderMissing": "这个文件夹已不存在，请重新选择。",
+  "nonRepo.notFolder": "所选路径不是文件夹，请重新选择。",
+
   // 顶栏 / 通用动作
   "action.langTitle": "切换语言",
   "action.themeTitle": "切换主题",

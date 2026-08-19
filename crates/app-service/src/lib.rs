@@ -10,7 +10,7 @@ use ipc_types::{
     StashDto, StatusDto, SubmoduleInfoDto, WorktreeInfoDto,
 };
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub mod graph;
@@ -45,6 +45,11 @@ impl RepoService {
     /// 依赖注入:谁创建 service,谁决定用哪个后端。
     pub fn new(backend: Arc<dyn GitBackend>) -> Self {
         Self { backend }
+    }
+
+    /// 用例:验证所选目录并解析实际仓库根(允许用户选中仓库内的子目录)。
+    pub fn discover_repo(&self, path: &Path) -> Result<PathBuf, GitError> {
+        self.backend.discover(path)
     }
 
     /// 用例:在 path 处新建空仓库。

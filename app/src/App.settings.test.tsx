@@ -19,6 +19,7 @@ const ipc = vi.hoisted(() => ({
   undo: vi.fn(),
   redo: vi.fn(),
   checkoutBranch: vi.fn(),
+  discoverRepo: vi.fn(async (path: string) => path),
   initRepo: vi.fn(),
 }));
 
