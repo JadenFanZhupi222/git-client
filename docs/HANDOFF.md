@@ -1,6 +1,13 @@
 # 交接文档(随仓库走,换机器拉分支后看这个)
 
 > 这份文件在 git 仓库里,会随 push/pull 跟到新机器。记录当前进度、铁律、下一步。
+
+> **2026-08-19 Agent 更新**：Durable Goal runtime 与五阶段公共代码重构已完成；外部 IPC、
+> checkpoint schema、事件和 TypeScript DTO 保持兼容。当前已增加 provider-neutral 的 Agent
+> Token/稳定性评测基线，覆盖长上下文、预算前置拦截、重复工具批次、compaction、verifier
+> 修复和重启恢复。执行 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-agent-evals.ps1`
+> 可输出一行
+> `AGENT_EVAL_REPORT`；详细指标和真机验收表见 `docs/AGENT-EVALUATION.md`。
 > 配套必读:`CLAUDE.md`(铁律)、`ARCHITECTURE.md`(架构)、`README.md`(启动)。
 > 最近更新:2026-07-27(**0.1.4 发布候选加固**:严格发布预检、CSP、跨平台 CI、核心桌面 E2E、依赖边界、GitLab MR i18n、前端拆包与体积门禁)。
 > 前次:2026-06-13(M6 · Polish & Harden 全部完成:M6.1 并排虚拟化/M6.2 图片去 base64+对比/M6.3 CLI 读缓存/M6.4 ts-rs 自动类型/M6.6 面板 a11y)。
@@ -163,14 +170,15 @@ git-core trait(+默认方法) → git2_backend / cli_backend / composite(+tempfi
   - **Tier 0 自动化门禁已补齐**:跨平台 CI、严格标签发布预检、双架构 macOS、CSP、
     依赖边界、核心桌面 E2E 和包体预算均已落地。真正公开发布仍需发布负责人配置
     Windows/macOS/updater 密钥与生产 endpoint,并完成各架构安装验收。
-- **下一里程碑:M7 · 协作/PR**(原 roadmap M6,见 `2026-06-08-world-class-roadmap.md`)。
+- **当前 Agent 里程碑：B1 · 真机闭环验收**。自动化基线已经纳入 workspace tests；下一步按
+  `docs/AGENT-EVALUATION.md` 验证审批、暂停/恢复、预算扩展、重启恢复和 canonical completion。
 - ✅ **GitHub PR AI 评审 Agent 已合入 main**：支持 DeepSeek V4 Flash/Pro、中文/英文、文件选择与全选、
   token 预估、受预算约束的只读工具循环、固定 PR head SHA、结果/草稿本地缓存、人工编辑确认后批量发布。
   Provider 协议、评审输出解码、预算/取消/脱敏 trace 位于 `crates/review-agent`；详细现状见
   `docs/HANDOFF-pr-review-agent.md`。
-- **Agent 下一阶段从 A1 开始**：先固化 provider 契约与后端模型目录，再增加第二 provider，随后竖切
-  GitHub Issue 分诊（先只读、再人工确认发布）。完整边界、切片和验收标准见 `docs/AGENT-ROADMAP.md`。
-  本阶段明确不做 shell、本地文件写入、自动提交/推送或无人确认的 GitHub 写操作。
+- **Agent A1-A5 与 Platform v2 Durable Goal 已完成**：三家 Provider、PR Review、Issue Triage、
+  本地 change planning、共享 tool runtime、session/context contract 和 Durable Goal 均已落地。
+  后续先以测量结果决定是否优化 Token，不继续为抽象而抽象。新增权限仍需单独设计和评审。
 - ⚠️ **真机视觉/交互验收欠账**(自动门 test/clippy/fmt/tsc/build 全过):M5 各刀、图片 diff、
   **M6.1**(大 diff 虚拟化滚动/并排联动/折叠)、**M6.2**(图片字节流加载/滑块/洋葱皮)、
   **M6.6**(面板键盘)都需真机过一遍。M6.3/M6.4 是后端/类型纯逻辑,无需真机视觉验收。

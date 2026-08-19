@@ -1,12 +1,24 @@
 # Agent 下一阶段计划
 
+> 当前基线（2026-08-19）：A1-A5 已完成，Agent Platform v2 的 streaming、tool runtime、
+> built-in tools、session/context/RAG contract 与 Durable Goal runtime 已落地。Durable Goal 支持
+> checkpoint、显式暂停/恢复/转向、重启后安全暂停、预算扩展、独立 verifier 和 working-set
+> compaction。随后完成了五阶段公共代码重构：Tauri `agent_support`、`agent-session`
+> completion/compaction、hosting React Query、provider HTTP 公共层以及 runtime/DTO/Git command
+> 机械拆分。外部 IPC、事件、checkpoint schema 与生成 TypeScript DTO 均保持兼容。
+>
+> 当前工作不再继续扩展抽象。B0 稳定性切片已经建立 provider-neutral Agent 评测基线，使用
+> fake provider 固定验证长上下文、预算前置拦截、重复工具批次、compaction、verifier 修复和
+> 重启恢复，并由 `cargo test --workspace` 自动纳入 CI。运行方式与指标解释见
+> `docs/AGENT-EVALUATION.md`。
+
 > 进度更新（2026-08-08）：A1-A5 已完成。PR Review 与 Issue Triage 共用 `agent-runtime` Provider 契约、后端模型目录和结构化输出契约；当前已安装 DeepSeek、OpenAI Responses 与 Anthropic Messages 三个 Provider、七个 allowlisted 模型。运行服务按 PR/Issue 资源互斥，只对网络/限流错误做三次上限的抖动退避，无效输出不重试。成功、失败和取消都使用可分享的脱敏诊断 ID，并写入统一 trace；UI 展示实际 usage、保守费用估算、耗时、请求次数和明确取消终态，旧缓存可无损迁移。三个 Provider 已通过两条工作流的能力矩阵、共享契约、fixture、IPC 与前端路由测试；自动化验证不依赖真实凭据。
 
 > 起始基线：`main` 已具备可用的 GitHub PR AI 评审，包括 DeepSeek 模型选择、语言选择、
 > token 预估、文件全选、受预算约束的只读工具调用、结果缓存、人工编辑与确认发布。
 > 当前实现说明见 `HANDOFF-pr-review-agent.md`。
 
-## 下一阶段目标
+## 上一阶段目标（已完成）
 
 把现有 PR 评审从“单一 Agent 功能”演进成可复用但不过度抽象的 Agent 能力，并以
 **GitHub Issue 分诊 Agent**作为第二个真实工作流验证架构。阶段结束时应做到：
@@ -127,6 +139,17 @@ A1 已先抽出被两个工作流共同消费的模型请求/响应、能力、u
 
 这些能力需要单独的权限模型、工作区隔离、命令沙箱、变更预览与恢复方案，不能扩展现有
 PR Review 的只读运行时来“顺便实现”。
+
+## 当前执行顺序
+
+1. **B0 · 稳定性与 Token 评测基线（已完成）**：固定输入、fake provider、可重复 usage
+   报告和 CI 回归断言；不访问网络、不消耗真实额度。
+2. **B1 · 真机闭环验收**：按 `docs/AGENT-EVALUATION.md` 检查创建、审批、暂停、恢复、
+   steering、预算扩展、重启恢复和 canonical completion。需要真实凭据的部分只在人工环境运行。
+3. **B2 · 数据驱动优化**：仅当固定评测或真实 Provider 人工样本证明存在回归时，调整
+   context planner、working-set compaction 或 retrieval；不以减少代码行数为目标。
+4. **B3 · 下一项产品能力**：B1/B2 稳定后另立设计，单独评审新增权限，不从现有工具策略
+   隐式扩大 Agent 权限。
 
 ## 每个切片的验证门槛
 
