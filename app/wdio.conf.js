@@ -14,6 +14,25 @@ const fatalHarnessPatterns = [
 ];
 let restoreOutputCapture;
 
+function removeE2eRoot({ allowFailure = false } = {}) {
+  try {
+    fs.rmSync(e2eRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 250,
+    });
+    return true;
+  } catch (error) {
+    if (!allowFailure) throw error;
+    console.warn(
+      `Desktop E2E cleanup could not remove ${e2eRoot}; the runner will discard it.`,
+      error,
+    );
+    return false;
+  }
+}
+
 function installOutputCapture() {
   fs.mkdirSync(e2eRoot, { recursive: true });
   const originalStdout = process.stdout.write.bind(process.stdout);
@@ -78,7 +97,7 @@ export const config = {
     timeout: 60_000,
   },
   onPrepare() {
-    fs.rmSync(e2eRoot, { recursive: true, force: true });
+    removeE2eRoot();
     restoreOutputCapture = installOutputCapture();
   },
   onComplete(exitCode) {
@@ -93,7 +112,7 @@ export const config = {
       );
     }
     if (exitCode === 0) {
-      fs.rmSync(e2eRoot, { recursive: true, force: true });
+      removeE2eRoot({ allowFailure: true });
     }
   },
 };

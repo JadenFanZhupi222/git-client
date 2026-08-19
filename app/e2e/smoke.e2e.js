@@ -56,7 +56,7 @@ describe("Git commit workflow", () => {
     const stageAction = await $(
       "[data-testid='unstaged-file'][data-file-path='hello.txt'] [data-testid='stage-action']",
     );
-    await stageAction.waitForClickable({ timeout: 20_000 });
+    await stageAction.waitForExist({ timeout: 20_000 });
     await browser.execute(() => {
       const action = document.querySelector(
         "[data-testid='unstaged-file'][data-file-path='hello.txt'] [data-testid='stage-action']",

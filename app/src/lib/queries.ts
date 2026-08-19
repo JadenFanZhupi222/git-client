@@ -245,8 +245,10 @@ export function useFileText(repo: string, file: string | null, enabled: boolean)
 // ---- 失效辅助 ----
 /** 工作区相关(status + 工作区 diff):暂存/提交等写操作后调用。 */
 export function invalidateWorktree(qc: QueryClient, repo: string) {
-  qc.invalidateQueries({ queryKey: qk.status(repo) });
-  qc.invalidateQueries({ queryKey: qk.workingDiff(repo) });
+  return Promise.all([
+    qc.invalidateQueries({ queryKey: qk.status(repo) }),
+    qc.invalidateQueries({ queryKey: qk.workingDiff(repo) }),
+  ]);
 }
 
 /** 历史/分支/远程同步(提交、切分支、fetch/pull/push 后)。 */

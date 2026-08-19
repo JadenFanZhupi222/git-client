@@ -152,7 +152,7 @@ export function ChangesView({ repo, onConfigureCredential }: {
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
-    try { await action(); invalidateWorktree(qc, repo); }
+    try { await action(); await invalidateWorktree(qc, repo); }
     catch (e) { toast({ kind: "error", title: (e as IpcError).message ?? String(e) }); }
     finally { setBusy(false); }
   }
