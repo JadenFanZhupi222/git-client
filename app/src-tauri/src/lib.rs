@@ -24,6 +24,7 @@ mod agent_events;
 mod agent_run_manager;
 mod agent_session_commands;
 mod agent_store;
+mod agent_support;
 mod change_commands;
 mod credentials;
 mod history_commands;

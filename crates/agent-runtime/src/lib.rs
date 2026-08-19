@@ -19,6 +19,45 @@ pub struct ModelUsage {
     pub tool_calls: u32,
 }
 
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[error("model usage field overflowed: {field}")]
+pub struct ModelUsageOverflow {
+    pub field: &'static str,
+}
+
+impl ModelUsage {
+    /// Adds provider-reported usage without silently saturating accounting fields.
+    /// Cached input is capped to the corresponding input count so malformed provider
+    /// metadata can never make cache-hit billing exceed total input billing.
+    pub fn checked_add_assign(&mut self, usage: &Self) -> Result<(), ModelUsageOverflow> {
+        self.input_tokens =
+            self.input_tokens
+                .checked_add(usage.input_tokens)
+                .ok_or(ModelUsageOverflow {
+                    field: "input_tokens",
+                })?;
+        self.cached_input_tokens = self
+            .cached_input_tokens
+            .checked_add(usage.cached_input_tokens.min(usage.input_tokens))
+            .ok_or(ModelUsageOverflow {
+                field: "cached_input_tokens",
+            })?;
+        self.output_tokens =
+            self.output_tokens
+                .checked_add(usage.output_tokens)
+                .ok_or(ModelUsageOverflow {
+                    field: "output_tokens",
+                })?;
+        self.tool_calls =
+            self.tool_calls
+                .checked_add(usage.tool_calls)
+                .ok_or(ModelUsageOverflow {
+                    field: "tool_calls",
+                })?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StructuredOutputSupport {
@@ -585,6 +624,44 @@ pub trait ModelProvider: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_usage_checked_add_is_conservative_and_reports_overflow() {
+        let mut total = ModelUsage {
+            input_tokens: 10,
+            cached_input_tokens: 2,
+            output_tokens: 3,
+            tool_calls: 1,
+        };
+        total
+            .checked_add_assign(&ModelUsage {
+                input_tokens: 5,
+                cached_input_tokens: 8,
+                output_tokens: 7,
+                tool_calls: 2,
+            })
+            .unwrap();
+        assert_eq!(
+            total,
+            ModelUsage {
+                input_tokens: 15,
+                cached_input_tokens: 7,
+                output_tokens: 10,
+                tool_calls: 3,
+            }
+        );
+
+        let error = ModelUsage {
+            input_tokens: u64::MAX,
+            ..ModelUsage::default()
+        }
+        .checked_add_assign(&ModelUsage {
+            input_tokens: 1,
+            ..ModelUsage::default()
+        })
+        .unwrap_err();
+        assert_eq!(error.field, "input_tokens");
+    }
 
     #[test]
     fn default_capabilities_fail_closed() {

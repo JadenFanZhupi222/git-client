@@ -1210,23 +1210,9 @@ fn accumulate_usage(
     response: &ModelResponse,
     config: &SessionEngineConfig,
 ) -> Result<(), SessionEngineError> {
-    total.input_tokens = total
-        .input_tokens
-        .checked_add(response.usage.input_tokens)
-        .ok_or(SessionEngineError::Budget("input_tokens"))?;
-    total.cached_input_tokens = total
-        .cached_input_tokens
-        .checked_add(
-            response
-                .usage
-                .cached_input_tokens
-                .min(response.usage.input_tokens),
-        )
-        .ok_or(SessionEngineError::Budget("input_tokens"))?;
-    total.output_tokens = total
-        .output_tokens
-        .checked_add(response.usage.output_tokens)
-        .ok_or(SessionEngineError::Budget("output_tokens"))?;
+    total
+        .checked_add_assign(&response.usage)
+        .map_err(|error| SessionEngineError::Budget(error.field))?;
     if total.input_tokens > config.max_total_input_tokens {
         return Err(SessionEngineError::Budget("input_tokens"));
     }

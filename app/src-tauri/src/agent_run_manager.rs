@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use agent_session::{
     AgentBudgetAccount, AgentCompletionCandidate, AgentGoal, AgentGoalResult, AgentGoalStatus,
@@ -16,14 +16,17 @@ use async_trait::async_trait;
 use ipc_types::{AgentGoalEventDto, AgentGoalSnapshotDto, AgentGoalUsageDto};
 use review_agent::{
     AgentEventClock, AgentEventEmitter, ModelOutput, ModelProvider, ModelRequest, ModelUsage,
-    NoopAgentEventSink, PermissionDecision, PermissionPolicy, PermissionRule, ResponseFormat,
-    ToolApprovalRequest, ToolApprovalResolver, ToolCancellation, ToolExecutionError, ToolIntent,
-    ToolIntentJournal, ToolMatcher, ToolReceipt, ToolRisk, TranscriptItem,
+    NoopAgentEventSink, PermissionDecision, ResponseFormat, ToolApprovalRequest,
+    ToolApprovalResolver, ToolCancellation, ToolExecutionError, ToolIntent, ToolIntentJournal,
+    ToolReceipt, ToolRisk, TranscriptItem,
 };
 use tauri::{Emitter, Manager};
 
 use crate::agent_events::{AppAgentEventEmitter, ToolApprovalRegistry};
 use crate::agent_store::EncryptedAgentStore;
+use crate::agent_support::{
+    local_agent_policy, now_ms, workspace_digest as shared_workspace_digest,
+};
 use crate::credentials::read_credential;
 use crate::review_commands::{
     ReviewCancellation, map_review_credential_error, review_error, review_model_credential,
@@ -457,7 +460,7 @@ impl AgentRunManager {
             let run_id = goal.goal_id.clone();
             let mut turn =
                 AgentTurnRequest::text(session_id, run_id, goal.objective.clone(), 4_096);
-            turn.run_policy = Some(local_policy());
+            turn.run_policy = Some(local_agent_policy());
             turn.request_budget = Some(
                 goal.active_budget()
                     .and_then(|budget| budget.request_budget_with_input_safety(100))
@@ -484,7 +487,9 @@ impl AgentRunManager {
                 AgentSliceOutcome::Checkpoint(mut checkpoint) => {
                     let post_slice_digest = workspace_digest(repository).await?;
                     let mut accumulated_usage = goal.checkpoint.slice_usage.clone();
-                    add_usage(&mut accumulated_usage, &checkpoint.usage)?;
+                    accumulated_usage
+                        .checked_add_assign(&checkpoint.usage)
+                        .map_err(|_| RunGoalError::InvalidResult)?;
                     let accumulated_tool_result_bytes = goal
                         .checkpoint
                         .slice_tool_result_bytes
@@ -527,8 +532,12 @@ impl AgentRunManager {
                     let mut compacted_summary = None;
                     let mut compacted_next_actions = None;
                     if let Some(attempt) = compaction {
-                        add_usage(&mut billed_usage, &attempt.usage)?;
-                        add_usage(&mut accumulated_usage, &attempt.usage)?;
+                        billed_usage
+                            .checked_add_assign(&attempt.usage)
+                            .map_err(|_| RunGoalError::InvalidResult)?;
+                        accumulated_usage
+                            .checked_add_assign(&attempt.usage)
+                            .map_err(|_| RunGoalError::InvalidResult)?;
                         if let Some(compaction) = attempt.output {
                             checkpoint.transcript = compaction.recent_transcript;
                             compacted_summary = Some(compaction.summary);
@@ -1327,26 +1336,6 @@ fn truncate_for_compactor(mut value: String, max_bytes: usize) -> String {
     value
 }
 
-fn add_usage(total: &mut ModelUsage, usage: &ModelUsage) -> Result<(), RunGoalError> {
-    total.input_tokens = total
-        .input_tokens
-        .checked_add(usage.input_tokens)
-        .ok_or(RunGoalError::InvalidResult)?;
-    total.cached_input_tokens = total
-        .cached_input_tokens
-        .checked_add(usage.cached_input_tokens)
-        .ok_or(RunGoalError::InvalidResult)?;
-    total.output_tokens = total
-        .output_tokens
-        .checked_add(usage.output_tokens)
-        .ok_or(RunGoalError::InvalidResult)?;
-    total.tool_calls = total
-        .tool_calls
-        .checked_add(usage.tool_calls)
-        .ok_or(RunGoalError::InvalidResult)?;
-    Ok(())
-}
-
 async fn verify_candidate(
     provider: Arc<dyn ModelProvider>,
     goal: &AgentGoal,
@@ -1576,39 +1565,6 @@ fn logical_slice_boundary(
 
 fn elapsed_ms(duration: Duration) -> u64 {
     duration.as_millis().min(u128::from(u64::MAX)) as u64
-}
-
-fn local_policy() -> PermissionPolicy {
-    PermissionPolicy::new(vec![
-        rule(
-            "filesystem.read",
-            ToolRisk::ReadOnly,
-            PermissionDecision::Allow,
-        ),
-        rule(
-            "filesystem.list",
-            ToolRisk::ReadOnly,
-            PermissionDecision::Allow,
-        ),
-        rule("search.text", ToolRisk::ReadOnly, PermissionDecision::Allow),
-        rule("filesystem.write", ToolRisk::Write, PermissionDecision::Ask),
-        rule("patch.apply", ToolRisk::Write, PermissionDecision::Ask),
-        rule("artifact.write", ToolRisk::Write, PermissionDecision::Ask),
-        rule(
-            "shell.exec",
-            ToolRisk::Destructive,
-            PermissionDecision::Deny,
-        ),
-        rule("web.fetch", ToolRisk::External, PermissionDecision::Deny),
-    ])
-}
-
-fn rule(name: &str, risk: ToolRisk, decision: PermissionDecision) -> PermissionRule {
-    PermissionRule {
-        matcher: ToolMatcher::Exact(name.into()),
-        risk: Some(risk),
-        decision,
-    }
 }
 
 fn commit_legacy(
@@ -1900,39 +1856,9 @@ fn goal_error_stage(error: &RunGoalError) -> &'static str {
 }
 
 async fn workspace_digest(repository: &Path) -> Result<String, RunGoalError> {
-    let output = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(repository)
-        .args([
-            "status",
-            "--porcelain=v2",
-            "--branch",
-            "--untracked-files=all",
-        ])
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "safe.directory")
-        .env("GIT_CONFIG_VALUE_0", repository)
-        .output()
+    shared_workspace_digest(repository)
         .await
-        .map_err(|_| RunGoalError::Storage)?;
-    if !output.status.success() {
-        return Err(RunGoalError::Storage);
-    }
-    let hash = output
-        .stdout
-        .iter()
-        .fold(0xcbf29ce484222325_u64, |hash, byte| {
-            hash.wrapping_mul(0x100000001b3) ^ u64::from(*byte)
-        });
-    Ok(format!("workspace-{hash:016x}"))
-}
-
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .min(u128::from(u64::MAX)) as u64
+        .map_err(|_| RunGoalError::Storage)
 }
 
 #[cfg(test)]

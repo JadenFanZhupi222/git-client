@@ -13,15 +13,15 @@ use ipc_types::{
     CreateAgentGoalInputDto, ExtendAgentBudgetInputDto, IpcError, ResumeAgentGoalInputDto,
     ReviewUsageDto, SteerAgentGoalInputDto,
 };
-use review_agent::{
-    PermissionDecision, PermissionPolicy, PermissionRule, ToolMatcher, ToolReceipt, ToolRisk,
-    TranscriptItem,
-};
+use review_agent::{ToolReceipt, ToolRisk, TranscriptItem};
 use tauri::Manager;
 
 use crate::agent_events::{AppAgentEventEmitter, ToolApprovalRegistry};
 use crate::agent_run_manager::{
     AgentRunManager, default_budget, emit_budget_updated, emit_steering_accepted, goal_snapshot,
+};
+use crate::agent_support::{
+    local_agent_policy, now_ms, workspace_digest as shared_workspace_digest,
 };
 use crate::credentials::read_credential;
 use crate::review_commands::{
@@ -236,7 +236,7 @@ pub(crate) async fn steer_agent_goal(
             &session_id,
             input.expected_revision,
             input.message,
-            current_time_ms(),
+            now_ms(),
         )
         .map_err(goal_ipc_error)?;
     let goal = manager
@@ -266,20 +266,15 @@ pub(crate) async fn pause_agent_goal(
         .map_err(goal_ipc_error)?;
     manager
         .goals()
-        .mutate_goal(
-            &session_id,
-            input.expected_revision,
-            current_time_ms(),
-            |goal| {
-                ensure_goal_id(goal, &input.goal_id)?;
-                if goal.status.is_terminal() {
-                    return Err(agent_session::GoalError::Terminal);
-                }
-                goal.status = agent_session::AgentGoalStatus::Pausing;
-                goal.pause_reason = Some(agent_session::PauseReason::User);
-                Ok(())
-            },
-        )
+        .mutate_goal(&session_id, input.expected_revision, now_ms(), |goal| {
+            ensure_goal_id(goal, &input.goal_id)?;
+            if goal.status.is_terminal() {
+                return Err(agent_session::GoalError::Terminal);
+            }
+            goal.status = agent_session::AgentGoalStatus::Pausing;
+            goal.pause_reason = Some(agent_session::PauseReason::User);
+            Ok(())
+        })
         .map_err(goal_ipc_error)?;
     current_goal_snapshot(&manager, &session_id)
 }
@@ -300,34 +295,29 @@ pub(crate) async fn cancel_agent_goal(
     let mut discarded_read_intents = 0usize;
     manager
         .goals()
-        .mutate_goal(
-            &session_id,
-            input.expected_revision,
-            current_time_ms(),
-            |goal| {
-                ensure_goal_id(goal, &input.goal_id)?;
-                if goal.status.is_terminal() {
-                    return Err(agent_session::GoalError::Terminal);
-                }
-                let pending_are_read_only = goal
-                    .checkpoint
-                    .pending_intents
-                    .iter()
-                    .all(|intent| intent.risk == ToolRisk::ReadOnly);
-                if pending_are_read_only {
-                    discarded_read_intents = goal.checkpoint.pending_intents.len();
-                    goal.checkpoint.pending_intents.clear();
-                    goal.status = agent_session::AgentGoalStatus::Cancelled;
-                    goal.pause_reason = None;
-                    goal.block_reason = None;
-                    goal.clear_active_working_data();
-                } else {
-                    goal.status = agent_session::AgentGoalStatus::Blocked;
-                    goal.block_reason = Some(agent_session::BlockReason::AmbiguousToolEffect);
-                }
-                Ok(())
-            },
-        )
+        .mutate_goal(&session_id, input.expected_revision, now_ms(), |goal| {
+            ensure_goal_id(goal, &input.goal_id)?;
+            if goal.status.is_terminal() {
+                return Err(agent_session::GoalError::Terminal);
+            }
+            let pending_are_read_only = goal
+                .checkpoint
+                .pending_intents
+                .iter()
+                .all(|intent| intent.risk == ToolRisk::ReadOnly);
+            if pending_are_read_only {
+                discarded_read_intents = goal.checkpoint.pending_intents.len();
+                goal.checkpoint.pending_intents.clear();
+                goal.status = agent_session::AgentGoalStatus::Cancelled;
+                goal.pause_reason = None;
+                goal.block_reason = None;
+                goal.clear_active_working_data();
+            } else {
+                goal.status = agent_session::AgentGoalStatus::Blocked;
+                goal.block_reason = Some(agent_session::BlockReason::AmbiguousToolEffect);
+            }
+            Ok(())
+        })
         .map_err(goal_ipc_error)?;
     if discarded_read_intents > 0 {
         tracing::info!(
@@ -384,7 +374,7 @@ pub(crate) async fn resume_agent_goal(
     let mutation = manager.goals().mutate_goal(
         &session_id,
         reconciled_revision,
-        current_time_ms(),
+        now_ms(),
         |goal| {
             ensure_goal_id(goal, &input.goal_id)?;
             if goal.status.is_terminal() {
@@ -477,27 +467,22 @@ pub(crate) async fn extend_agent_budget(
     };
     let should_launch = manager
         .goals()
-        .mutate_goal(
-            &session_id,
-            input.expected_revision,
-            current_time_ms(),
-            |goal| {
-                ensure_goal_id(goal, &input.goal_id)?;
-                let account = goal
-                    .usage_by_model
-                    .get_mut(&input.model_id)
-                    .ok_or(agent_session::GoalError::InvalidBudget)?;
-                account.extend(limit)?;
-                if goal.status == agent_session::AgentGoalStatus::Paused
-                    && goal.pause_reason == Some(agent_session::PauseReason::Budget)
-                {
-                    goal.status = agent_session::AgentGoalStatus::Queued;
-                    goal.pause_reason = None;
-                    return Ok(true);
-                }
-                Ok(false)
-            },
-        )
+        .mutate_goal(&session_id, input.expected_revision, now_ms(), |goal| {
+            ensure_goal_id(goal, &input.goal_id)?;
+            let account = goal
+                .usage_by_model
+                .get_mut(&input.model_id)
+                .ok_or(agent_session::GoalError::InvalidBudget)?;
+            account.extend(limit)?;
+            if goal.status == agent_session::AgentGoalStatus::Paused
+                && goal.pause_reason == Some(agent_session::PauseReason::Budget)
+            {
+                goal.status = agent_session::AgentGoalStatus::Queued;
+                goal.pause_reason = None;
+                return Ok(true);
+            }
+            Ok(false)
+        })
         .map_err(goal_ipc_error)?;
     let updated = manager
         .goals()
@@ -733,31 +718,6 @@ fn repository_session_id(repository: &Path) -> String {
     format!("repo-{hash:016x}")
 }
 
-fn local_agent_policy() -> PermissionPolicy {
-    PermissionPolicy::new(vec![
-        rule(
-            "filesystem.read",
-            ToolRisk::ReadOnly,
-            PermissionDecision::Allow,
-        ),
-        rule(
-            "filesystem.list",
-            ToolRisk::ReadOnly,
-            PermissionDecision::Allow,
-        ),
-        rule("search.text", ToolRisk::ReadOnly, PermissionDecision::Allow),
-        rule("filesystem.write", ToolRisk::Write, PermissionDecision::Ask),
-        rule("patch.apply", ToolRisk::Write, PermissionDecision::Ask),
-        rule("artifact.write", ToolRisk::Write, PermissionDecision::Ask),
-        rule(
-            "shell.exec",
-            ToolRisk::Destructive,
-            PermissionDecision::Deny,
-        ),
-        rule("web.fetch", ToolRisk::External, PermissionDecision::Deny),
-    ])
-}
-
 fn local_agent_config() -> SessionEngineConfig {
     let mut config = SessionEngineConfig::default();
     config.tool_run.max_model_rounds = LOCAL_AGENT_MAX_MODEL_ROUNDS;
@@ -772,14 +732,6 @@ fn local_agent_config() -> SessionEngineConfig {
     config.max_total_output_tokens = LOCAL_AGENT_MAX_TOTAL_OUTPUT_TOKENS;
     config.max_run_duration = LOCAL_AGENT_MAX_RUN_DURATION;
     config
-}
-
-fn rule(name: &str, risk: ToolRisk, decision: PermissionDecision) -> PermissionRule {
-    PermissionRule {
-        matcher: ToolMatcher::Exact(name.into()),
-        risk: Some(risk),
-        decision,
-    }
 }
 
 fn session_engine_ipc_error(error: SessionEngineError) -> IpcError {
@@ -948,49 +900,13 @@ fn launch_goal(
 }
 
 async fn repository_state_digest(repository: &Path) -> Result<String, IpcError> {
-    let output = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(repository)
-        .args([
-            "status",
-            "--porcelain=v2",
-            "--branch",
-            "--untracked-files=all",
-        ])
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "safe.directory")
-        .env("GIT_CONFIG_VALUE_0", repository)
-        .output()
-        .await
-        .map_err(|_| {
-            stable_error(
-                "AGENT_WORKSPACE_STATE",
-                "Workspace state is unavailable",
-                true,
-            )
-        })?;
-    if !output.status.success() {
-        return Err(stable_error(
+    shared_workspace_digest(repository).await.map_err(|_| {
+        stable_error(
             "AGENT_WORKSPACE_STATE",
             "Workspace state is unavailable",
             true,
-        ));
-    }
-    let hash = output
-        .stdout
-        .iter()
-        .fold(0xcbf29ce484222325_u64, |hash, byte| {
-            hash.wrapping_mul(0x100000001b3) ^ u64::from(*byte)
-        });
-    Ok(format!("workspace-{hash:016x}"))
-}
-
-fn current_time_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .min(u128::from(u64::MAX)) as u64
+        )
+    })
 }
 
 fn goal_ipc_error(error: agent_session::GoalError) -> IpcError {
@@ -1052,6 +968,7 @@ fn goal_ipc_error(error: agent_session::GoalError) -> IpcError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use review_agent::PermissionDecision;
 
     #[test]
     fn repository_session_ids_are_opaque_stable_and_path_free() {
