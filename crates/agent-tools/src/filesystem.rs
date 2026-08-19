@@ -32,21 +32,47 @@ impl FilesystemReadTool {
     pub fn definition(max_bytes: usize) -> ToolDefinition {
         ToolDefinition {
             name: "filesystem.read".into(),
-            description: "Read one bounded UTF-8 file under the current workspace root".into(),
+            description: "Read one bounded UTF-8 file under the current workspace root. Omit start_line and line_count for the complete file, or use them to read a smaller line window from a large source file. A line window returns one JSON metadata line followed by exact source text".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "minLength": 1, "maxLength": 1024},
-                    "max_bytes": {"type": "integer", "minimum": 1, "maximum": max_bytes}
+                    "max_bytes": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": max_bytes,
+                        "description": "Maximum UTF-8 content bytes returned"
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000000000,
+                        "description": "One-based first line for a bounded line window"
+                    },
+                    "line_count": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 2000,
+                        "description": "Maximum complete lines to return; defaults to 200 in line-window mode"
+                    }
                 },
                 "required": ["path"],
                 "additionalProperties": false
             }),
             risk: ToolRisk::ReadOnly,
             timeout_ms: 10_000,
-            max_result_bytes: max_bytes.min(1024 * 1024),
+            max_result_bytes: max_bytes.saturating_add(4 * 1024).min(1024 * 1024),
         }
     }
+}
+
+#[derive(Serialize)]
+struct FileLineWindow {
+    path: String,
+    start_line: usize,
+    end_line: usize,
+    total_lines: usize,
+    next_start_line: Option<usize>,
 }
 
 #[async_trait]
@@ -67,18 +93,75 @@ impl ToolHandler for FilesystemReadTool {
             .and_then(|value| usize::try_from(value).ok())
             .unwrap_or(self.max_bytes)
             .min(self.max_bytes);
+        let line_window =
+            arguments.get("start_line").is_some() || arguments.get("line_count").is_some();
         let metadata = tokio::fs::metadata(&path)
             .await
             .map_err(|_| ToolHandlerError)?;
-        if metadata.len() > requested as u64 {
-            return failure();
+        if metadata.len() > self.max_bytes as u64 {
+            return Err(read_failure(
+                "file_exceeds_read_limit",
+                json!({
+                    "actual_bytes": metadata.len(),
+                    "max_supported_bytes": self.max_bytes,
+                    "hint": "Use search.text to locate relevant code in files above the read limit."
+                }),
+            ));
+        }
+        if !line_window && metadata.len() > requested as u64 {
+            return Err(read_failure(
+                "file_too_large_for_request",
+                json!({
+                    "actual_bytes": metadata.len(),
+                    "requested_max_bytes": requested,
+                    "hint": "Increase max_bytes or request a smaller start_line/line_count window."
+                }),
+            ));
         }
         let bytes = tokio::fs::read(path).await.map_err(|_| ToolHandlerError)?;
-        if bytes.len() > requested {
-            return failure();
+        if bytes.len() > self.max_bytes {
+            return Err(read_failure(
+                "file_exceeds_read_limit",
+                json!({
+                    "actual_bytes": bytes.len(),
+                    "max_supported_bytes": self.max_bytes,
+                    "hint": "Use search.text to locate relevant code in files above the read limit."
+                }),
+            ));
         }
         let digest = content_digest(&bytes);
-        let content = String::from_utf8(bytes).map_err(|_| ToolHandlerError)?;
+        let content =
+            String::from_utf8(bytes).map_err(|_| read_failure("file_not_utf8", json!({})))?;
+        let content = if line_window {
+            let start_line = arguments
+                .get("start_line")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(1);
+            let line_count = arguments
+                .get("line_count")
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok())
+                .unwrap_or(200)
+                .min(2_000);
+            let result_limit = self.max_bytes.saturating_add(4 * 1024).min(1024 * 1024);
+            let metadata_reserve = serde_json::to_string(&resource)
+                .map_err(|_| ToolHandlerError)?
+                .len()
+                .saturating_add(256);
+            let content_limit = requested.min(result_limit.saturating_sub(metadata_reserve));
+            let (metadata, selected) = select_line_window(
+                resource.clone(),
+                &content,
+                start_line,
+                line_count,
+                content_limit,
+            )?;
+            let metadata = serde_json::to_string(&metadata).map_err(|_| ToolHandlerError)?;
+            format!("{metadata}\n{selected}")
+        } else {
+            content
+        };
         Ok(ToolHandlerOutput::new(
             content,
             ToolReceipt::Observation {
@@ -94,6 +177,63 @@ impl ToolHandler for FilesystemReadTool {
             arguments.get("path").and_then(Value::as_str)?
         ))
     }
+}
+
+fn read_failure(code: &'static str, details: Value) -> ToolHandlerError {
+    let mut content = json!({"error": code});
+    if let (Some(target), Some(details)) = (content.as_object_mut(), details.as_object()) {
+        target.extend(details.clone());
+    }
+    ToolHandlerError::sanitized(content.to_string())
+}
+
+fn select_line_window(
+    path: String,
+    content: &str,
+    start_line: usize,
+    line_count: usize,
+    max_bytes: usize,
+) -> Result<(FileLineWindow, String), ToolHandlerError> {
+    let lines = content.split_inclusive('\n').collect::<Vec<_>>();
+    let total_lines = lines.len();
+    let start_index = start_line.saturating_sub(1);
+    if start_index >= total_lines {
+        return Err(read_failure(
+            "line_out_of_range",
+            json!({"start_line": start_line, "total_lines": total_lines}),
+        ));
+    }
+    let requested_end = start_index.saturating_add(line_count).min(total_lines);
+    let mut selected = String::new();
+    let mut selected_lines = 0usize;
+    for line in &lines[start_index..requested_end] {
+        if selected.len().saturating_add(line.len()) > max_bytes {
+            break;
+        }
+        selected.push_str(line);
+        selected_lines += 1;
+    }
+    if selected_lines == 0 {
+        return Err(read_failure(
+            "line_exceeds_max_bytes",
+            json!({
+                "line": start_line,
+                "line_bytes": lines[start_index].len(),
+                "requested_max_bytes": max_bytes
+            }),
+        ));
+    }
+    let end_line = start_line.saturating_add(selected_lines).saturating_sub(1);
+    Ok((
+        FileLineWindow {
+            path,
+            start_line,
+            end_line,
+            total_lines,
+            next_start_line: (end_line < total_lines).then_some(end_line.saturating_add(1)),
+        },
+        selected,
+    ))
 }
 
 pub struct FilesystemListTool {
@@ -116,11 +256,15 @@ impl FilesystemListTool {
     pub fn definition() -> ToolDefinition {
         ToolDefinition {
             name: "filesystem.list".into(),
-            description: "List one bounded directory under the current workspace root".into(),
+            description: "List one bounded directory under the current workspace root. Omit path or use '.' for the workspace root".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "maxLength": 1024}
+                    "path": {
+                        "type": "string",
+                        "maxLength": 1024,
+                        "description": "Relative directory, or '.' for the workspace root"
+                    }
                 },
                 "additionalProperties": false
             }),
@@ -546,9 +690,61 @@ mod tests {
         let output = list.execute(context(), json!({})).await.unwrap();
         assert!(output.contains("a.txt"));
         assert!(output.contains("nested"));
+        let dot_output = list.execute(context(), json!({"path":"."})).await.unwrap();
+        assert_eq!(dot_output.sanitized_content, output.sanitized_content);
         std::fs::create_dir(root.path().join(".git")).unwrap();
         let output = list.execute(context(), json!({})).await.unwrap();
         assert!(!output.contains(".git"));
+    }
+
+    #[tokio::test]
+    async fn read_reports_size_and_returns_utf8_safe_line_windows() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("large.txt"), "你\n好\nthird\nfourth\n").unwrap();
+        let read = FilesystemReadTool::new(PathScope::new(root.path(), true).unwrap(), 1024);
+
+        let error = read
+            .execute(context(), json!({"path":"large.txt", "max_bytes":4}))
+            .await
+            .unwrap_err();
+        let failure: Value = serde_json::from_str(error.sanitized_content().unwrap()).unwrap();
+        assert_eq!(failure["error"], "file_too_large_for_request");
+        assert_eq!(failure["actual_bytes"], 21);
+        assert_eq!(failure["requested_max_bytes"], 4);
+
+        let output = read
+            .execute(
+                context(),
+                json!({
+                    "path":"large.txt",
+                    "start_line":1,
+                    "line_count":4,
+                    "max_bytes":4
+                }),
+            )
+            .await
+            .unwrap();
+        let (metadata, content) = output.split_once('\n').unwrap();
+        let window: Value = serde_json::from_str(metadata).unwrap();
+        assert_eq!(window["start_line"], 1);
+        assert_eq!(window["end_line"], 1);
+        assert_eq!(window["total_lines"], 4);
+        assert_eq!(window["next_start_line"], 2);
+        assert_eq!(content, "你\n");
+        assert!(std::str::from_utf8(content.as_bytes()).is_ok());
+
+        let output = read
+            .execute(
+                context(),
+                json!({"path":"large.txt", "start_line":2, "line_count":2}),
+            )
+            .await
+            .unwrap();
+        let (metadata, content) = output.split_once('\n').unwrap();
+        let window: Value = serde_json::from_str(metadata).unwrap();
+        assert_eq!(content, "好\nthird\n");
+        assert_eq!(window["end_line"], 3);
+        assert_eq!(window["next_start_line"], 4);
     }
 
     #[tokio::test]

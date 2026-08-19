@@ -24,6 +24,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-agent-evals.ps1
 | --- | --- | --- |
 | 长上下文规划 | 估算输入不得超过 6976 Token，且必须形成有界 memory working set | 16 条历史压缩为 11 个 transcript item，估算 6071 Token |
 | 预算前置拦截 | 零剩余预算必须在 Provider I/O 前 checkpoint | 0 请求、0 round、0 usage |
+| 有界文件读取 | 根目录 `.` 一次成功；大文件只注入请求的完整行窗口 | 33,786 字节文件返回 20 行、622 字节；3 请求、2 tool calls |
 | 重复工具批次 | 三次相同证据后停止继续调用工具，进入 tool-free synthesis | 4 请求、3 tool calls、最后请求无工具 |
 | working-set compaction | 仅压缩较旧批次，保留最近两个完整工具批次 | 1 请求；90 input / 30 cached / 20 output |
 | verifier 修复 | 无效 JSON 只修复一次，并累计两次 Provider usage | 2 请求；21 input / 3 cached / 6 output |
@@ -36,6 +37,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-agent-evals.ps1
 
 - 预算不足、重启恢复以及纯状态转换的 Provider 请求数必须为零。
 - Provider 返回的 input、cached input 和 output usage 必须分别 checked 累计，禁止饱和或遗漏。
+- `filesystem.list` 必须接受省略路径、空路径和 `.` 作为 workspace root；不得因常规根目录写法产生重试。
+- 大型 UTF-8 源文件应优先使用 `start_line`/`line_count` 返回完整行窗口；不得为了读取局部代码把整文件注入模型上下文。
+- 文件读取超限必须返回脱敏的结构化大小信息，使模型能够调整窗口，而不是盲猜 `max_bytes`。
 - verifier 最多执行初次请求和一次 contract repair；修复 usage 必须计费。
 - compactor 预算不足时必须跳过 Provider I/O；执行时必须计入独立 usage。
 - 重复工具批次达到阈值后，后续请求必须禁用工具，防止无进展继续消耗预算。

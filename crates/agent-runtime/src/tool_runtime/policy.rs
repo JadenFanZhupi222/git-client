@@ -262,7 +262,28 @@ pub struct ToolExecutionContext {
 
 #[derive(Debug, Error)]
 #[error("tool handler failed")]
-pub struct ToolHandlerError;
+pub struct ToolHandlerError {
+    sanitized_content: Option<String>,
+}
+
+// Keep the existing `Err(ToolHandlerError)` construction source-compatible while allowing
+// trusted built-in handlers to return bounded, secret-free recovery hints to the model.
+#[allow(non_upper_case_globals)]
+pub const ToolHandlerError: ToolHandlerError = ToolHandlerError {
+    sanitized_content: None,
+};
+
+impl ToolHandlerError {
+    pub fn sanitized(content: impl Into<String>) -> Self {
+        Self {
+            sanitized_content: Some(content.into()),
+        }
+    }
+
+    pub fn sanitized_content(&self) -> Option<&str> {
+        self.sanitized_content.as_deref()
+    }
+}
 
 #[async_trait]
 pub trait ToolHandler: Send + Sync {

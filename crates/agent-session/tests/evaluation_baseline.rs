@@ -23,6 +23,7 @@ use serde_json::json;
 struct EvaluationReport {
     context: ContextMetrics,
     budget_preflight: BudgetPreflightMetrics,
+    bounded_filesystem: FilesystemMetrics,
     no_progress: NoProgressMetrics,
     compaction: ModelServiceMetrics,
     verifier_repair: ModelServiceMetrics,
@@ -43,6 +44,15 @@ struct BudgetPreflightMetrics {
     model_rounds: u32,
     input_tokens: u64,
     output_tokens: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct FilesystemMetrics {
+    provider_requests: usize,
+    tool_calls: u32,
+    full_file_bytes: usize,
+    returned_content_bytes: usize,
+    returned_lines: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -311,6 +321,115 @@ async fn evaluate_budget_preflight() -> BudgetPreflightMetrics {
     }
 }
 
+async fn evaluate_bounded_filesystem() -> FilesystemMetrics {
+    let workspace = tempfile::tempdir().unwrap();
+    let artifacts = tempfile::tempdir().unwrap();
+    let source = (1..=1_000)
+        .map(|line| format!("pub const VALUE_{line}: usize = {line};\n"))
+        .collect::<String>();
+    let full_file_bytes = source.len();
+    std::fs::write(workspace.path().join("large.rs"), source).unwrap();
+    let pack = build_builtin_tool_pack(BuiltinToolConfig::local_only(
+        workspace.path().into(),
+        artifacts.path().into(),
+    ))
+    .unwrap();
+    let provider = FixtureProvider::new([
+        response(
+            ModelOutput::ToolCalls {
+                calls: vec![ToolCall::with_call_id(
+                    "filesystem.list",
+                    "list-root",
+                    json!({"path":"."}),
+                )],
+            },
+            40,
+            0,
+            5,
+        ),
+        response(
+            ModelOutput::ToolCalls {
+                calls: vec![ToolCall::with_call_id(
+                    "filesystem.read",
+                    "read-window",
+                    json!({
+                        "path":"large.rs",
+                        "start_line":1,
+                        "line_count":20,
+                        "max_bytes":2048
+                    }),
+                )],
+            },
+            50,
+            10,
+            5,
+        ),
+        response(
+            ModelOutput::FinalText {
+                text: "Inspected a bounded source window.".into(),
+            },
+            60,
+            20,
+            10,
+        ),
+    ]);
+    let engine = SessionEngine::new(
+        provider.clone(),
+        sessions("filesystem-eval"),
+        pack.registry,
+        pack.policy,
+        Arc::new(DenyAllApprovals),
+        Arc::new(NoopAgentEventSink),
+        engine_config(),
+    )
+    .unwrap();
+    let result = engine
+        .run_turn(
+            AgentTurnRequest::text(
+                "filesystem-eval",
+                "filesystem-run",
+                "Inspect a bounded source window.",
+                256,
+            ),
+            Arc::new(NeverCancel),
+        )
+        .await
+        .unwrap();
+    let requests = provider.requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert!(requests[1].transcript.iter().any(|item| matches!(
+        item,
+        TranscriptItem::ToolResult { name, content, .. }
+            if name == "filesystem.list" && content.contains("large.rs")
+    )));
+    let read_content = requests[2]
+        .transcript
+        .iter()
+        .find_map(|item| match item {
+            TranscriptItem::ToolResult { name, content, .. } if name == "filesystem.read" => {
+                Some(content)
+            }
+            _ => None,
+        })
+        .expect("bounded read result");
+    let (metadata, returned_content) = read_content.split_once('\n').unwrap();
+    let window: serde_json::Value = serde_json::from_str(metadata).unwrap();
+    let returned_lines =
+        window["end_line"].as_u64().unwrap() - window["start_line"].as_u64().unwrap() + 1;
+    assert_eq!(returned_lines, 20);
+    assert!(returned_content.len() <= 2_048);
+    assert!(returned_content.len() < full_file_bytes);
+    assert_eq!(result.usage.tool_calls, 2);
+
+    FilesystemMetrics {
+        provider_requests: requests.len(),
+        tool_calls: result.usage.tool_calls,
+        full_file_bytes,
+        returned_content_bytes: returned_content.len(),
+        returned_lines: usize::try_from(returned_lines).unwrap(),
+    }
+}
+
 async fn evaluate_no_progress() -> NoProgressMetrics {
     let workspace = tempfile::tempdir().unwrap();
     let artifacts = tempfile::tempdir().unwrap();
@@ -520,6 +639,7 @@ async fn provider_neutral_agent_evaluation_baseline() {
     let report = EvaluationReport {
         context: evaluate_context(),
         budget_preflight: evaluate_budget_preflight().await,
+        bounded_filesystem: evaluate_bounded_filesystem().await,
         no_progress: evaluate_no_progress().await,
         compaction: evaluate_compaction().await,
         verifier_repair: evaluate_verifier_repair().await,

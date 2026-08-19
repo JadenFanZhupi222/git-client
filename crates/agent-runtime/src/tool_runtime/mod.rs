@@ -470,6 +470,21 @@ mod tests {
         }
     }
 
+    struct RecoverableFailingHandler;
+
+    #[async_trait]
+    impl ToolHandler for RecoverableFailingHandler {
+        async fn execute(
+            &self,
+            _: ToolExecutionContext,
+            _: Value,
+        ) -> Result<ToolHandlerOutput, ToolHandlerError> {
+            Err(ToolHandlerError::sanitized(
+                r#"{"error":"bounded_failure","actual_bytes":42}"#,
+            ))
+        }
+    }
+
     #[tokio::test]
     async fn read_only_failure_resolves_intent_without_effect() {
         let order = Arc::new(Mutex::new(Vec::new()));
@@ -493,6 +508,28 @@ mod tests {
             .unwrap();
         assert_eq!(result.outcome, ToolOutcome::Failed);
         assert_eq!(*order.lock().unwrap(), vec!["intent", "no_effect"]);
+    }
+
+    #[tokio::test]
+    async fn trusted_handler_failure_returns_sanitized_recovery_content() {
+        let mut registry = ToolRegistry::default();
+        registry
+            .register(definition(), Arc::new(RecoverableFailingHandler))
+            .unwrap();
+        let executor = ToolExecutor::new(Arc::new(registry), allow_policy());
+        let run = ToolRun::new("run", ToolRunLimits::default(), Arc::new(NeverCancel));
+        let result = executor
+            .execute(
+                &run,
+                ToolCall::with_call_id("test.echo", "recoverable", json!({"text":"ok"})),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.outcome, ToolOutcome::Failed);
+        assert_eq!(
+            result.content,
+            r#"{"error":"bounded_failure","actual_bytes":42}"#
+        );
     }
 
     #[tokio::test]

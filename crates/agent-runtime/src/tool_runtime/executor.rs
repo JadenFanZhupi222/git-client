@@ -275,9 +275,16 @@ impl ToolExecutor {
                     Some(output.receipt),
                 )
             }
-            Err(_) => {
+            Err(error) => {
                 self.resolve_read_only_without_effect(&intent, ToolOutcome::Failed)?;
-                (ToolOutcome::Failed, "Tool execution failed.".into(), None)
+                (
+                    ToolOutcome::Failed,
+                    error
+                        .sanitized_content()
+                        .unwrap_or("Tool execution failed.")
+                        .to_owned(),
+                    None,
+                )
             }
         };
         let content = redact_sensitive_text(content, &self.secret_literals);

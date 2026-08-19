@@ -42,7 +42,7 @@ impl PathScope {
     }
 
     pub fn existing_directory(&self, relative: &str) -> Result<PathBuf, PathScopeError> {
-        if relative.is_empty() {
+        if relative.is_empty() || relative == "." {
             return Ok(self.root.clone());
         }
         let candidate = self.existing(relative)?;
@@ -173,6 +173,7 @@ mod tests {
             scope.existing_directory(".git").unwrap_err(),
             PathScopeError::ForbiddenPath
         );
+        assert_eq!(scope.existing_directory(".").unwrap(), scope.root());
     }
 
     #[test]
