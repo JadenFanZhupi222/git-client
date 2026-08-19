@@ -17,6 +17,11 @@ named `app-vX.Y.Z` is fail-closed: application versions, updater configuration,
 updater signing, Windows signing, and macOS signing/notarization inputs must all
 pass `pnpm -C app release:check` before a GitHub prerelease is created.
 
+When signed credentials are intentionally unavailable, a maintainer may manually
+dispatch `Build Artifacts` with an existing `app-vX.Y.Z` tag and
+`allow_unsigned=true`. This explicit path creates an unsigned prerelease; normal
+tag-triggered releases remain fail-closed.
+
 ## Required Secrets
 
 Updater signing:
@@ -86,6 +91,14 @@ Check:
   notarized where applicable.
 - Install and launch each artifact on the matching architecture. CI coverage
   does not replace this real-device acceptance step.
+
+## Manual Unsigned Prerelease
+
+Use GitHub Actions > Build Artifacts > Run workflow, set `release_tag` to an
+existing version tag such as `app-v0.1.4`, and enable `allow_unsigned`. The
+workflow validates that the tag matches the application version, creates a
+prerelease, and uploads unsigned bundles. Updater metadata is omitted when
+updater signing inputs are unavailable.
 
 ## Tag Release
 

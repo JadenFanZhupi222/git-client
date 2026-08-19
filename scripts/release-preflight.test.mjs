@@ -241,6 +241,51 @@ test("desktop E2E failures are retained as CI artifacts", async () => {
   );
 });
 
+test("unsigned releases require an explicit manual workflow dispatch", async () => {
+  const root = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+  );
+  const workflow = await readFile(
+    path.join(root, ".github", "workflows", "build-artifacts.yml"),
+    "utf8",
+  );
+
+  assert.match(workflow, /workflow_dispatch:[\s\S]*release_tag:[\s\S]*allow_unsigned:/);
+  assert.match(
+    workflow,
+    /refs\/tags\/app-v\*[\s\S]*allow-unsigned=false/,
+  );
+  assert.match(workflow, /--allow-unsigned-release/);
+  assert.match(
+    workflow,
+    /tagName:\s*\$\{\{ needs\.release\.outputs\.release-tag \}\}/,
+  );
+});
+
+test("unsigned release mode enforces the release tag without signing inputs", () => {
+  assert.deepEqual(
+    validateRelease(
+      validInput({
+        signed: false,
+        env: {},
+        updater: {
+          pubkey: "local-development-placeholder",
+          endpoints: [],
+        },
+      }),
+    ),
+    [],
+  );
+
+  assert.match(
+    validateRelease(
+      validInput({ signed: false, tag: "app-v0.1.2", env: {} }),
+    ).join("\n"),
+    /tag.*app-v0\.1\.3/i,
+  );
+});
+
 test("desktop E2E explicitly refreshes status after an external fixture write", async () => {
   const root = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),

@@ -2,6 +2,16 @@ name: Build Artifacts
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing app-vX.Y.Z tag to publish; leave empty for artifact-only builds
+        required: false
+        type: string
+      allow_unsigned:
+        description: Publish the requested release without code or updater signing
+        required: false
+        default: false
+        type: boolean
   push:
     tags:
       - "app-v*"
@@ -36,6 +46,8 @@ jobs:
       TAURI_UPDATER_ENDPOINT: ${{ secrets.TAURI_UPDATER_ENDPOINT }}
     outputs:
       should-release: ${{ steps.mode.outputs.should-release }}
+      release-tag: ${{ steps.mode.outputs.release-tag }}
+      allow-unsigned: ${{ steps.mode.outputs.allow-unsigned }}
     steps:
       - uses: actions/checkout@v5
 
@@ -45,19 +57,39 @@ jobs:
 
       - name: Detect release mode
         id: mode
+        env:
+          REQUESTED_RELEASE_TAG: ${{ inputs.release_tag }}
+          REQUESTED_ALLOW_UNSIGNED: ${{ inputs.allow_unsigned }}
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/app-v* ]]; then
             echo "should-release=true" >> "$GITHUB_OUTPUT"
+            echo "release-tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "allow-unsigned=false" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${REQUESTED_RELEASE_TAG}" ]]; then
+            if [[ ! "${REQUESTED_RELEASE_TAG}" =~ ^app-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "release_tag must match app-vX.Y.Z" >&2
+              exit 1
+            fi
+            echo "should-release=true" >> "$GITHUB_OUTPUT"
+            echo "release-tag=${REQUESTED_RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+            echo "allow-unsigned=${REQUESTED_ALLOW_UNSIGNED}" >> "$GITHUB_OUTPUT"
           else
             echo "should-release=false" >> "$GITHUB_OUTPUT"
+            echo "release-tag=" >> "$GITHUB_OUTPUT"
+            echo "allow-unsigned=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Validate release inputs
         shell: pwsh
         run: |
           if ("${{ steps.mode.outputs.should-release }}" -eq "true") {
-            node scripts/release-preflight.mjs --platform=windows
-            node scripts/release-preflight.mjs --platform=macos
+            $env:GITHUB_REF_NAME = "${{ steps.mode.outputs.release-tag }}"
+            if ("${{ steps.mode.outputs.allow-unsigned }}" -eq "true") {
+              node scripts/release-preflight.mjs --allow-unsigned-release
+            } else {
+              node scripts/release-preflight.mjs --platform=windows
+              node scripts/release-preflight.mjs --platform=macos
+            }
           } else {
             node scripts/release-preflight.mjs --allow-unsigned
           }
@@ -66,13 +98,20 @@ jobs:
         if: steps.mode.outputs.should-release == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.mode.outputs.release-tag }}
+          ALLOW_UNSIGNED: ${{ steps.mode.outputs.allow-unsigned }}
         run: |
-          if gh release view "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "Release ${GITHUB_REF_NAME} already exists; artifacts will be replaced."
+          if [[ "${ALLOW_UNSIGNED}" == "true" ]]; then
+            RELEASE_NOTES="Unsigned cross-platform Git Client bundles. Verify the downloaded files before installation; updater metadata is intentionally omitted."
           else
-            gh release create "${GITHUB_REF_NAME}" -R "${GITHUB_REPOSITORY}" \
-              --title "Git Client ${GITHUB_REF_NAME#app-v}" \
-              --notes "Cross-platform Git Client bundles. Code signing, notarization, and updater metadata are included when the required secrets are configured." \
+            RELEASE_NOTES="Cross-platform Git Client bundles. Code signing, notarization, and updater metadata are included when the required secrets are configured."
+          fi
+          if gh release view "${RELEASE_TAG}" -R "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${RELEASE_TAG} already exists; artifacts will be replaced."
+          else
+            gh release create "${RELEASE_TAG}" -R "${GITHUB_REPOSITORY}" \
+              --title "Git Client ${RELEASE_TAG#app-v}" \
+              --notes "${RELEASE_NOTES}" \
               --prerelease
           fi
 
@@ -143,6 +182,13 @@ jobs:
           $args = @()
           $hasUpdaterArtifacts = $env:TAURI_SIGNING_PRIVATE_KEY -and $env:TAURI_UPDATER_PUBKEY
 
+          if ("${{ needs.release.outputs.allow-unsigned }}" -eq "true") {
+            $args += "--no-sign"
+            "build-args=$($args -join ' ')" >> $env:GITHUB_OUTPUT
+            Write-Host "Explicit unsigned prerelease mode is enabled."
+            exit 0
+          }
+
           if ($env:RUNNER_OS -eq "Windows") {
             $hasTrustedSigning = $env:AZURE_CLIENT_ID `
               -and $env:AZURE_CLIENT_SECRET `
@@ -198,8 +244,9 @@ jobs:
         run: |
           $args = @()
           $hasUpdaterArtifacts = $env:TAURI_SIGNING_PRIVATE_KEY -and $env:TAURI_UPDATER_PUBKEY
+          $unsignedRelease = "${{ needs.release.outputs.allow-unsigned }}" -eq "true"
 
-          if ($hasUpdaterArtifacts) {
+          if ($hasUpdaterArtifacts -and -not $unsignedRelease) {
             $endpoint = $env:TAURI_UPDATER_ENDPOINT
             if (-not $endpoint) {
               $endpoint = "https://github.com/$env:GITHUB_REPOSITORY/releases/latest/download/latest.json"
@@ -253,9 +300,9 @@ jobs:
         with:
           projectPath: app
           tauriScript: pnpm tauri
-          tagName: ${{ github.ref_name }}
-          releaseName: Git Client ${{ github.ref_name }}
-          releaseBody: Cross-platform Git Client bundles. Signed update artifacts are included when updater secrets are configured.
+          tagName: ${{ needs.release.outputs.release-tag }}
+          releaseName: Git Client ${{ needs.release.outputs.release-tag }}
+          releaseBody: ${{ needs.release.outputs.allow-unsigned == 'true' && 'Unsigned cross-platform Git Client bundles. Verify the downloaded files before installation; updater metadata is intentionally omitted.' || 'Cross-platform Git Client bundles. Signed update artifacts are included when updater secrets are configured.' }}
           prerelease: true
           uploadUpdaterJson: ${{ steps.updater.outputs.has-updater-artifacts }}
           uploadWorkflowArtifacts: false

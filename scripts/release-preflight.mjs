@@ -65,6 +65,8 @@ export function validateRelease(input) {
     );
   }
 
+  if (input.signed === false) return errors;
+
   if (
     !input.updater.pubkey?.trim() ||
     input.updater.pubkey.includes("local-development-placeholder")
@@ -133,6 +135,7 @@ export async function loadReleaseInput({
   root,
   env,
   release,
+  signed = true,
   platform,
   tag,
 }) {
@@ -166,12 +169,16 @@ export async function loadReleaseInput({
     env,
     platform,
     release,
+    signed,
   };
 }
 
 async function main() {
   const args = new Set(process.argv.slice(2));
-  const release = !args.has("--allow-unsigned");
+  const unsignedArtifact = args.has("--allow-unsigned");
+  const unsignedRelease = args.has("--allow-unsigned-release");
+  const release = !unsignedArtifact;
+  const signed = !unsignedRelease;
   const platformArg = process.argv.find((arg) => arg.startsWith("--platform="));
   const platform =
     platformArg?.slice("--platform=".length) ||
@@ -188,6 +195,7 @@ async function main() {
     root,
     env: process.env,
     release,
+    signed,
     platform,
     tag: process.env.GITHUB_REF_NAME ?? "",
   });
@@ -201,8 +209,10 @@ async function main() {
   }
 
   console.log(
-    release
+    release && signed
       ? `Release preflight passed for ${input.tag} (${platform}).`
+      : release
+        ? `Unsigned release preflight passed for ${input.tag}.`
       : `Unsigned artifact preflight passed for ${input.versions.package}.`,
   );
 }
