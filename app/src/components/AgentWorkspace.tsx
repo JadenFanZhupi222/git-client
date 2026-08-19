@@ -16,6 +16,7 @@ import {
 } from "../ipc";
 import { useAgentStream } from "../hooks/useAgentStream";
 import { useT } from "../lib/i18n";
+import { createRunId } from "../lib/uiShared";
 import { AgentStreamPanel } from "./AgentStreamPanel";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { AgentIcon, AlertIcon, SpinnerIcon } from "./icons";
@@ -383,5 +384,5 @@ function asAgentError(reason: unknown, fallback: string): AgentIpcErrorDto {
 }
 
 function createGoalId(): string {
-  return `goal-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return createRunId("goal");
 }

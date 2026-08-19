@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { setLang, translate } from "../lib/i18n";
 import { GitlabMrPanel } from "./GitlabMrPanel";
 import { ToastProvider } from "./Toast";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 
 const { openUrl } = vi.hoisted(() => ({
   openUrl: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
@@ -32,6 +34,13 @@ const remotes = [
     url: "https://gitlab.com/team/project.git",
   },
 ];
+
+function renderPanel(ui: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 describe("GitlabMrPanel", () => {
   afterEach(() => {
@@ -63,7 +72,7 @@ describe("GitlabMrPanel", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(
+    renderPanel(
       <ToastProvider>
         <GitlabMrPanel
           remotes={remotes}
@@ -283,7 +292,7 @@ describe("GitlabMrPanel", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    render(
+    renderPanel(
       <ToastProvider>
         <GitlabMrPanel
           remotes={remotes}
@@ -443,7 +452,7 @@ describe("GitlabMrPanel", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    render(
+    renderPanel(
       <ToastProvider>
         <GitlabMrPanel
           remotes={remotes}
@@ -551,7 +560,7 @@ describe("GitlabMrPanel", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    render(
+    renderPanel(
       <ToastProvider>
         <GitlabMrPanel
           remotes={remotes}

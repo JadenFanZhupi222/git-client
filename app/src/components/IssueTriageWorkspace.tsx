@@ -19,6 +19,7 @@ import type {
   ReviewProgressEventDto,
 } from "../bindings";
 import { useLang, useT } from "../lib/i18n";
+import { createRunId } from "../lib/uiShared";
 import { estimatedRunCost, formatEstimatedCost } from "../lib/agentCost";
 import { useAgentStream } from "../hooks/useAgentStream";
 import { CheckIcon, CloseIcon, SpinnerIcon } from "./icons";
@@ -158,7 +159,7 @@ export function IssueTriageWorkspace({
     setProgress(null);
     setCancelling(false);
     setPhase("running");
-    const runId = createRunId();
+    const runId = createRunId("issue");
     runIdRef.current = runId;
     try {
       const unsubscribe = await onReviewProgress((event) => {
@@ -630,12 +631,8 @@ function asIpcError(reason: unknown): AgentUiError {
   return { code: candidate?.code ?? "UNKNOWN", message: candidate?.message ?? String(reason), recoverable: candidate?.recoverable ?? true, diagnostic_id: typeof candidate?.diagnostic_id === "string" ? candidate.diagnostic_id : undefined };
 }
 
-function createRunId() {
-  return globalThis.crypto?.randomUUID?.() ?? `issue-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
 function createPublishId() {
-  return globalThis.crypto?.randomUUID?.() ?? `publish-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return createRunId("publish");
 }
 
 function cacheKey(target: IssueTargetDto) {

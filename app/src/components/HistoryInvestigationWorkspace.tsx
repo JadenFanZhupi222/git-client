@@ -11,6 +11,7 @@ import {
   listReviewModels,
 } from "../ipc";
 import { useT } from "../lib/i18n";
+import { createRunId } from "../lib/uiShared";
 import { historyDraftFromStream, type HistoryStreamDraft } from "../lib/historyStream";
 import { useAgentStream } from "../hooks/useAgentStream";
 import { AgentModelPicker } from "./AgentModelPicker";
@@ -84,7 +85,7 @@ export function HistoryInvestigationWorkspace({
     if (trimmed.length < 5 || !selectedModelId || !consented) return;
     const previous = runIdRef.current;
     if (previous) void cancelHistoryInvestigation(previous).catch(() => undefined);
-    const runId = createRunId();
+    const runId = createRunId("history");
     runIdRef.current = runId;
     setBusy(true);
     setResult(null);
@@ -393,12 +394,6 @@ function confidenceClass(value: string): string {
   if (value === "high") return "bg-success/15 text-success";
   if (value === "medium") return "bg-warning/15 text-warning";
   return "bg-overlay text-fg-muted";
-}
-
-function createRunId(): string {
-  return typeof crypto.randomUUID === "function"
-    ? crypto.randomUUID()
-    : `history-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function asAgentError(reason: unknown): AgentIpcErrorDto {

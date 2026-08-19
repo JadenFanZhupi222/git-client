@@ -4,6 +4,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { setLang } from "../lib/i18n";
 import { GithubPrPanel } from "./GithubPrPanel";
 import { ToastProvider } from "./Toast";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 
 const { openUrl } = vi.hoisted(() => ({
   openUrl: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
@@ -46,6 +48,13 @@ const remotes = [
   },
 ];
 
+function renderPanel(ui: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
+
 describe("GithubPrPanel", () => {
   afterEach(() => {
     reviewWorkspace.props = null;
@@ -68,7 +77,7 @@ describe("GithubPrPanel", () => {
     vi.stubGlobal("fetch", fetchMock);
     const onConfigureCredential = vi.fn();
     const user = userEvent.setup();
-    render(<ToastProvider><GithubPrPanel remotes={remotes} branch="feature" preferredRemote="origin" onClose={vi.fn()} onConfigureToken={vi.fn()} onConfigureCredential={onConfigureCredential} /></ToastProvider>);
+    renderPanel(<ToastProvider><GithubPrPanel remotes={remotes} branch="feature" preferredRemote="origin" onClose={vi.fn()} onConfigureToken={vi.fn()} onConfigureCredential={onConfigureCredential} /></ToastProvider>);
     await user.click(await screen.findByRole("button", { name: "Details" }));
     expect(screen.getByRole("dialog", { name: "GitHub pull requests" })).toBeInTheDocument();
     const trigger = await screen.findByRole("button", { name: "AI Review" });
@@ -93,7 +102,7 @@ describe("GithubPrPanel", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(
+    renderPanel(
       <ToastProvider>
         <GithubPrPanel
           remotes={remotes}
@@ -219,7 +228,7 @@ describe("GithubPrPanel", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    render(
+    renderPanel(
       <ToastProvider>
         <GithubPrPanel
           remotes={remotes}
@@ -402,7 +411,7 @@ describe("GithubPrPanel", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    render(
+    renderPanel(
       <ToastProvider>
         <GithubPrPanel
           remotes={remotes}
@@ -509,7 +518,7 @@ describe("GithubPrPanel", () => {
       );
     vi.stubGlobal("fetch", fetchMock);
 
-    render(
+    renderPanel(
       <ToastProvider>
         <GithubPrPanel
           remotes={remotes}

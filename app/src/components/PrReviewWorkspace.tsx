@@ -23,6 +23,7 @@ import type {
   ReviewRunResultDto,
   ReviewTargetDto,
 } from "../bindings";
+import { createRunId } from "../lib/uiShared";
 import { useLang, useT } from "../lib/i18n";
 import { estimatedRunCost, formatEstimatedCost } from "../lib/agentCost";
 import { useAgentStream } from "../hooks/useAgentStream";
@@ -276,7 +277,7 @@ export function PrReviewWorkspace({
     setCancelledRun(null);
     setCancelling(false);
     setPhase("running");
-    const runId = createRunId();
+    const runId = createRunId("review");
     runIdRef.current = runId;
     try {
       const unsubscribe = await onReviewProgress((event) => {
@@ -595,10 +596,6 @@ function errorMessage(error: AgentUiError, t: ReturnType<typeof useT>) {
 function asIpcError(reason: unknown): AgentUiError {
   const candidate = reason as Partial<AgentUiError> | null;
   return { code: candidate?.code ?? "UNKNOWN", message: candidate?.message ?? String(reason), recoverable: candidate?.recoverable ?? true, diagnostic_id: typeof candidate?.diagnostic_id === "string" ? candidate.diagnostic_id : undefined };
-}
-
-function createRunId() {
-  return globalThis.crypto?.randomUUID?.() ?? `review-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 type TokenEstimate = { lower: number; upper: number };

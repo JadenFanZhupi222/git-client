@@ -1,20 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { getGitlabToken, hasGitlabToken, type IpcError } from "../ipc";
 import type { CredentialKindDto } from "../bindings";
 import {
-  approveGitlabMergeRequest,
-  createGitlabMergeRequestNote,
-  fetchGitlabMergeRequestDetails,
-  fetchGitlabMergeRequests,
-  mergeGitlabMergeRequest,
-  retryGitlabJob,
   type GitlabMergeRequestDetails,
   type GitlabPipelineJobSummary,
-  type GitlabMergeRequestSummary,
-  unapproveGitlabMergeRequest,
 } from "../lib/gitlab";
+import {
+  useGitlabApprovalMutation,
+  useGitlabMergeMutation,
+  useGitlabMergeRequestDetails,
+  useGitlabMergeRequests,
+  useGitlabNoteMutation,
+  useGitlabRetryJobMutation,
+} from "../lib/hostingQueries";
 import {
   detectHostingRemote,
   type HostingRemote,
@@ -24,6 +23,8 @@ import { CloseIcon, SpinnerIcon } from "./icons";
 import { useToast } from "./Toast";
 import { useT } from "../lib/i18n";
 import { PrReviewWorkspace } from "./PrReviewWorkspace";
+import { errorMessage, formatDate } from "../lib/uiShared";
+import { DetailMetric } from "./DetailMetric";
 
 export function GitlabMrPanel({
   remotes,
@@ -42,20 +43,7 @@ export function GitlabMrPanel({
 }) {
   const toast = useToast();
   const t = useT();
-  const [mrs, setMrs] = useState<GitlabMergeRequestSummary[]>([]);
-  const [detailByIid, setDetailByIid] = useState<
-    Record<number, GitlabMergeRequestDetails>
-  >({});
-  const [detailLoading, setDetailLoading] = useState<number | null>(null);
-  const [approvalAction, setApprovalAction] = useState<{
-    iid: number;
-    type: "approve" | "unapprove";
-  } | null>(null);
-  const [creatingNote, setCreatingNote] = useState<number | null>(null);
-  const [mergingMr, setMergingMr] = useState<number | null>(null);
-  const [retryingJobId, setRetryingJobId] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [detailIid, setDetailIid] = useState<number | null>(null);
   const [reviewTarget, setReviewTarget] = useState<{ owner: string; repo: string; pull_number: number } | null>(null);
   const [reviewOwnsFocus, setReviewOwnsFocus] = useState(false);
 
@@ -63,6 +51,22 @@ export function GitlabMrPanel({
     () => findGitlabRemote(remotes, preferredRemote),
     [remotes, preferredRemote],
   );
+  const mrsQuery = useGitlabMergeRequests(remote, branch);
+  const detailQuery = useGitlabMergeRequestDetails(remote, detailIid);
+  const approveMutation = useGitlabApprovalMutation(remote, branch, "approve");
+  const unapproveMutation = useGitlabApprovalMutation(remote, branch, "unapprove");
+  const noteMutation = useGitlabNoteMutation(remote, branch);
+  const mergeMutation = useGitlabMergeMutation(remote, branch);
+  const retryMutation = useGitlabRetryJobMutation(remote, branch);
+  const mrs = mrsQuery.data ?? [];
+  const loading = !!remote && !!branch && mrsQuery.isPending;
+  const error = !branch
+    ? t("gitlabMr.errNoBranch")
+    : !remote
+      ? t("gitlabMr.errNoRemote")
+      : mrsQuery.error
+        ? errorMessage(mrsQuery.error)
+        : null;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -72,38 +76,13 @@ export function GitlabMrPanel({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, reviewTarget]);
 
-  useEffect(() => {
-    let alive = true;
-    loadList(() => alive);
-    return () => {
-      alive = false;
-    };
-  }, [remote, branch]);
+  useEffect(() => setDetailIid(null), [remote, branch]);
 
-  async function loadList(isAlive: () => boolean = () => true) {
-    setLoading(true);
-    setError(null);
-    try {
-      if (!remote || !branch) {
-        setMrs([]);
-        setDetailByIid({});
-        setError(
-          branch ? t("gitlabMr.errNoRemote") : t("gitlabMr.errNoBranch"),
-        );
-        return;
-      }
-      const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
-      const next = await fetchGitlabMergeRequests(remote, branch, token);
-      if (isAlive()) {
-        setMrs(next);
-        setDetailByIid({});
-      }
-    } catch (e) {
-      if (isAlive()) setError((e as IpcError).message ?? String(e));
-    } finally {
-      if (isAlive()) setLoading(false);
+  useEffect(() => {
+    if (detailQuery.error) {
+      toast({ kind: "error", title: errorMessage(detailQuery.error) });
     }
-  }
+  }, [detailQuery.error, toast]);
 
   async function openMr(url: string) {
     try {
@@ -113,86 +92,32 @@ export function GitlabMrPanel({
     }
   }
 
-  async function loadDetail(mr: GitlabMergeRequestSummary) {
-    if (!remote || detailByIid[mr.iid] || detailLoading === mr.iid) {
+  function loadDetail(iid: number) {
+    if (!remote) return;
+    if (detailIid === iid && detailQuery.isError) {
+      void detailQuery.refetch();
       return;
     }
-    setDetailLoading(mr.iid);
-    try {
-      const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
-      const detail = await fetchGitlabMergeRequestDetails(
-        remote,
-        mr.iid,
-        token,
-      );
-      setDetailByIid((current) => ({
-        ...current,
-        [mr.iid]: detail,
-      }));
-    } catch (e) {
-      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
-    } finally {
-      setDetailLoading(null);
-    }
+    setDetailIid(iid);
   }
 
   async function approveMr(detail: GitlabMergeRequestDetails) {
-    if (!remote || approvalAction?.iid === detail.iid) return;
-    setApprovalAction({ iid: detail.iid, type: "approve" });
+    if (!remote || approveMutation.isPending || unapproveMutation.isPending) return;
     try {
-      const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
-      if (!token?.trim()) {
-        toast({ kind: "error", title: t("gitlabMrDetail.tokenRequired") });
-        onConfigureToken();
-        return;
-      }
-      const approvals = await approveGitlabMergeRequest(
-        remote,
-        detail.iid,
-        token,
-      );
-      setDetailByIid((current) => ({
-        ...current,
-        [detail.iid]: {
-          ...detail,
-          approvals,
-        },
-      }));
+      await approveMutation.mutateAsync({ iid: detail.iid });
       toast({ kind: "success", title: t("gitlabMrDetail.approvedToast", { iid: detail.iid }) });
     } catch (e) {
-      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
-    } finally {
-      setApprovalAction(null);
+      handleMutationError(e);
     }
   }
 
   async function unapproveMr(detail: GitlabMergeRequestDetails) {
-    if (!remote || approvalAction?.iid === detail.iid) return;
-    setApprovalAction({ iid: detail.iid, type: "unapprove" });
+    if (!remote || approveMutation.isPending || unapproveMutation.isPending) return;
     try {
-      const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
-      if (!token?.trim()) {
-        toast({ kind: "error", title: t("gitlabMrDetail.tokenRequired") });
-        onConfigureToken();
-        return;
-      }
-      const approvals = await unapproveGitlabMergeRequest(
-        remote,
-        detail.iid,
-        token,
-      );
-      setDetailByIid((current) => ({
-        ...current,
-        [detail.iid]: {
-          ...detail,
-          approvals,
-        },
-      }));
+      await unapproveMutation.mutateAsync({ iid: detail.iid });
       toast({ kind: "success", title: t("gitlabMrDetail.unapprovedToast", { iid: detail.iid }) });
     } catch (e) {
-      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
-    } finally {
-      setApprovalAction(null);
+      handleMutationError(e);
     }
   }
 
@@ -200,68 +125,25 @@ export function GitlabMrPanel({
     detail: GitlabMergeRequestDetails,
     body: string,
   ): Promise<boolean> {
-    if (!remote || creatingNote === detail.iid) return false;
-    setCreatingNote(detail.iid);
+    if (!remote || noteMutation.isPending) return false;
     try {
-      const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
-      if (!token?.trim()) {
-        toast({ kind: "error", title: t("gitlabMrDetail.tokenRequired") });
-        onConfigureToken();
-        return false;
-      }
-      const note = await createGitlabMergeRequestNote(
-        remote,
-        detail.iid,
-        body,
-        token,
-      );
-      setDetailByIid((current) => ({
-        ...current,
-        [detail.iid]: {
-          ...detail,
-          userNotesCount: detail.userNotesCount + 1,
-          notes: [note, ...detail.notes],
-        },
-      }));
+      await noteMutation.mutateAsync({ iid: detail.iid, body });
       toast({ kind: "success", title: t("gitlabMrDetail.commentedToast", { iid: detail.iid }) });
       return true;
     } catch (e) {
-      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+      handleMutationError(e);
       return false;
-    } finally {
-      setCreatingNote(null);
     }
   }
 
   async function mergeMr(detail: GitlabMergeRequestDetails, squash: boolean) {
-    if (!remote || mergingMr === detail.iid) return;
-    setMergingMr(detail.iid);
+    if (!remote || mergeMutation.isPending) return;
     try {
-      const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
-      if (!token?.trim()) {
-        toast({ kind: "error", title: t("gitlabMrDetail.tokenRequired") });
-        onConfigureToken();
-        return;
-      }
-      const merged = await mergeGitlabMergeRequest(
-        remote,
-        detail.iid,
-        { squash, headSha: detail.headSha },
-        token,
-      );
-      setMrs((current) =>
-        current.filter((mr) => mr.iid !== detail.iid),
-      );
-      setDetailByIid((current) => {
-        const next = { ...current };
-        delete next[detail.iid];
-        return next;
-      });
+      const merged = await mergeMutation.mutateAsync({ detail, squash });
+      setDetailIid(null);
       toast({ kind: "success", title: t("gitlabMrDetail.mergedToast", { iid: merged.iid }) });
     } catch (e) {
-      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
-    } finally {
-      setMergingMr(null);
+      handleMutationError(e);
     }
   }
 
@@ -269,31 +151,24 @@ export function GitlabMrPanel({
     detail: GitlabMergeRequestDetails,
     job: GitlabPipelineJobSummary,
   ) {
-    if (!remote || retryingJobId === job.id) return;
-    setRetryingJobId(job.id);
+    if (!remote || retryMutation.isPending) return;
     try {
-      const token = (await hasGitlabToken()) ? await getGitlabToken() : null;
-      if (!token?.trim()) {
-        toast({ kind: "error", title: t("gitlabMrDetail.tokenRequired") });
-        onConfigureToken();
-        return;
-      }
-      const updatedJob = await retryGitlabJob(remote, job.id, token);
-      setDetailByIid((current) => ({
-        ...current,
-        [detail.iid]: {
-          ...detail,
-          pipelineJobs: detail.pipelineJobs.map((currentJob) =>
-            currentJob.id === job.id ? updatedJob : currentJob,
-          ),
-        },
-      }));
+      await retryMutation.mutateAsync({ iid: detail.iid, job });
       toast({ kind: "success", title: t("gitlabMrDetail.retriedToast", { name: job.name }) });
     } catch (e) {
-      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
-    } finally {
-      setRetryingJobId(null);
+      handleMutationError(e);
     }
+  }
+
+  function handleMutationError(error: unknown) {
+    const message = errorMessage(error);
+    toast({
+      kind: "error",
+      title: message === "GitLab token is required"
+        ? t("gitlabMrDetail.tokenRequired")
+        : message,
+    });
+    if (message === "GitLab token is required") onConfigureToken();
   }
 
   return (
@@ -377,28 +252,30 @@ export function GitlabMrPanel({
                       {t("gitlabMr.open")}
                     </button>
                     <button
-                      onClick={() => loadDetail(mr)}
-                      disabled={detailLoading === mr.iid}
+                      onClick={() => loadDetail(mr.iid)}
+                      disabled={detailIid === mr.iid && detailQuery.isFetching}
                       className="shrink-0 rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
                     >
-                      {detailLoading === mr.iid ? t("gitlabMr.detailsLoading") : t("gitlabMr.details")}
+                      {detailIid === mr.iid && detailQuery.isFetching ? t("gitlabMr.detailsLoading") : t("gitlabMr.details")}
                     </button>
                   </div>
-                  {detailByIid[mr.iid] && (
+                  {detailIid === mr.iid && detailQuery.data && (
                     <MergeRequestDetailsView
-                      detail={detailByIid[mr.iid]}
+                      detail={detailQuery.data}
                       approvalAction={
-                        approvalAction?.iid === mr.iid
-                          ? approvalAction.type
-                          : null
+                        approveMutation.isPending
+                          ? "approve"
+                          : unapproveMutation.isPending
+                            ? "unapprove"
+                            : null
                       }
                       onApprove={approveMr}
                       onUnapprove={unapproveMr}
-                      creatingNote={creatingNote === mr.iid}
+                      creatingNote={noteMutation.isPending}
                       onCreateNote={createMrNote}
-                      mergingMr={mergingMr === mr.iid}
+                      mergingMr={mergeMutation.isPending}
                       onMerge={mergeMr}
-                      retryingJobId={retryingJobId}
+                      retryingJobId={retryMutation.isPending ? retryMutation.variables?.job.id ?? null : null}
                       onRetryJob={retryJob}
                       onAiReview={() => {
                         if (!remote) return;
@@ -422,7 +299,7 @@ export function GitlabMrPanel({
               {t("gitlabMr.setToken")}
             </button>
             <button
-              onClick={() => loadList()}
+              onClick={() => void mrsQuery.refetch()}
               disabled={loading}
               className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
             >
@@ -723,19 +600,6 @@ function MergeRequestDetailsView({
   );
 }
 
-function DetailMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded border border-line bg-elevated/60 px-2 py-1.5">
-      <div className="text-[10px] uppercase tracking-wide text-fg-subtle">
-        {label}
-      </div>
-      <div className="mt-0.5 truncate font-medium text-fg" title={value}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
 function mergeLabel(detail: GitlabMergeRequestDetails, t: ReturnType<typeof useT>): string {
   return detail.detailedMergeStatus || detail.mergeStatus || t("gitlabMrDetail.unknown");
 }
@@ -774,10 +638,7 @@ function gitlabMergeBlockedReason(
 }
 
 function formatGitlabDate(value: string): string {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
+  return formatDate(value);
 }
 
 function formatJobDuration(value: number): string {

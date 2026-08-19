@@ -12,6 +12,7 @@ import {
   listReviewModels,
 } from "../ipc";
 import { useT } from "../lib/i18n";
+import { createRunId } from "../lib/uiShared";
 import { useAgentStream } from "../hooks/useAgentStream";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { AgentStreamPanel } from "./AgentStreamPanel";
@@ -76,7 +77,7 @@ export function ChangePlanWorkspace({
   async function runPlan(modelId: string | null) {
     const previousRun = runIdRef.current;
     if (previousRun) void cancelChangePlan(previousRun).catch(() => undefined);
-    const runId = createRunId();
+    const runId = createRunId("change-plan");
     runIdRef.current = runId;
     setPhase("loading");
     setError(null);
@@ -113,7 +114,7 @@ export function ChangePlanWorkspace({
     setError(null);
     try {
       const result = await commitChangeGroup({
-        run_id: createRunId(),
+        run_id: createRunId("change-plan"),
         repo_path: repo,
         snapshot_id: plan.snapshot_id,
         group_id: groupId,
@@ -341,12 +342,6 @@ function toggleSetValue(current: Set<string>, value: string, enabled: boolean): 
   if (enabled) next.add(value);
   else next.delete(value);
   return next;
-}
-
-function createRunId(): string {
-  return typeof crypto.randomUUID === "function"
-    ? crypto.randomUUID()
-    : `change-plan-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function asAgentError(reason: unknown): AgentIpcErrorDto {

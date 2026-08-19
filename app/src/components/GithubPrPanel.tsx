@@ -1,17 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { getGithubToken, hasGithubToken, type IpcError } from "../ipc";
 import type { CredentialKindDto } from "../bindings";
 import {
-  createGithubPullRequestComment,
-  fetchGithubPullRequestDetails,
-  fetchGithubPullRequests,
-  mergeGithubPullRequest,
   type GithubPullRequestDetails,
   type GithubPullMergeMethod,
-  type GithubPullRequestSummary,
 } from "../lib/github";
+import {
+  useGithubPullCommentMutation,
+  useGithubPullMergeMutation,
+  useGithubPullRequestDetails,
+  useGithubPullRequests,
+} from "../lib/hostingQueries";
 import {
   detectHostingRemote,
   type RemoteLike,
@@ -21,6 +21,8 @@ import { CloseIcon, SpinnerIcon } from "./icons";
 import { useToast } from "./Toast";
 import { useT } from "../lib/i18n";
 import { PrReviewWorkspace } from "./PrReviewWorkspace";
+import { errorMessage, formatDate } from "../lib/uiShared";
+import { DetailMetric } from "./DetailMetric";
 
 export function GithubPrPanel({
   remotes,
@@ -39,15 +41,7 @@ export function GithubPrPanel({
 }) {
   const toast = useToast();
   const t = useT();
-  const [pulls, setPulls] = useState<GithubPullRequestSummary[]>([]);
-  const [detailByNumber, setDetailByNumber] = useState<
-    Record<number, GithubPullRequestDetails>
-  >({});
-  const [detailLoading, setDetailLoading] = useState<number | null>(null);
-  const [creatingComment, setCreatingComment] = useState<number | null>(null);
-  const [mergingPull, setMergingPull] = useState<number | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [detailNumber, setDetailNumber] = useState<number | null>(null);
   const [reviewTarget, setReviewTarget] = useState<{ owner: string; repo: string; pull_number: number } | null>(null);
   const [reviewOwnsFocus, setReviewOwnsFocus] = useState(false);
 
@@ -55,6 +49,19 @@ export function GithubPrPanel({
     () => findGithubRemote(remotes, preferredRemote),
     [remotes, preferredRemote],
   );
+  const pullsQuery = useGithubPullRequests(remote, branch);
+  const detailQuery = useGithubPullRequestDetails(remote, detailNumber);
+  const commentMutation = useGithubPullCommentMutation(remote, branch);
+  const mergeMutation = useGithubPullMergeMutation(remote, branch);
+  const pulls = pullsQuery.data ?? [];
+  const loading = !!remote && !!branch && pullsQuery.isPending;
+  const error = !branch
+    ? t("githubPr.errNoBranch")
+    : !remote
+      ? t("githubPr.errNoRemote")
+      : pullsQuery.error
+        ? errorMessage(pullsQuery.error)
+        : null;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -64,38 +71,13 @@ export function GithubPrPanel({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, reviewTarget]);
 
-  useEffect(() => {
-    let alive = true;
-    loadList(() => alive);
-    return () => {
-      alive = false;
-    };
-  }, [remote, branch]);
+  useEffect(() => setDetailNumber(null), [remote, branch]);
 
-  async function loadList(isAlive: () => boolean = () => true) {
-    setLoading(true);
-    setError(null);
-    try {
-      if (!remote || !branch) {
-        setPulls([]);
-        setDetailByNumber({});
-        setError(
-          branch ? t("githubPr.errNoRemote") : t("githubPr.errNoBranch"),
-        );
-        return;
-      }
-      const token = (await hasGithubToken()) ? await getGithubToken() : null;
-      const next = await fetchGithubPullRequests(remote, branch, token);
-      if (isAlive()) {
-        setPulls(next);
-        setDetailByNumber({});
-      }
-    } catch (e) {
-      if (isAlive()) setError((e as IpcError).message ?? String(e));
-    } finally {
-      if (isAlive()) setLoading(false);
+  useEffect(() => {
+    if (detailQuery.error) {
+      toast({ kind: "error", title: errorMessage(detailQuery.error) });
     }
-  }
+  }, [detailQuery.error, toast]);
 
   async function openPull(url: string) {
     try {
@@ -105,63 +87,29 @@ export function GithubPrPanel({
     }
   }
 
-  async function loadDetail(pr: GithubPullRequestSummary) {
-    if (!remote || detailByNumber[pr.number] || detailLoading === pr.number) {
+  function loadDetail(number: number) {
+    if (!remote) return;
+    if (detailNumber === number && detailQuery.isError) {
+      void detailQuery.refetch();
       return;
     }
-    setDetailLoading(pr.number);
-    try {
-      const token = (await hasGithubToken()) ? await getGithubToken() : null;
-      const detail = await fetchGithubPullRequestDetails(
-        remote,
-        pr.number,
-        token,
-      );
-      setDetailByNumber((current) => ({
-        ...current,
-        [pr.number]: detail,
-      }));
-    } catch (e) {
-      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
-    } finally {
-      setDetailLoading(null);
-    }
+    setDetailNumber(number);
   }
 
   async function createPullComment(
     detail: GithubPullRequestDetails,
     body: string,
   ): Promise<boolean> {
-    if (!remote || creatingComment === detail.number) return false;
-    setCreatingComment(detail.number);
+    if (!remote || commentMutation.isPending) return false;
     try {
-      const token = (await hasGithubToken()) ? await getGithubToken() : null;
-      if (!token?.trim()) {
-        toast({ kind: "error", title: "GitHub token is required" });
-        onConfigureToken();
-        return false;
-      }
-      const comment = await createGithubPullRequestComment(
-        remote,
-        detail.number,
-        body,
-        token,
-      );
-      setDetailByNumber((current) => ({
-        ...current,
-        [detail.number]: {
-          ...detail,
-          comments: detail.comments + 1,
-          recentComments: [...detail.recentComments, comment].slice(-20),
-        },
-      }));
+      await commentMutation.mutateAsync({ detail, body });
       toast({ kind: "success", title: `Commented on PR #${detail.number}` });
       return true;
     } catch (e) {
-      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
+      const message = errorMessage(e);
+      toast({ kind: "error", title: message });
+      if (message === "GitHub token is required") onConfigureToken();
       return false;
-    } finally {
-      setCreatingComment(null);
     }
   }
 
@@ -169,37 +117,18 @@ export function GithubPrPanel({
     detail: GithubPullRequestDetails,
     method: GithubPullMergeMethod,
   ) {
-    if (!remote || mergingPull === detail.number) return;
-    setMergingPull(detail.number);
+    if (!remote || mergeMutation.isPending) return;
     try {
-      const token = (await hasGithubToken()) ? await getGithubToken() : null;
-      if (!token?.trim()) {
-        toast({ kind: "error", title: "GitHub token is required" });
-        onConfigureToken();
-        return;
-      }
-      const result = await mergeGithubPullRequest(
-        remote,
-        detail.number,
-        { method, headSha: detail.headSha },
-        token,
-      );
-      setPulls((current) =>
-        current.filter((pull) => pull.number !== detail.number),
-      );
-      setDetailByNumber((current) => {
-        const next = { ...current };
-        delete next[detail.number];
-        return next;
-      });
+      const { result } = await mergeMutation.mutateAsync({ detail, method });
+      setDetailNumber(null);
       toast({
         kind: "success",
         title: result.message || `Merged PR #${detail.number}`,
       });
     } catch (e) {
-      toast({ kind: "error", title: (e as IpcError).message ?? String(e) });
-    } finally {
-      setMergingPull(null);
+      const message = errorMessage(e);
+      toast({ kind: "error", title: message });
+      if (message === "GitHub token is required") onConfigureToken();
     }
   }
 
@@ -281,19 +210,19 @@ export function GithubPrPanel({
                       {t("githubPr.open")}
                     </button>
                     <button
-                      onClick={() => loadDetail(pr)}
-                      disabled={detailLoading === pr.number}
+                      onClick={() => loadDetail(pr.number)}
+                      disabled={detailNumber === pr.number && detailQuery.isFetching}
                       className="shrink-0 rounded-md border border-line-strong px-2 py-1 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
                     >
-                      {detailLoading === pr.number ? t("githubPr.detailsLoading") : t("githubPr.details")}
+                      {detailNumber === pr.number && detailQuery.isFetching ? t("githubPr.detailsLoading") : t("githubPr.details")}
                     </button>
                   </div>
-                  {detailByNumber[pr.number] && (
+                  {detailNumber === pr.number && detailQuery.data && (
                     <PullRequestDetailsView
-                      detail={detailByNumber[pr.number]}
-                      creatingComment={creatingComment === pr.number}
+                      detail={detailQuery.data}
+                      creatingComment={commentMutation.isPending}
                       onCreateComment={createPullComment}
-                      mergingPull={mergingPull === pr.number}
+                      mergingPull={mergeMutation.isPending}
                       onMerge={mergePull}
                       onAiReview={() => {
                         if (!remote) return;
@@ -317,7 +246,7 @@ export function GithubPrPanel({
               {t("githubPr.setToken")}
             </button>
             <button
-              onClick={() => loadList()}
+              onClick={() => void pullsQuery.refetch()}
               disabled={loading}
               className="rounded-md px-3 py-1.5 text-xs text-fg-muted transition-colors hover:bg-overlay hover:text-fg disabled:opacity-50"
             >
@@ -584,19 +513,6 @@ export function PullRequestDetailsView({
   );
 }
 
-function DetailMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded border border-line bg-elevated/60 px-2 py-1.5">
-      <div className="text-[10px] uppercase tracking-wide text-fg-subtle">
-        {label}
-      </div>
-      <div className="mt-0.5 truncate font-medium text-fg" title={value}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
 function mergeableLabel(detail: GithubPullRequestDetails): string {
   if (detail.mergeable === true) return "mergeable";
   if (detail.mergeable === false) return detail.mergeableState ?? "blocked";
@@ -626,13 +542,7 @@ function githubMergeBlockedReason(detail: GithubPullRequestDetails): string | nu
 }
 
 function formatCommentTime(value: string): string {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
+  return formatDate(value, "short");
 }
 
 function reviewThreadLocation(
