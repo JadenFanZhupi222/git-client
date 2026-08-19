@@ -171,26 +171,9 @@ impl AgentBudgetAccount {
     }
 
     pub fn record_usage(&mut self, usage: &ModelUsage) -> Result<BudgetCharge, GoalError> {
-        self.usage.input_tokens = self
-            .usage
-            .input_tokens
-            .checked_add(usage.input_tokens)
-            .ok_or(GoalError::Capacity)?;
-        self.usage.cached_input_tokens = self
-            .usage
-            .cached_input_tokens
-            .checked_add(usage.cached_input_tokens.min(usage.input_tokens))
-            .ok_or(GoalError::Capacity)?;
-        self.usage.output_tokens = self
-            .usage
-            .output_tokens
-            .checked_add(usage.output_tokens)
-            .ok_or(GoalError::Capacity)?;
-        self.usage.tool_calls = self
-            .usage
-            .tool_calls
-            .checked_add(usage.tool_calls)
-            .ok_or(GoalError::Capacity)?;
+        self.usage
+            .checked_add_assign(usage)
+            .map_err(|_| GoalError::Capacity)?;
         self.spent_micros = self.calculate_spent_micros()?;
         Ok(BudgetCharge {
             spent_micros: self.spent_micros,

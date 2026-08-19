@@ -1,9 +1,16 @@
+mod compaction;
+mod completion;
 mod context;
 mod engine;
 mod goal;
 mod rag;
 mod session;
 
+pub use compaction::{compact_working_set, CompactionAttempt, WorkingCompaction};
+pub use completion::{
+    validate_completion_candidate, verifier_requests_fit_budget, verify_completion_candidate,
+    CandidateVerification, CompletionError,
+};
 pub use context::{
     estimate_request_tokens, estimate_text_tokens, CalibratedTokenEstimator, ContextError,
     ContextLimits, ContextPlanner, PlannedContext, RequestTokenEstimator,
