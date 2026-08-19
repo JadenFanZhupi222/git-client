@@ -1,3 +1,4 @@
+use crate::provider_http::{self, build_client, StatusPolicy};
 use crate::tool_names::ProviderToolNames;
 use crate::{
     AgentEventEmitter, AgentEventKind, ModelCatalogEntry, ModelOutput, ModelPricing, ModelProvider,
@@ -6,7 +7,7 @@ use crate::{
     ToolCallingSupport, TranscriptItem, UsageSupport,
 };
 use async_trait::async_trait;
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::time::Duration;
@@ -231,17 +232,6 @@ impl DeepSeekProvider {
     }
 }
 
-fn build_client(
-    connect_timeout: Duration,
-    request_timeout: Duration,
-) -> Result<Client, ReviewError> {
-    Client::builder()
-        .connect_timeout(connect_timeout)
-        .read_timeout(request_timeout)
-        .build()
-        .map_err(|_| ReviewError::NetworkError("could not initialize HTTP client".into()))
-}
-
 #[async_trait]
 impl ModelProvider for DeepSeekProvider {
     fn descriptor(&self) -> ProviderDescriptor {
@@ -281,12 +271,7 @@ impl ModelProvider for DeepSeekProvider {
             "model request returned"
         );
         map_status(response.status())?;
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|_| ProviderError::Network("response body could not be read".into()))?;
-        let body = serde_json::from_slice::<Value>(&bytes)
-            .map_err(|_| ProviderError::Network("service returned an invalid response".into()))?;
+        let body = provider_http::read_json(response).await?;
         tool_names.restore_response(parse_response(body)?)
     }
 
@@ -428,7 +413,7 @@ impl ModelProvider for DeepSeekProvider {
             Ok(true)
         })
         .await
-        .map_err(map_sse_error)?;
+        .map_err(provider_http::map_sse_error)?;
 
         if !completed {
             return Err(ProviderError::InvalidResponse(
@@ -563,17 +548,8 @@ fn newline_end(text: &str) -> Option<usize> {
     text.find('\n').map(|index| index + 1)
 }
 
-fn map_status(status: StatusCode) -> Result<(), ProviderError> {
-    let result = match status {
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(ProviderError::AuthFailed),
-        StatusCode::PAYMENT_REQUIRED => Err(ProviderError::QuotaExceeded),
-        StatusCode::TOO_MANY_REQUESTS => Err(ProviderError::RateLimited),
-        status if status.is_client_error() => Err(ProviderError::InvalidRequest),
-        status if !status.is_success() => {
-            Err(ProviderError::Network("service request failed".into()))
-        }
-        _ => Ok(()),
-    };
+fn map_status(status: reqwest::StatusCode) -> Result<(), ProviderError> {
+    let result = provider_http::map_status(status, StatusPolicy::DeepSeek);
     if let Err(error) = &result {
         let error_code = match error {
             ProviderError::CredentialMissing => "credential_missing",
@@ -593,15 +569,6 @@ fn map_status(status: StatusCode) -> Result<(), ProviderError> {
         );
     }
     result
-}
-
-fn map_sse_error(error: crate::sse::SseError) -> ProviderError {
-    match error {
-        crate::sse::SseError::Read(_) => {
-            ProviderError::Network("response body could not be read".into())
-        }
-        _ => ProviderError::InvalidResponse("invalid streaming response".into()),
-    }
 }
 
 fn parse_response(body: Value) -> Result<ModelResponse, ProviderError> {

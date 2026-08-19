@@ -9,6 +9,7 @@ mod history_stream;
 mod issue;
 mod openai;
 mod orchestrator;
+mod provider_http;
 mod provider_retry;
 mod providers;
 mod review_output;

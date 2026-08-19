@@ -1,3 +1,4 @@
+use crate::provider_http::{self, build_client, StatusPolicy};
 use crate::tool_names::ProviderToolNames;
 use crate::{
     AgentEventEmitter, AgentEventKind, ModelCatalogEntry, ModelPricing, ModelProvider,
@@ -6,7 +7,7 @@ use crate::{
     ToolCallingSupport, TranscriptItem, UsageSupport,
 };
 use async_trait::async_trait;
-use reqwest::{Client, StatusCode};
+use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -236,17 +237,6 @@ fn split_call_id(call: &ToolCall) -> Result<(String, Value), ProviderError> {
     Ok((call_id, call.arguments.clone()))
 }
 
-fn build_client(
-    connect_timeout: Duration,
-    request_timeout: Duration,
-) -> Result<Client, ReviewError> {
-    Client::builder()
-        .connect_timeout(connect_timeout)
-        .read_timeout(request_timeout)
-        .build()
-        .map_err(|_| ReviewError::NetworkError("could not initialize HTTP client".into()))
-}
-
 #[async_trait]
 impl ModelProvider for AnthropicProvider {
     fn descriptor(&self) -> ProviderDescriptor {
@@ -268,27 +258,8 @@ impl ModelProvider for AnthropicProvider {
             .send()
             .await
             .map_err(|_| ProviderError::Network("request failed".into()))?;
-        match response.status() {
-            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-                return Err(ProviderError::AuthFailed);
-            }
-            StatusCode::TOO_MANY_REQUESTS => return Err(ProviderError::RateLimited),
-            status if status.is_server_error() => {
-                return Err(ProviderError::Network("service request failed".into()));
-            }
-            status if !status.is_success() => {
-                return Err(ProviderError::InvalidResponse(
-                    "service rejected the request".into(),
-                ));
-            }
-            _ => {}
-        }
-        let bytes = response
-            .bytes()
-            .await
-            .map_err(|_| ProviderError::Network("response body could not be read".into()))?;
-        let body = serde_json::from_slice::<Value>(&bytes)
-            .map_err(|_| ProviderError::Network("service returned an invalid response".into()))?;
+        provider_http::map_status(response.status(), StatusPolicy::Standard)?;
+        let body = provider_http::read_json(response).await?;
         tool_names.restore_response(parse_response(body)?)
     }
 
@@ -307,7 +278,7 @@ impl ModelProvider for AnthropicProvider {
             .send()
             .await
             .map_err(|_| ProviderError::Network("request failed".into()))?;
-        map_status(response.status())?;
+        provider_http::map_status(response.status(), StatusPolicy::Standard)?;
 
         let mut message = None;
         let mut content = Vec::<Value>::new();
@@ -488,7 +459,7 @@ impl ModelProvider for AnthropicProvider {
             Ok(true)
         })
         .await
-        .map_err(map_sse_error)?;
+        .map_err(provider_http::map_sse_error)?;
 
         if let Some(error) = terminal_error {
             return Err(error);
@@ -528,29 +499,6 @@ fn event_index(body: &Value) -> Result<usize, crate::sse::SseError> {
         ))
     } else {
         Ok(index)
-    }
-}
-
-fn map_status(status: StatusCode) -> Result<(), ProviderError> {
-    match status {
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(ProviderError::AuthFailed),
-        StatusCode::TOO_MANY_REQUESTS => Err(ProviderError::RateLimited),
-        status if status.is_server_error() => {
-            Err(ProviderError::Network("service request failed".into()))
-        }
-        status if !status.is_success() => Err(ProviderError::InvalidResponse(
-            "service rejected the request".into(),
-        )),
-        _ => Ok(()),
-    }
-}
-
-fn map_sse_error(error: crate::sse::SseError) -> ProviderError {
-    match error {
-        crate::sse::SseError::Read(_) => {
-            ProviderError::Network("response body could not be read".into())
-        }
-        _ => ProviderError::InvalidResponse("invalid streaming response".into()),
     }
 }
 
