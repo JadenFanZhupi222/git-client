@@ -72,6 +72,8 @@ Default soft limits are DeepSeek Flash CNY 1, DeepSeek Pro CNY 2, GPT-5.6 Luna U
 
 Crossing a limit pauses with `budget`; it never fails or commits. An extension can only increase the limit. Resuming with a different model creates or reuses that model's independent account. An unpriced future model requires an explicit token budget.
 
+Before provider I/O, every Goal model request is quoted against the active account using conservatively estimated cache-miss input plus the configured maximum output. Insufficient remaining budget checkpoints and pauses without issuing the request. Checkpoint compaction is skipped when its bounded quote does not fit, and an independent verifier reserves both its initial and single repair attempt before its first request. Provider-reported usage remains authoritative after completion; the preflight quote is only a no-large-overshoot guard.
+
 ## 9. Completion authority
 
 `FinalText` creates a bounded completion candidate. Deterministic checks require no unresolved call or intent, valid receipts for claimed effects, receipt digests matching current resources, no provider protocol residue, no unsupported claims of writes/tests, and an empty `remaining_work` set.

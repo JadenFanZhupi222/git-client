@@ -6,9 +6,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use agent_session::{
     AgentBudgetAccount, AgentCompletionCandidate, AgentGoal, AgentGoalResult, AgentGoalStatus,
     AgentSliceBoundary, AgentSliceOutcome, AgentSliceRequest, AgentTurnRequest, BlockReason,
-    DurableAgentSession, GoalError, GoalRepository, ModelBudgetLimit, PauseReason, PriceSnapshot,
-    SessionEngine, SessionEngineConfig, SessionEngineError, SessionError, SessionRole,
-    SessionStore, VerificationDecision, VerificationResult,
+    DurableAgentSession, GoalError, GoalRepository, ModelBudgetLimit, ModelRequestBudget,
+    PauseReason, PriceSnapshot, SessionEngine, SessionEngineConfig, SessionEngineError,
+    SessionError, SessionRole, SessionStore, VerificationDecision, VerificationResult,
+    estimate_request_tokens,
 };
 use agent_tools::{BuiltinToolConfig, build_builtin_tool_pack};
 use async_trait::async_trait;
@@ -457,6 +458,11 @@ impl AgentRunManager {
             let mut turn =
                 AgentTurnRequest::text(session_id, run_id, goal.objective.clone(), 4_096);
             turn.run_policy = Some(local_policy());
+            turn.request_budget = Some(
+                goal.active_budget()
+                    .and_then(|budget| budget.request_budget_with_input_safety(100))
+                    .map_err(map_goal_run_error)?,
+            );
             let atomic_step_started = Instant::now();
             let outcome = engine
                 .run_goal_slice(
@@ -495,11 +501,23 @@ impl AgentRunManager {
                         active_before_compaction,
                         accumulated_tool_result_bytes,
                     );
-                    let compaction = if preliminary_boundary != AgentSliceBoundary::AtomicStep {
+                    let compaction_budget = {
+                        let mut projected =
+                            goal.active_budget().map_err(map_goal_run_error)?.clone();
+                        projected
+                            .record_usage(&checkpoint.usage)
+                            .map_err(map_goal_run_error)?;
+                        projected.request_budget().map_err(map_goal_run_error)?
+                    };
+                    let compaction = if !matches!(
+                        preliminary_boundary,
+                        AgentSliceBoundary::AtomicStep | AgentSliceBoundary::Budget
+                    ) {
                         compact_working_set(
                             Arc::clone(&provider),
                             &goal.checkpoint.working_summary,
                             &checkpoint.transcript,
+                            &compaction_budget,
                         )
                         .await
                     } else {
@@ -548,6 +566,12 @@ impl AgentRunManager {
                             let charge = goal.active_budget_mut()?.record_usage(&billed_usage)?;
                             goal.checkpoint.checkpoint_sequence =
                                 goal.checkpoint.checkpoint_sequence.saturating_add(1);
+                            goal.checkpoint.model_responses = goal
+                                .checkpoint
+                                .model_responses
+                                .checked_add(checkpoint.model_rounds)
+                                .ok_or(GoalError::Capacity)?;
+                            goal.checkpoint.used_tools |= checkpoint.usage.tool_calls > 0;
                             goal.checkpoint.recent_transcript = checkpoint.transcript;
                             goal.checkpoint.progress = checkpoint.progress;
                             if let Some(summary) = compacted_summary {
@@ -581,6 +605,9 @@ impl AgentRunManager {
                             } else if boundary == AgentSliceBoundary::RunawayGuard {
                                 goal.status = AgentGoalStatus::Blocked;
                                 goal.block_reason = Some(BlockReason::RunawayGuard);
+                            } else if boundary == AgentSliceBoundary::Budget {
+                                goal.status = AgentGoalStatus::Paused;
+                                goal.pause_reason = Some(PauseReason::Budget);
                             }
                             if charge.exceeded && goal.status != AgentGoalStatus::Blocked {
                                 goal.status = AgentGoalStatus::Paused;
@@ -621,8 +648,12 @@ impl AgentRunManager {
                         text,
                         remaining_work: Vec::new(),
                         created_at_ms: now_ms(),
-                        model_responses: model_rounds,
-                        used_tools,
+                        model_responses: goal
+                            .checkpoint
+                            .model_responses
+                            .checked_add(model_rounds)
+                            .ok_or(RunGoalError::InvalidResult)?,
+                        used_tools: goal.checkpoint.used_tools || used_tools,
                         verification: None,
                     };
                     let (charge, pause_requested) = self
@@ -698,6 +729,17 @@ impl AgentRunManager {
         let mut verification = candidate.verification.clone();
         let mut verifier_budget_exceeded = false;
         if goal.requires_independent_verifier() && verification.is_none() {
+            if !verifier_requests_fit_budget(&goal)? {
+                self.goals
+                    .mutate_goal_current(session_id, now_ms(), |goal| {
+                        goal.status = AgentGoalStatus::Paused;
+                        goal.pause_reason = Some(PauseReason::Budget);
+                        Ok(())
+                    })
+                    .map_err(map_goal_run_error)?;
+                emit_status(app, &current_goal(&self.goals, session_id)?);
+                return Ok(true);
+            }
             let verified = verify_candidate(provider, &goal).await?;
             let result = verified.result.clone();
             let charge = self
@@ -1154,6 +1196,7 @@ async fn compact_working_set(
     provider: Arc<dyn ModelProvider>,
     existing_summary: &str,
     transcript: &[TranscriptItem],
+    budget: &ModelRequestBudget,
 ) -> Option<CompactionAttempt> {
     let batch_starts = transcript
         .iter()
@@ -1189,6 +1232,9 @@ async fn compact_working_set(
         response_schema: Some(schema),
         max_output_tokens: 2_048,
     };
+    if !request_fits_budget(budget, &request) {
+        return None;
+    }
     let sink = NoopAgentEventSink;
     let clock = AgentEventClock::default();
     let emitter = AgentEventEmitter::new("goal-compactor", 1, &clock, &sink);
@@ -1205,6 +1251,41 @@ async fn compact_working_set(
         ModelOutput::ToolCalls { .. } => None,
     };
     Some(CompactionAttempt { output, usage })
+}
+
+fn request_fits_budget(budget: &ModelRequestBudget, request: &ModelRequest) -> bool {
+    budget.allows(
+        estimate_request_tokens(
+            &request.transcript,
+            &request.tools,
+            request.response_schema.as_ref(),
+        ),
+        request.max_output_tokens,
+    )
+}
+
+fn verifier_requests_fit_budget(goal: &AgentGoal) -> Result<bool, RunGoalError> {
+    let initial = verifier_request(goal, false)?;
+    let repair = verifier_request(goal, true)?;
+    let estimated_input_tokens = [initial.clone(), repair.clone()]
+        .iter()
+        .try_fold(0u64, |total, request| {
+            total.checked_add(estimate_request_tokens(
+                &request.transcript,
+                &request.tools,
+                request.response_schema.as_ref(),
+            ))
+        })
+        .ok_or(RunGoalError::InvalidResult)?;
+    let max_output_tokens = initial
+        .max_output_tokens
+        .checked_add(repair.max_output_tokens)
+        .ok_or(RunGoalError::InvalidResult)?;
+    let budget = goal
+        .active_budget()
+        .and_then(AgentBudgetAccount::request_budget)
+        .map_err(map_goal_run_error)?;
+    Ok(budget.allows(estimated_input_tokens, max_output_tokens))
 }
 
 fn parse_compaction(text: &str) -> Option<(String, Vec<String>)> {

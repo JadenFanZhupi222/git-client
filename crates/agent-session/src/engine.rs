@@ -15,7 +15,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::context::{ContextError, ContextLimits, ContextPlanner};
-use crate::goal::{ProgressAction, ProgressTracker};
+use crate::goal::{ModelRequestBudget, ProgressAction, ProgressTracker};
 use crate::rag::{NoopRagRetriever, RagError, RagRetriever};
 use crate::session::{SessionError, SessionLease, SessionStore};
 
@@ -83,6 +83,7 @@ pub struct AgentTurnRequest {
     pub response_schema: Option<Value>,
     pub max_output_tokens: u32,
     pub run_policy: Option<PermissionPolicy>,
+    pub request_budget: Option<ModelRequestBudget>,
 }
 
 pub struct AgentSliceRequest {
@@ -104,6 +105,7 @@ pub enum AgentSliceBoundary {
     NoProgressBlocked,
     RunawayGuard,
     AtomicStep,
+    Budget,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,6 +147,7 @@ impl AgentTurnRequest {
             response_schema: None,
             max_output_tokens,
             run_policy: None,
+            request_budget: None,
         }
     }
 }
@@ -493,6 +496,7 @@ impl SessionEngine {
                     current,
                     usage,
                     model_rounds,
+                    tool_calls,
                     retrieval.len(),
                     sanitized_tool_result_bytes,
                     progress.clone(),
@@ -545,6 +549,7 @@ impl SessionEngine {
                         current,
                         usage,
                         model_rounds,
+                        tool_calls,
                         retrieval.len(),
                         sanitized_tool_result_bytes,
                         progress.clone(),
@@ -567,7 +572,7 @@ impl SessionEngine {
                     request_turn.push(TranscriptItem::System(reason.instruction().into()));
                 }
                 let planned = self.planner.plan(
-                    descriptor.capabilities,
+                    &descriptor,
                     &lease.snapshot,
                     &request_turn,
                     retrieval.clone(),
@@ -586,6 +591,7 @@ impl SessionEngine {
                             current,
                             usage,
                             model_rounds.saturating_sub(1),
+                            tool_calls,
                             retrieval.len(),
                             sanitized_tool_result_bytes,
                             progress.clone(),
@@ -601,6 +607,7 @@ impl SessionEngine {
                             current,
                             usage,
                             model_rounds.saturating_sub(1),
+                            tool_calls,
                             retrieval.len(),
                             sanitized_tool_result_bytes,
                             progress.clone(),
@@ -636,6 +643,24 @@ impl SessionEngine {
                 }
                 break planned;
             };
+            if request.request_budget.as_ref().is_some_and(|budget| {
+                !budget.allows(planned.estimated_input_tokens, request.max_output_tokens)
+            }) {
+                if mode == LoopMode::DurableSlice {
+                    return Ok(LoopOutcome::Checkpoint(slice_checkpoint(
+                        slice_index,
+                        AgentSliceBoundary::Budget,
+                        current,
+                        usage,
+                        model_rounds.saturating_sub(1),
+                        tool_calls,
+                        retrieval.len(),
+                        sanitized_tool_result_bytes,
+                        progress.clone(),
+                    )));
+                }
+                return Err(SessionEngineError::Budget("request_cost"));
+            }
             let tools_enabled = descriptor.capabilities.tool_calling
                 != agent_runtime::ToolCallingSupport::None
                 && finalization.is_none();
@@ -648,6 +673,7 @@ impl SessionEngine {
                 finalization_rounds = finalization_rounds.saturating_add(1);
             }
             let retrieval_count = planned.retrieval_count;
+            let estimated_input_tokens = planned.estimated_input_tokens;
             tracing::info!(
                 run_id = %router.run_id(),
                 model_rounds,
@@ -673,6 +699,20 @@ impl SessionEngine {
                 return Err(SessionEngineError::Cancelled);
             }
             accumulate_usage(&mut usage, &response, &self.config)?;
+            tracing::info!(
+                run_id = %router.run_id(),
+                provider_id = %descriptor.provider_id,
+                model_id = %descriptor.model_id,
+                estimated_input_tokens,
+                actual_input_tokens = response.usage.input_tokens,
+                cached_input_tokens = response.usage.cached_input_tokens,
+                estimate_ratio_percent = response
+                    .usage
+                    .input_tokens
+                    .checked_mul(100)
+                    .and_then(|actual| actual.checked_div(estimated_input_tokens.max(1))),
+                "agent token estimate calibrated against provider usage"
+            );
 
             match response.output {
                 ModelOutput::FinalText { text } => {
@@ -719,6 +759,7 @@ impl SessionEngine {
                                 current,
                                 usage,
                                 model_rounds,
+                                tool_calls,
                                 retrieval.len(),
                                 sanitized_tool_result_bytes,
                                 progress.clone(),
@@ -806,6 +847,7 @@ impl SessionEngine {
                                 current,
                                 usage,
                                 model_rounds,
+                                tool_calls,
                                 retrieval.len(),
                                 sanitized_tool_result_bytes,
                                 progress.clone(),
@@ -842,6 +884,7 @@ impl SessionEngine {
                             current,
                             usage,
                             model_rounds,
+                            tool_calls,
                             retrieval.len(),
                             sanitized_tool_result_bytes,
                             progress.clone(),
@@ -1011,12 +1054,14 @@ fn slice_checkpoint(
     slice_index: u32,
     boundary: AgentSliceBoundary,
     transcript: Vec<TranscriptItem>,
-    usage: ModelUsage,
+    mut usage: ModelUsage,
     model_rounds: u32,
+    tool_calls: u32,
     retrieval_count: usize,
     sanitized_tool_result_bytes: usize,
     progress: ProgressTracker,
 ) -> AgentSliceCheckpoint {
+    usage.tool_calls = tool_calls;
     AgentSliceCheckpoint {
         slice_index,
         boundary,
@@ -1168,6 +1213,15 @@ fn accumulate_usage(
     total.input_tokens = total
         .input_tokens
         .checked_add(response.usage.input_tokens)
+        .ok_or(SessionEngineError::Budget("input_tokens"))?;
+    total.cached_input_tokens = total
+        .cached_input_tokens
+        .checked_add(
+            response
+                .usage
+                .cached_input_tokens
+                .min(response.usage.input_tokens),
+        )
         .ok_or(SessionEngineError::Budget("input_tokens"))?;
     total.output_tokens = total
         .output_tokens
@@ -1427,6 +1481,86 @@ mod tests {
         assert_eq!(result.final_text, "answer");
         assert_eq!(result.revision, 1);
         assert_eq!(sessions.get("session").unwrap().recent_messages.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn cached_input_usage_survives_engine_accumulation() {
+        let sessions = sessions();
+        let provider = fixture_provider(vec![Ok(ModelResponse {
+            output: ModelOutput::FinalText {
+                text: "answer".into(),
+            },
+            usage: ModelUsage {
+                input_tokens: 100,
+                cached_input_tokens: 80,
+                output_tokens: 5,
+                tool_calls: 0,
+            },
+        })]);
+        let engine = SessionEngine::new(
+            provider,
+            Arc::clone(&sessions),
+            registry(Arc::new(CountingHandler::default())),
+            policy(),
+            Arc::new(DenyAllApprovals),
+            Arc::new(NoopAgentEventSink),
+            config(2),
+        )
+        .unwrap();
+
+        let result = engine
+            .run_turn(
+                AgentTurnRequest::text("session", "cached-run", "question", 256),
+                Arc::new(NeverCancel),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.usage.input_tokens, 100);
+        assert_eq!(result.usage.cached_input_tokens, 80);
+        assert_eq!(result.usage.output_tokens, 5);
+    }
+
+    #[tokio::test]
+    async fn request_budget_pauses_before_provider_io() {
+        let provider = fixture_provider(Vec::new());
+        let engine = SessionEngine::new(
+            provider.clone(),
+            sessions(),
+            registry(Arc::new(CountingHandler::default())),
+            policy(),
+            Arc::new(DenyAllApprovals),
+            Arc::new(NoopAgentEventSink),
+            config(2),
+        )
+        .unwrap();
+        let mut turn = AgentTurnRequest::text("session", "budget-run", "question", 256);
+        turn.request_budget = Some(ModelRequestBudget::Tokens {
+            remaining_tokens: 1,
+            input_safety_percent: 130,
+        });
+
+        let outcome = engine
+            .run_goal_slice(
+                AgentSliceRequest {
+                    turn,
+                    resume_transcript: Vec::new(),
+                    working_summary: None,
+                    progress: ProgressTracker::default(),
+                    slice_index: 0,
+                    execution_sequence: 0,
+                },
+                Arc::new(NeverCancel),
+            )
+            .await
+            .unwrap();
+
+        let AgentSliceOutcome::Checkpoint(checkpoint) = outcome else {
+            panic!("insufficient request budget must checkpoint");
+        };
+        assert_eq!(checkpoint.boundary, AgentSliceBoundary::Budget);
+        assert_eq!(checkpoint.model_rounds, 0);
+        assert!(provider.requests.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -2035,6 +2169,7 @@ mod tests {
                 panic!("slice completed before all tool work was done");
             };
             assert_eq!(checkpoint.boundary, AgentSliceBoundary::InputTokens);
+            assert_eq!(checkpoint.usage.tool_calls, 1);
             transcript = checkpoint.transcript;
             assert_eq!(sessions.get("session").unwrap().revision, 0);
         }

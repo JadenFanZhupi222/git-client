@@ -1,4 +1,7 @@
-use agent_runtime::{ProviderCapabilities, ToolDefinition, TranscriptItem};
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use agent_runtime::{ProviderDescriptor, ToolDefinition, TranscriptItem};
 use serde::Serialize;
 use serde_json::Value;
 use thiserror::Error;
@@ -58,8 +61,89 @@ pub struct PlannedContext {
     pub compacted_tool_results: usize,
 }
 
+pub trait RequestTokenEstimator: Send + Sync {
+    fn estimate_request_tokens(
+        &self,
+        provider: &ProviderDescriptor,
+        transcript: &[TranscriptItem],
+        tools: &[ToolDefinition],
+        response_schema: Option<&Value>,
+    ) -> u64;
+}
+
+#[derive(Debug, Clone)]
+pub struct CalibratedTokenEstimator {
+    default_safety_percent: u16,
+    provider_safety_percent: BTreeMap<String, u16>,
+    model_safety_percent: BTreeMap<String, u16>,
+}
+
+impl CalibratedTokenEstimator {
+    pub fn new(default_safety_percent: u16) -> Result<Self, ContextError> {
+        validate_safety_percent(default_safety_percent)?;
+        Ok(Self {
+            default_safety_percent,
+            provider_safety_percent: BTreeMap::new(),
+            model_safety_percent: BTreeMap::new(),
+        })
+    }
+
+    pub fn with_provider_safety_percent(
+        mut self,
+        provider_id: impl Into<String>,
+        safety_percent: u16,
+    ) -> Result<Self, ContextError> {
+        validate_safety_percent(safety_percent)?;
+        self.provider_safety_percent
+            .insert(provider_id.into(), safety_percent);
+        Ok(self)
+    }
+
+    pub fn with_model_safety_percent(
+        mut self,
+        model_id: impl Into<String>,
+        safety_percent: u16,
+    ) -> Result<Self, ContextError> {
+        validate_safety_percent(safety_percent)?;
+        self.model_safety_percent
+            .insert(model_id.into(), safety_percent);
+        Ok(self)
+    }
+
+    fn safety_percent(&self, provider: &ProviderDescriptor) -> u16 {
+        self.model_safety_percent
+            .get(&provider.model_id)
+            .or_else(|| self.provider_safety_percent.get(&provider.provider_id))
+            .copied()
+            .unwrap_or(self.default_safety_percent)
+    }
+}
+
+impl RequestTokenEstimator for CalibratedTokenEstimator {
+    fn estimate_request_tokens(
+        &self,
+        provider: &ProviderDescriptor,
+        transcript: &[TranscriptItem],
+        tools: &[ToolDefinition],
+        response_schema: Option<&Value>,
+    ) -> u64 {
+        estimate_request_tokens(transcript, tools, response_schema)
+            .saturating_mul(u64::from(self.safety_percent(provider)))
+            .div_ceil(100)
+    }
+}
+
+fn validate_safety_percent(safety_percent: u16) -> Result<(), ContextError> {
+    if (100..=1_000).contains(&safety_percent) {
+        Ok(())
+    } else {
+        Err(ContextError::InvalidConfig)
+    }
+}
+
 pub struct ContextPlanner {
     limits: ContextLimits,
+    estimator: Arc<dyn RequestTokenEstimator>,
 }
 
 impl ContextPlanner {
@@ -73,7 +157,15 @@ impl ContextPlanner {
         {
             return Err(ContextError::InvalidConfig);
         }
-        Ok(Self { limits })
+        Ok(Self {
+            limits,
+            estimator: Arc::new(CalibratedTokenEstimator::new(130)?),
+        })
+    }
+
+    pub fn with_estimator(mut self, estimator: Arc<dyn RequestTokenEstimator>) -> Self {
+        self.estimator = estimator;
+        self
     }
 
     pub fn max_rag_chunks(&self) -> usize {
@@ -83,7 +175,7 @@ impl ContextPlanner {
     #[allow(clippy::too_many_arguments)]
     pub fn plan(
         &self,
-        capabilities: ProviderCapabilities,
+        provider: &ProviderDescriptor,
         session: &AgentSession,
         current_turn: &[TranscriptItem],
         mut retrieval: Vec<RagChunk>,
@@ -92,7 +184,7 @@ impl ContextPlanner {
         max_output_tokens: u32,
     ) -> Result<PlannedContext, ContextError> {
         let context_window = match (
-            capabilities.context_window_tokens,
+            provider.capabilities.context_window_tokens,
             self.limits.explicit_context_tokens,
         ) {
             (0, None) => return Err(ContextError::UnknownWindow),
@@ -129,8 +221,12 @@ impl ContextPlanner {
         loop {
             let transcript =
                 build_transcript(session, memory.as_deref(), &history, &retrieval, &current)?;
-            let estimated_input_tokens =
-                estimate_request_tokens(&transcript, tools, response_schema);
+            let estimated_input_tokens = self.estimator.estimate_request_tokens(
+                provider,
+                &transcript,
+                tools,
+                response_schema,
+            );
             if estimated_input_tokens <= input_budget {
                 return Ok(PlannedContext {
                     transcript,
@@ -288,11 +384,15 @@ pub fn estimate_text_tokens(value: &str) -> u64 {
 mod tests {
     use super::*;
 
-    fn capabilities(tokens: u64) -> ProviderCapabilities {
-        ProviderCapabilities {
-            context_window_tokens: tokens,
-            max_output_tokens: 256,
-            ..ProviderCapabilities::default()
+    fn provider(tokens: u64) -> ProviderDescriptor {
+        ProviderDescriptor {
+            provider_id: "fixture".into(),
+            model_id: "fixture-model".into(),
+            capabilities: agent_runtime::ProviderCapabilities {
+                context_window_tokens: tokens,
+                max_output_tokens: 256,
+                ..agent_runtime::ProviderCapabilities::default()
+            },
         }
     }
 
@@ -339,7 +439,7 @@ mod tests {
     fn injects_delimited_memory_and_ranked_retrieval() {
         let planned = planner(2_000)
             .plan(
-                capabilities(2_000),
+                &provider(2_000),
                 &session(),
                 &[TranscriptItem::User("current".into())],
                 vec![RagChunk {
@@ -385,9 +485,9 @@ mod tests {
                 counts_toward_budget: true,
             },
         ];
-        let planned = planner(300)
+        let planned = planner(400)
             .plan(
-                capabilities(300),
+                &provider(400),
                 &session(),
                 &current,
                 vec![RagChunk {
@@ -412,7 +512,7 @@ mod tests {
         assert_eq!(
             unknown
                 .plan(
-                    capabilities(0),
+                    &provider(0),
                     &session(),
                     &[TranscriptItem::User("current".into())],
                     vec![],
@@ -426,7 +526,7 @@ mod tests {
         assert_eq!(
             planner(100)
                 .plan(
-                    capabilities(100),
+                    &provider(100),
                     &session(),
                     &[TranscriptItem::User("x".repeat(1000))],
                     vec![],
@@ -436,6 +536,24 @@ mod tests {
                 )
                 .unwrap_err(),
             ContextError::Exceeded
+        );
+    }
+
+    #[test]
+    fn calibrated_estimator_prefers_model_then_provider_then_default_margin() {
+        let estimator = CalibratedTokenEstimator::new(130)
+            .unwrap()
+            .with_provider_safety_percent("fixture", 150)
+            .unwrap()
+            .with_model_safety_percent("fixture-model", 200)
+            .unwrap();
+        let descriptor = provider(2_000);
+        let transcript = [TranscriptItem::User("abcdefgh".into())];
+        let raw = estimate_request_tokens(&transcript, &[], None);
+
+        assert_eq!(
+            estimator.estimate_request_tokens(&descriptor, &transcript, &[], None),
+            raw * 2
         );
     }
 }

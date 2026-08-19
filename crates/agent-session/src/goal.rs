@@ -88,6 +88,53 @@ pub enum ModelBudgetLimit {
     Tokens { limit_tokens: u64 },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelRequestBudget {
+    Cost {
+        remaining_micros: u64,
+        input_cache_miss_per_million_micros: u64,
+        output_per_million_micros: u64,
+        input_safety_percent: u16,
+    },
+    Tokens {
+        remaining_tokens: u64,
+        input_safety_percent: u16,
+    },
+}
+
+impl ModelRequestBudget {
+    pub fn allows(&self, estimated_input_tokens: u64, max_output_tokens: u32) -> bool {
+        let adjusted_input = |safety_percent: u16| {
+            u128::from(estimated_input_tokens)
+                .saturating_mul(u128::from(safety_percent))
+                .div_ceil(100)
+        };
+        match self {
+            Self::Cost {
+                remaining_micros,
+                input_cache_miss_per_million_micros,
+                output_per_million_micros,
+                input_safety_percent,
+            } => {
+                let numerator = adjusted_input(*input_safety_percent)
+                    .saturating_mul(u128::from(*input_cache_miss_per_million_micros))
+                    .saturating_add(
+                        u128::from(max_output_tokens)
+                            .saturating_mul(u128::from(*output_per_million_micros)),
+                    );
+                numerator.div_ceil(1_000_000) <= u128::from(*remaining_micros)
+            }
+            Self::Tokens {
+                remaining_tokens,
+                input_safety_percent,
+            } => {
+                adjusted_input(*input_safety_percent).saturating_add(u128::from(max_output_tokens))
+                    <= u128::from(*remaining_tokens)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentBudgetAccount {
     pub model_id: String,
@@ -104,6 +151,8 @@ pub struct BudgetCharge {
 }
 
 impl AgentBudgetAccount {
+    const REQUEST_INPUT_SAFETY_PERCENT: u16 = 130;
+
     pub fn new(
         model_id: impl Into<String>,
         price: Option<PriceSnapshot>,
@@ -171,6 +220,40 @@ impl AgentBudgetAccount {
         }
         self.limit = next;
         Ok(())
+    }
+
+    pub fn request_budget(&self) -> Result<ModelRequestBudget, GoalError> {
+        self.request_budget_with_input_safety(Self::REQUEST_INPUT_SAFETY_PERCENT)
+    }
+
+    pub fn request_budget_with_input_safety(
+        &self,
+        input_safety_percent: u16,
+    ) -> Result<ModelRequestBudget, GoalError> {
+        if !(100..=1_000).contains(&input_safety_percent) {
+            return Err(GoalError::InvalidBudget);
+        }
+        match (&self.limit, &self.price) {
+            (ModelBudgetLimit::CostMicros { limit_micros, .. }, Some(price)) => {
+                Ok(ModelRequestBudget::Cost {
+                    remaining_micros: limit_micros.saturating_sub(self.spent_micros),
+                    input_cache_miss_per_million_micros: price.input_cache_miss_per_million_micros,
+                    output_per_million_micros: price.output_per_million_micros,
+                    input_safety_percent,
+                })
+            }
+            (ModelBudgetLimit::Tokens { limit_tokens }, None) => {
+                let spent_tokens = self
+                    .usage
+                    .input_tokens
+                    .saturating_add(self.usage.output_tokens);
+                Ok(ModelRequestBudget::Tokens {
+                    remaining_tokens: limit_tokens.saturating_sub(spent_tokens),
+                    input_safety_percent,
+                })
+            }
+            _ => Err(GoalError::InvalidBudget),
+        }
     }
 
     pub fn is_exceeded(&self) -> bool {
@@ -250,6 +333,10 @@ pub struct AgentCheckpoint {
     #[serde(default)]
     pub checkpoint_sequence: u64,
     #[serde(default)]
+    pub model_responses: u32,
+    #[serde(default)]
+    pub used_tools: bool,
+    #[serde(default)]
     pub slice_usage: ModelUsage,
     #[serde(default)]
     pub slice_active_ms: u64,
@@ -275,6 +362,8 @@ impl AgentCheckpoint {
         Self {
             slice_index: 0,
             checkpoint_sequence: 0,
+            model_responses: 0,
+            used_tools: false,
             slice_usage: ModelUsage::default(),
             slice_active_ms: 0,
             slice_tool_result_bytes: 0,
@@ -378,12 +467,25 @@ impl AgentGoal {
             .ok_or(GoalError::InvalidBudget)
     }
 
+    pub fn active_budget(&self) -> Result<&AgentBudgetAccount, GoalError> {
+        self.usage_by_model
+            .get(&self.model_id)
+            .ok_or(GoalError::InvalidBudget)
+    }
+
     pub fn requires_independent_verifier(&self) -> bool {
         let Some(candidate) = &self.completion_candidate else {
             return false;
         };
         candidate.used_tools
             || candidate.model_responses > 1
+            || self.checkpoint.used_tools
+            || self.checkpoint.model_responses > 0
+            || self
+                .checkpoint
+                .recent_transcript
+                .iter()
+                .any(|item| matches!(item, agent_runtime::TranscriptItem::AssistantToolCalls(_)))
             || self.checkpoint.slice_index > 0
             || !self.steering_messages.is_empty()
             || self.checkpoint.receipts.iter().any(ToolReceipt::is_effect)
@@ -958,6 +1060,26 @@ mod tests {
     }
 
     #[test]
+    fn request_budget_quotes_worst_case_input_and_output_before_io() {
+        let account = budget();
+        let request_budget = account.request_budget().unwrap();
+
+        assert!(request_budget.allows(1_000, 1_000));
+        assert!(!request_budget.allows(1_000_000, 100_000));
+
+        let token_budget = AgentBudgetAccount::new(
+            "unpriced-model",
+            None,
+            ModelBudgetLimit::Tokens { limit_tokens: 500 },
+        )
+        .unwrap()
+        .request_budget()
+        .unwrap();
+        assert!(token_budget.allows(100, 100));
+        assert!(!token_budget.allows(400, 100));
+    }
+
+    #[test]
     fn unpriced_models_require_token_budgets() {
         assert!(AgentBudgetAccount::new(
             "future-model",
@@ -1089,6 +1211,8 @@ mod tests {
     fn logical_slice_counters_survive_atomic_checkpoints_and_reset_at_boundaries() {
         let mut checkpoint = AgentCheckpoint::empty("workspace", 1);
         checkpoint.checkpoint_sequence = 7;
+        checkpoint.model_responses = 5;
+        checkpoint.used_tools = true;
         checkpoint.slice_usage = ModelUsage {
             input_tokens: 42,
             output_tokens: 3,
@@ -1101,6 +1225,8 @@ mod tests {
         checkpoint.reset_slice_counters();
 
         assert_eq!(checkpoint.checkpoint_sequence, 7);
+        assert_eq!(checkpoint.model_responses, 5);
+        assert!(checkpoint.used_tools);
         assert_eq!(checkpoint.slice_usage, ModelUsage::default());
         assert_eq!(checkpoint.slice_active_ms, 0);
         assert_eq!(checkpoint.slice_tool_result_bytes, 0);

@@ -82,7 +82,7 @@ Before every provider round, the engine builds this logical transcript:
 5. current user message;
 6. current-round assistant tool calls and sanitized tool results.
 
-The available input budget is the provider context window minus configured output reservation and a safety margin. Tools and response schema count toward the estimate. ASCII is estimated at one token per four bytes; non-ASCII scalar values count as at least one token each. Unknown/zero provider windows fail closed unless the host supplies a lower explicit context limit.
+The available input budget is the provider context window minus configured output reservation and a safety margin. Tools and response schema count toward the estimate. ASCII is estimated at one token per four bytes; non-ASCII scalar values count as at least one token each. A provider/model-aware estimator seam applies a conservative default 130% safety factor and permits later calibration from observed provider usage or an exact provider counter without changing the planner. Unknown/zero provider windows fail closed unless the host supplies a lower explicit context limit.
 
 If the request is too large, the planner first removes the oldest recent completed pair already represented in summary, then drops the lowest-ranked RAG chunks, then replaces the oldest current-turn tool-result content with a stable size-only compaction marker while preserving call/result protocol order. It never truncates JSON tool arguments or the current user message. If the irreducible request still does not fit, the turn fails with `context_exceeded` before provider I/O.
 
