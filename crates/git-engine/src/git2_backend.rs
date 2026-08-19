@@ -1614,7 +1614,11 @@ mod tests {
         let nested = repo.join("src/components");
         std::fs::create_dir_all(&nested).unwrap();
 
-        assert_eq!(Git2Backend.discover(&nested).unwrap(), repo);
+        let discovered = Git2Backend.discover(&nested).unwrap();
+        assert_eq!(
+            discovered.canonicalize().unwrap(),
+            repo.canonicalize().unwrap()
+        );
     }
 
     #[test]
